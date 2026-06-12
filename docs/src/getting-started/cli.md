@@ -29,7 +29,7 @@ loadr run --ui test.yaml                    # serve the live web UI during the r
 loadr run --summary-export out.json test.yaml
 loadr run --output json=samples.jsonl test.yaml   # ad-hoc output (repeatable)
 loadr run --quiet test.yaml                 # summary only, no live progress
-loadr run --controller host:7625 test.yaml  # submit to a controller fleet
+loadr run --controller host:6464 test.yaml  # submit via the controller's API port
 ```
 
 | Exit code | Meaning |

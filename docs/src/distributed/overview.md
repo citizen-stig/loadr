@@ -31,8 +31,8 @@ loadr controller --bind 0.0.0.0:7625 --ui-bind 0.0.0.0:6464
 # 2. on each load generator
 loadr agent --join controller-host:7625 --name agent-$(hostname)
 
-# 3. submit a test
-loadr run --controller controller-host:7625 test.yaml
+# 3. submit a test (to the controller's API/UI port)
+loadr run --controller controller-host:6464 test.yaml
 ```
 
 Or the batteries-included stack (controller + 3 agents + Prometheus +

@@ -8,7 +8,7 @@
 #   Prometheus: http://localhost:9090
 #
 # Submit a test to the fleet:
-#   loadr run --controller localhost:7625 examples/15-distributed.yaml
+#   loadr run --controller localhost:6464 examples/15-distributed.yaml
 
 services:
   controller:

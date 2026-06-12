@@ -109,7 +109,7 @@ Dark mode included.
 ```bash
 loadr controller --bind 0.0.0.0:7625 &            # coordination plane
 loadr agent --join ctrl-host:7625 --name agent-1  # on each load generator
-loadr run --controller ctrl-host:7625 test.yaml   # submit to the fleet
+loadr run --controller ctrl-host:6464 test.yaml   # submit via the controller API
 ```
 
 VU counts and arrival rates are partitioned across agents; HDR histograms are

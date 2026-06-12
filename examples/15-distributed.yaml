@@ -4,7 +4,7 @@
 #
 #   loadr controller --bind 0.0.0.0:7625 &
 #   loadr agent --join controller-host:7625 --name agent-1 &
-#   loadr run --controller controller-host:7625 examples/15-distributed.yaml
+#   loadr run --controller controller-host:6464 examples/15-distributed.yaml
 name: distributed
 description: 600 req/s split across the agent fleet
 

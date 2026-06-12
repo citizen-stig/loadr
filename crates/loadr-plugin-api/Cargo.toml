@@ -3,7 +3,7 @@ name = "loadr-plugin-api"
 description = "Plugin system for loadr: WASM component plugins (extractors/assertions) and native dynamic-library plugins (outputs/protocols/services)"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 repository.workspace = true
 
 [dependencies]

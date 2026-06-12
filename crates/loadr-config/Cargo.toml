@@ -3,7 +3,7 @@ name = "loadr-config"
 description = "YAML test definition schema, parsing, validation and interpolation for loadr"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 repository.workspace = true
 
 [dependencies]

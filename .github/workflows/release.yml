@@ -46,7 +46,7 @@ jobs:
           name="loadr-${GITHUB_REF_NAME}-${{ matrix.target }}"
           mkdir "$name"
           cp "target/${{ matrix.target }}/release/loadr" "$name/"
-          cp README.md LICENSE-MIT LICENSE-APACHE "$name/" || true
+          cp README.md LICENSE "$name/" || true
           tar czf "$name.tar.gz" "$name"
       - name: Package (windows)
         if: matrix.archive == 'zip'

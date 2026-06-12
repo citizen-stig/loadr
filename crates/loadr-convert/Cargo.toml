@@ -2,7 +2,7 @@
 name = "loadr-convert"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 repository.workspace = true
 description = "Convert JMeter .jmx test plans and k6 scripts into loadr YAML test definitions"
 

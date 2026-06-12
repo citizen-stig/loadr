@@ -2,7 +2,7 @@
 name = "loadr-protocols"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 repository.workspace = true
 description = "Built-in protocol handlers for loadr: HTTP/1.1+HTTP/2, GraphQL, WebSocket, gRPC, raw TCP/UDP"
 

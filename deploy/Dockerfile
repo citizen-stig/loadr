@@ -21,7 +21,7 @@ FROM gcr.io/distroless/cc-debian12:nonroot
 LABEL org.opencontainers.image.title="loadr" \
       org.opencontainers.image.description="Modern load testing platform: k6 + JMeter in one Rust binary" \
       org.opencontainers.image.source="https://github.com/reaandrew/loadr.io" \
-      org.opencontainers.image.licenses="MIT OR Apache-2.0"
+      org.opencontainers.image.licenses="LicenseRef-Proprietary"
 
 COPY --from=builder /loadr /usr/local/bin/loadr
 

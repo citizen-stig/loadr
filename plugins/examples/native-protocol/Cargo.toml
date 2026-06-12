@@ -3,7 +3,7 @@ name = "loadr-plugin-example-native-protocol"
 description = "Example native protocol plugin: echoes the request body reversed"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 repository.workspace = true
 publish = false
 

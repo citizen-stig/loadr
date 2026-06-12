@@ -3,7 +3,7 @@ name = "loadr-cli"
 description = "loadr: a modern load testing platform — k6 + JMeter in one binary"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 repository.workspace = true
 
 [[bin]]

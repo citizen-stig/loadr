@@ -19,7 +19,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "MIT OR Apache-2.0"
+license-file = "LICENSE"
 repository = "https://github.com/reaandrew/loadr.io"
 homepage = "https://loadr.io"
 rust-version = "1.85"

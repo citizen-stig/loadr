@@ -6,7 +6,6 @@
 
 [![CI](https://github.com/reaandrew/loadr.io/actions/workflows/ci.yml/badge.svg)](https://github.com/reaandrew/loadr.io/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/reaandrew/loadr.io?include_prereleases)](https://github.com/reaandrew/loadr.io/releases)
-[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 [![Docs](https://img.shields.io/badge/docs-loadr.io-8A2BE2)](https://reaandrew.github.io/loadr.io/)
 
 *Declarative YAML tests · embedded JavaScript · 6 protocols · WASM & native plugins · distributed agents · live web UI*
@@ -190,5 +189,5 @@ mdbook serve docs                                   # docs at localhost:3000
 
 ## License
 
-Licensed under either of [Apache License 2.0](LICENSE-APACHE) or
-[MIT license](LICENSE-MIT) at your option.
+Proprietary. Copyright © 2026 Andrew Rea. All rights reserved.
+See [LICENSE](LICENSE) for terms.

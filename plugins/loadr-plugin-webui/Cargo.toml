@@ -3,7 +3,7 @@ name = "loadr-plugin-webui"
 description = "Embedded web management UI for loadr: live dashboards, run control, test library"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 repository.workspace = true
 
 [dependencies]

@@ -3,7 +3,7 @@ name = "loadr-plugin-example-native-output"
 description = "Example native output plugin: appends snapshot series counts and the final summary to a file"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 repository.workspace = true
 publish = false
 

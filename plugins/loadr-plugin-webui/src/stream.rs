@@ -46,6 +46,31 @@ pub(crate) async fn run_stream(
         Some(handle) => {
             tokio::spawn(live_run_stream(handle, tx));
         }
+        None if matches!(info.state.as_str(), "pending" | "running" | "stopping") => {
+            // No local handle (distributed run): poll the backend snapshot.
+            let backend = state.backend.clone();
+            tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
+                loop {
+                    ticker.tick().await;
+                    let Some(run) = backend.runs().into_iter().find(|r| r.run_id == id) else {
+                        break;
+                    };
+                    if let Some(snap) = backend.run_snapshot(&id) {
+                        let payload = live_payload(&snap, &backend.run_thresholds(&id), &run.state);
+                        if tx.send(sse_event("snapshot", &payload)).await.is_err() {
+                            break;
+                        }
+                    }
+                    if !matches!(run.state.as_str(), "pending" | "running" | "stopping") {
+                        let _ = tx
+                            .send(sse_event("status", &status_payload(&run.state, run.passed)))
+                            .await;
+                        break;
+                    }
+                }
+            });
+        }
         None => {
             // Finished run: replay the last-known state once, then end.
             if let Some(snap) = state.backend.run_snapshot(&id) {

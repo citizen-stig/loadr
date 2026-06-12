@@ -64,7 +64,14 @@ pub fn execute(args: AgentArgs) -> anyhow::Result<i32> {
 
         // Real protocol and JS factories.
         let protocols: loadr_agent::ProtocolFactory = Arc::new(|http_defaults, base_dir| {
-            loadr_protocols::builtin_registry(http_defaults, base_dir).map_err(|e| e.to_string())
+            let mut registry = loadr_protocols::builtin_registry(http_defaults, base_dir)
+                .map_err(|e| e.to_string())?;
+            // Browser protocol (headless Chrome via CDP); lazy until first use.
+            registry.register(Arc::new(
+                loadr_browser::BrowserHandler::from_config(http_defaults)
+                    .map_err(|e| e.to_string())?,
+            ));
+            Ok(registry)
         });
         let script: loadr_agent::ScriptFactory = Arc::new(|js_config, base_dir| {
             loadr_js::JsEngine::new(js_config, base_dir)

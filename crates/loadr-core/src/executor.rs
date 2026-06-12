@@ -50,6 +50,20 @@ pub struct ExecEnv {
 struct VuWorker {
     ctx: VuContext,
     script: Option<Box<dyn crate::script::VuScript>>,
+    /// Runner kept so the per-VU `on_stop` hook can fire when the worker drops.
+    runner: Arc<FlowRunner>,
+}
+
+impl Drop for VuWorker {
+    fn drop(&mut self) {
+        // Fire the Locust-style `on_stop` hook once, when the VU retires.
+        if self.runner.program.on_stop.is_none() || self.ctx.iteration == 0 {
+            return;
+        }
+        if tokio::runtime::Handle::try_current().is_ok() {
+            self.runner.run_on_stop(&mut self.ctx, &mut self.script);
+        }
+    }
 }
 
 impl ExecEnv {
@@ -73,7 +87,11 @@ impl ExecEnv {
             },
             None => None,
         };
-        VuWorker { ctx, script }
+        VuWorker {
+            ctx,
+            script,
+            runner: self.runner.clone(),
+        }
     }
 
     /// Wait while paused; returns false when stopped.

@@ -118,7 +118,42 @@ pub(crate) fn client_config(
         }
     }
 
-    let builder = rustls::ClientConfig::builder().with_root_certificates(roots);
+    // Restrict TLS versions when configured (default: 1.2 + 1.3).
+    let parse_ver = |v: &str| -> Result<u8, ProtocolError> {
+        match v
+            .trim()
+            .trim_start_matches("1.")
+            .trim_start_matches("TLSv1.")
+        {
+            "2" => Ok(2),
+            "3" => Ok(3),
+            other => Err(ProtocolError::Tls(format!(
+                "unsupported TLS version `{other}` (use `1.2` or `1.3`)"
+            ))),
+        }
+    };
+    let min = tls.min_version.as_deref().map(parse_ver).transpose()?;
+    let max = tls.max_version.as_deref().map(parse_ver).transpose()?;
+    let mut versions: Vec<&'static rustls::SupportedProtocolVersion> = Vec::new();
+    for (n, v) in [
+        (2u8, &rustls::version::TLS12),
+        (3u8, &rustls::version::TLS13),
+    ] {
+        if min.map(|m| n >= m).unwrap_or(true) && max.map(|m| n <= m).unwrap_or(true) {
+            versions.push(v);
+        }
+    }
+    if versions.is_empty() {
+        return Err(ProtocolError::Tls(
+            "TLS min_version/max_version exclude every supported version".to_string(),
+        ));
+    }
+    let builder = if tls.min_version.is_some() || tls.max_version.is_some() {
+        rustls::ClientConfig::builder_with_protocol_versions(&versions)
+            .with_root_certificates(roots)
+    } else {
+        rustls::ClientConfig::builder().with_root_certificates(roots)
+    };
     let mut config = match (&tls.cert_file, &tls.key_file) {
         (Some(cert), Some(key)) => {
             let certs = read_pem_certs(&resolve_path(base_dir, cert))?;

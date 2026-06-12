@@ -40,6 +40,10 @@ pub struct ScenarioProgram {
     pub steps: Vec<CompiledStep>,
     /// Exported JS function to call each iteration (after `steps`).
     pub exec: Option<String>,
+    /// Exported JS function run once per VU before its first iteration.
+    pub on_start: Option<String>,
+    /// Exported JS function run once per VU after its last iteration.
+    pub on_stop: Option<String>,
     /// Default think time inserted after each request step.
     pub think_time: Option<ThinkTimeSpec>,
     /// Scenario-wide target iteration starts per second (per-VU pacing).
@@ -224,6 +228,8 @@ impl ScenarioProgram {
             name: Arc::from(scenario_name),
             steps,
             exec: scenario.exec.clone(),
+            on_start: scenario.on_start.clone(),
+            on_stop: scenario.on_stop.clone(),
             think_time: scenario.think_time.or(plan.defaults.think_time),
             pacing: scenario.pacing.map(|p| p.iterations_per_second),
             throttle: scenario
@@ -496,6 +502,24 @@ impl FlowRunner {
         script: &mut Option<Box<dyn VuScript>>,
     ) -> IterationOutcome {
         vu.begin_iteration();
+        // on_start: once per VU, before its first iteration (Locust on_start).
+        if vu.iteration == 1 {
+            if let Some(on_start) = &self.program.on_start {
+                if let Some(vu_script) = script.as_mut() {
+                    if vu_script.has_function(on_start) {
+                        let setup = vu.run.setup_data.read().clone();
+                        if let Err(e) = run_script(
+                            self,
+                            vu,
+                            vu_script.as_mut(),
+                            ScriptInvocation::Call(on_start.clone(), vec![setup]),
+                        ) {
+                            tracing::warn!(on_start, error = %e, "on_start hook failed");
+                        }
+                    }
+                }
+            }
+        }
         let started = Instant::now();
         let mut outcome = self.run_steps(&self.program.steps, vu, script).await;
 
@@ -536,6 +560,30 @@ impl FlowRunner {
             &tags,
         );
         outcome
+    }
+
+    /// Run the per-VU `on_stop` hook (Locust on_stop), once when the VU retires.
+    pub fn run_on_stop(&self, vu: &mut VuContext, script: &mut Option<Box<dyn VuScript>>) {
+        let Some(on_stop) = &self.program.on_stop else {
+            return;
+        };
+        // Only fire if the VU actually started (ran at least one iteration).
+        if vu.iteration == 0 {
+            return;
+        }
+        if let Some(vu_script) = script.as_mut() {
+            if vu_script.has_function(on_stop) {
+                let setup = vu.run.setup_data.read().clone();
+                if let Err(e) = run_script(
+                    self,
+                    vu,
+                    vu_script.as_mut(),
+                    ScriptInvocation::Call(on_stop.clone(), vec![setup]),
+                ) {
+                    tracing::warn!(on_stop, error = %e, "on_stop hook failed");
+                }
+            }
+        }
     }
 
     fn run_steps<'a>(

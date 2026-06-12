@@ -40,6 +40,15 @@ pub struct RunArgs {
     /// Plugins directory
     #[arg(long, env = "LOADR_PLUGINS_DIR")]
     pub plugins_dir: Option<PathBuf>,
+    /// Run only scenarios that carry at least one of these tags (comma-separated).
+    #[arg(long, value_delimiter = ',')]
+    pub tags: Vec<String>,
+    /// Skip scenarios that carry any of these tags (comma-separated).
+    #[arg(long, value_delimiter = ',')]
+    pub exclude_tags: Vec<String>,
+    /// Dump full HTTP requests and responses (verbose; sets LOADR_HTTP_DEBUG).
+    #[arg(long)]
+    pub http_debug: bool,
 }
 
 pub fn execute(args: RunArgs, quiet: bool) -> anyhow::Result<i32> {
@@ -116,6 +125,13 @@ pub fn build_engine(
 )> {
     let mut protocols = loadr_protocols::builtin_registry(&plan.defaults.http, &base_dir)
         .map_err(|e| anyhow::anyhow!("protocol setup failed: {e}"))?;
+
+    // Browser protocol lives in its own crate (pulls in headless Chrome via CDP).
+    // The handler is lazy — Chrome only launches on first `protocol: browser` use.
+    protocols.register(std::sync::Arc::new(
+        loadr_browser::BrowserHandler::from_config(&plan.defaults.http)
+            .map_err(|e| anyhow::anyhow!("browser protocol setup failed: {e}"))?,
+    ));
 
     // Plugins declared in the plan.
     let plugins_dir = plugins_dir
@@ -202,6 +218,38 @@ async fn run_local(args: RunArgs, quiet: bool) -> anyhow::Result<i32> {
         }
     }
     let mut plan = loaded.plan;
+
+    // --http-debug: the HTTP handler reads this env var.
+    if args.http_debug {
+        std::env::set_var("LOADR_HTTP_DEBUG", "1");
+    }
+
+    // --tags / --exclude-tags: keep only scenarios matching the tag filter.
+    if !args.tags.is_empty() || !args.exclude_tags.is_empty() {
+        let before = plan.scenarios.len();
+        plan.scenarios.retain(|_, s| {
+            let tags: std::collections::BTreeSet<&str> =
+                s.tags.values().map(String::as_str).collect();
+            let included =
+                args.tags.is_empty() || args.tags.iter().any(|t| tags.contains(t.as_str()));
+            let excluded = args.exclude_tags.iter().any(|t| tags.contains(t.as_str()));
+            included && !excluded
+        });
+        if plan.scenarios.is_empty() {
+            anyhow::bail!(
+                "no scenarios match the tag filter (had {before}); checked --tags {:?} / --exclude-tags {:?}",
+                args.tags,
+                args.exclude_tags
+            );
+        }
+        if !quiet {
+            eprintln!(
+                "{} running {} of {before} scenario(s) after tag filter",
+                "→".cyan(),
+                plan.scenarios.len()
+            );
+        }
+    }
 
     // CLI load overrides.
     if args.vus.is_some() || args.duration.is_some() {
@@ -295,7 +343,15 @@ async fn run_local(args: RunArgs, quiet: bool) -> anyhow::Result<i32> {
         p.abort();
         eprintln!();
     }
-    print!("{}", colorize_summary(&result.summary.render_console()));
+    // A JS handleSummary() return value replaces the default console summary.
+    if let Some(custom) = &result.custom_summary {
+        print!("{custom}");
+        if !custom.ends_with('\n') {
+            println!();
+        }
+    } else {
+        print!("{}", colorize_summary(&result.summary.render_console()));
+    }
 
     if let Some(path) = &args.summary_export {
         std::fs::write(path, serde_json::to_string_pretty(&result.summary)?)?;

@@ -67,6 +67,8 @@ pub struct RunResult {
     /// All thresholds passed.
     pub passed: bool,
     pub aborted: Option<String>,
+    /// Text returned by the JS `handleSummary(data)` hook, if exported (k6).
+    pub custom_summary: Option<String>,
 }
 
 /// Cloneable live handle: snapshots, status, stop/pause/scale.
@@ -375,6 +377,8 @@ impl Engine {
             name: Arc::from("setup"),
             steps: Vec::new(),
             exec: None,
+            on_start: None,
+            on_stop: None,
             think_time: None,
             pacing: None,
             throttle: None,
@@ -559,12 +563,50 @@ impl Engine {
         for output in &mut outputs {
             output.finish(&summary).await;
         }
+
+        // handleSummary(data): let JS produce a custom end-of-run report (k6).
+        let mut custom_summary = None;
+        if let Some(script) = &self.script {
+            if script.has_function("handleSummary") {
+                match script.instantiate() {
+                    Ok(mut vu_script) => {
+                        // Detached bus: the summary VU's samples are discarded. Keep the
+                        // receiver alive so sends don't fail, but never read from it.
+                        let (summary_bus, _summary_rx) = MetricsBus::new();
+                        let mut vu = VuContext::new(
+                            0,
+                            Arc::from("summary"),
+                            lifecycle_runner.program.tags.clone(),
+                            summary_bus,
+                            self.run_ctx.clone(),
+                            self.http_defaults.cookies,
+                        );
+                        let data = summary.to_json();
+                        let result = crate::flow::with_host(&lifecycle_runner, &mut vu, |host| {
+                            vu_script.call_function(host, "handleSummary", &[data])
+                        });
+                        match result {
+                            Ok(serde_json::Value::String(s)) => custom_summary = Some(s),
+                            Ok(serde_json::Value::Null) => {}
+                            Ok(other) => {
+                                custom_summary =
+                                    Some(serde_json::to_string_pretty(&other).unwrap_or_default())
+                            }
+                            Err(e) => tracing::warn!(error = %e, "handleSummary() failed"),
+                        }
+                    }
+                    Err(e) => tracing::warn!(error = %e, "could not run handleSummary()"),
+                }
+            }
+        }
+
         let passed = summary.thresholds_passed && aborted.is_none();
         let _ = self.status_tx.send(RunStatus::Finished { passed });
         Ok(RunResult {
             passed: summary.thresholds_passed,
             summary,
             aborted,
+            custom_summary,
         })
     }
 }

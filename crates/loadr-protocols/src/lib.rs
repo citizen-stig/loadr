@@ -7,8 +7,10 @@
 //!   keep-alive pooling, compression, redirects, cookies and proxy support.
 //! - [`GraphqlHandler`] — GraphQL-over-HTTP with `errors` post-processing.
 //! - [`WsHandler`] — WebSocket sessions (send/receive scripts).
+//! - [`SseHandler`] — Server-Sent Events streams (`sse://`/`sses://`).
 //! - [`GrpcHandler`] — dynamic gRPC from `.proto` files (compiled in-process)
 //!   or server reflection; all four call shapes.
+//! - [`RedisHandler`] — Redis (RESP) commands over a per-VU pooled connection.
 //! - [`TcpHandler`] / [`UdpHandler`] — raw socket round trips.
 //!
 //! Use [`builtin_registry`] to build a [`ProtocolRegistry`] with everything
@@ -18,7 +20,9 @@ mod graphql;
 mod grpc;
 mod http;
 mod net;
+mod redis;
 mod socket;
+mod sse;
 mod tls;
 mod ws;
 
@@ -27,7 +31,9 @@ use std::sync::Arc;
 pub use graphql::GraphqlHandler;
 pub use grpc::GrpcHandler;
 pub use http::{HttpHandler, DEFAULT_USER_AGENT};
+pub use redis::RedisHandler;
 pub use socket::{TcpHandler, UdpHandler};
+pub use sse::SseHandler;
 pub use ws::WsHandler;
 
 use loadr_core::{ProtocolError, ProtocolRegistry};
@@ -35,9 +41,9 @@ use loadr_core::{ProtocolError, ProtocolRegistry};
 /// Build the registry of built-in protocol handlers.
 ///
 /// Registers `http` (alias `https`), `graphql` (sharing the HTTP handler's
-/// transport), `ws` (alias `websocket`), `grpc`, `tcp` and `udp`. TLS client
-/// configuration is built once, here, from `http_defaults.tls`; `base_dir`
-/// resolves relative TLS/proto file paths.
+/// transport), `ws` (alias `websocket`), `sse` (alias `sses`), `grpc`,
+/// `redis`, `tcp` and `udp`. TLS client configuration is built once, here,
+/// from `http_defaults.tls`; `base_dir` resolves relative TLS/proto file paths.
 pub fn builtin_registry(
     http_defaults: &loadr_config::HttpDefaults,
     base_dir: &std::path::Path,
@@ -53,7 +59,12 @@ pub fn builtin_registry(
     registry.register(Arc::new(WsHandler::new(http_defaults, base_dir)?));
     registry.register_alias("websocket", "ws");
 
+    registry.register(Arc::new(SseHandler::new(http_defaults, base_dir)?));
+    registry.register_alias("sses", "sse");
+
     registry.register(Arc::new(GrpcHandler::new(http_defaults, base_dir)?));
+
+    registry.register(Arc::new(RedisHandler::new()));
 
     registry.register(Arc::new(TcpHandler::new()));
     registry.register(Arc::new(UdpHandler::new()));
@@ -75,7 +86,10 @@ mod tests {
             "graphql",
             "ws",
             "websocket",
+            "sse",
+            "sses",
             "grpc",
+            "redis",
             "tcp",
             "udp",
         ] {
@@ -88,6 +102,10 @@ mod tests {
         assert_eq!(
             registry.get("websocket").map(|h| h.name().to_string()),
             Some("ws".into())
+        );
+        assert_eq!(
+            registry.get("sses").map(|h| h.name().to_string()),
+            Some("sse".into())
         );
     }
 

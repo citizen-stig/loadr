@@ -136,6 +136,79 @@ struct HttpPool {
     conns: HashMap<PoolKey, PooledSender>,
 }
 
+/// Per-VU HTTP cache (JMeter HTTP Cache Manager). Stores cacheable GET
+/// responses and serves fresh ones without a network round trip; revalidates
+/// stale-but-validatable ones with `If-None-Match` / `If-Modified-Since`.
+#[derive(Default)]
+struct HttpCache {
+    entries: HashMap<String, CacheEntry>,
+}
+
+struct CacheEntry {
+    status: i64,
+    status_text: String,
+    headers: Vec<(String, String)>,
+    body: Bytes,
+    bytes_received: u64,
+    protocol_version: String,
+    stored_at: Instant,
+    max_age: std::time::Duration,
+    etag: Option<String>,
+    last_modified: Option<String>,
+}
+
+impl CacheEntry {
+    fn is_fresh(&self) -> bool {
+        self.stored_at.elapsed() < self.max_age
+    }
+
+    fn to_response(&self, url: &str, cache_state: &str) -> ProtocolResponse {
+        ProtocolResponse {
+            status: self.status,
+            status_text: self.status_text.clone(),
+            headers: self.headers.clone(),
+            body: self.body.clone(),
+            timings: Timings::default(),
+            bytes_sent: 0,
+            bytes_received: self.bytes_received,
+            protocol_version: self.protocol_version.clone(),
+            error: None,
+            url: url.to_string(),
+            extras: serde_json::json!({ "cache": cache_state }),
+        }
+    }
+}
+
+/// Parse `Cache-Control: max-age=N` (seconds) from response headers; returns
+/// `None` when the response must not be cached.
+fn cache_max_age(headers: &[(String, String)]) -> Option<std::time::Duration> {
+    let cc = headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case("cache-control"))
+        .map(|(_, v)| v.to_ascii_lowercase());
+    if let Some(cc) = &cc {
+        if cc.contains("no-store") || cc.contains("private") {
+            return None;
+        }
+        for part in cc.split(',') {
+            let part = part.trim();
+            if let Some(secs) = part.strip_prefix("max-age=") {
+                if let Ok(n) = secs.parse::<u64>() {
+                    return Some(std::time::Duration::from_secs(n));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn header_value(headers: &[(String, String)], name: &str) -> Option<String> {
+    headers
+        .iter()
+        .find(|(k, _)| k.eq_ignore_ascii_case(name))
+        .map(|(_, v)| v.clone())
+}
+
 // ---------------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------------
@@ -149,6 +222,16 @@ pub struct HttpHandler {
     proxy: Option<Url>,
     tls: Arc<rustls::ClientConfig>,
     server_name: Option<String>,
+    /// Drop response bodies after reading (keep byte counts).
+    discard_bodies: bool,
+    /// Inject a W3C `traceparent` header on every request.
+    tracing: bool,
+    /// Hostname → address overrides (`host`/`host:port` → `ip`/`ip:port`).
+    hosts: std::collections::HashMap<String, String>,
+    /// Simulate a per-VU HTTP cache (JMeter HTTP Cache Manager).
+    cache: bool,
+    /// Dump full requests/responses (set by `--http-debug`).
+    http_debug: bool,
 }
 
 impl HttpHandler {
@@ -174,6 +257,37 @@ impl HttpHandler {
             proxy,
             tls: Arc::new(tls),
             server_name: defaults.tls.server_name.clone(),
+            discard_bodies: defaults.discard_response_bodies,
+            tracing: defaults.tracing,
+            hosts: defaults
+                .hosts
+                .iter()
+                .map(|(k, v)| (k.to_ascii_lowercase(), v.clone()))
+                .collect(),
+            cache: defaults.cache,
+            http_debug: std::env::var_os("LOADR_HTTP_DEBUG").is_some(),
+        })
+    }
+
+    /// Apply a `hosts` override to a (host, port), returning the address to dial.
+    fn override_host(&self, host: &str, port: u16) -> Option<String> {
+        if self.hosts.is_empty() {
+            return None;
+        }
+        let hp = format!("{}:{port}", host.to_ascii_lowercase());
+        if let Some(mapped) = self.hosts.get(&hp) {
+            return Some(if mapped.contains(':') {
+                mapped.clone()
+            } else {
+                format!("{mapped}:{port}")
+            });
+        }
+        self.hosts.get(&host.to_ascii_lowercase()).map(|mapped| {
+            if mapped.contains(':') {
+                mapped.clone()
+            } else {
+                format!("{mapped}:{port}")
+            }
         })
     }
 
@@ -197,7 +311,20 @@ impl HttpHandler {
             .port_or_known_default()
             .ok_or_else(|| format!("url `{dial_url}` has no port"))?;
 
-        let addr = resolve(&dial_host, dial_port, timings).await?;
+        // `hosts` override: resolve to a fixed address, bypassing DNS.
+        let addr = match self.override_host(&dial_host.to_string(), dial_port) {
+            Some(mapped) => {
+                let start = Instant::now();
+                let addr = tokio::net::lookup_host(&mapped)
+                    .await
+                    .map_err(|e| format!("hosts override `{mapped}` is invalid: {e}"))?
+                    .next()
+                    .ok_or_else(|| format!("hosts override `{mapped}` resolved to nothing"))?;
+                timings.dns_ms = ms_since(start);
+                addr
+            }
+            None => resolve(&dial_host, dial_port, timings).await?,
+        };
 
         let start = Instant::now();
         let mut tcp = TcpStream::connect(addr)
@@ -336,6 +463,23 @@ impl HttpHandler {
                     headers.insert(COOKIE, value);
                 }
             }
+        }
+        // W3C trace context propagation (like k6's tracing).
+        if self.tracing && !headers.contains_key("traceparent") {
+            let mut seed = ctx.vu_id;
+            let traceparent = make_traceparent(&mut seed);
+            if let Ok(value) = HeaderValue::from_str(&traceparent) {
+                if let Ok(name) = http::header::HeaderName::from_bytes(b"traceparent") {
+                    headers.insert(name, value);
+                }
+            }
+        }
+        if self.http_debug {
+            tracing::info!(
+                target: "loadr::http_debug",
+                "→ {method} {url}\n{}",
+                debug_headers(headers)
+            );
         }
 
         let bytes_sent = approx_request_size(method, url, headers, body_len);
@@ -482,6 +626,24 @@ impl HttpHandler {
             })
             .collect();
 
+        if self.http_debug {
+            let preview = String::from_utf8_lossy(&body_bytes);
+            let preview = preview.chars().take(2000).collect::<String>();
+            tracing::info!(
+                target: "loadr::http_debug",
+                "← {} {}\n{}\n{}",
+                parts.status.as_u16(),
+                url,
+                headers.iter().map(|(k, v)| format!("{k}: {v}")).collect::<Vec<_>>().join("\n"),
+                preview
+            );
+        }
+
+        // Discard the body if requested (keeps byte counts; extraction sees nothing).
+        if self.discard_bodies {
+            body_bytes = Bytes::new();
+        }
+
         Ok(ProtocolResponse {
             status: parts.status.as_u16() as i64,
             status_text: parts
@@ -590,6 +752,10 @@ impl ProtocolHandler for HttpHandler {
         let method = parse_method(&request.method)?;
 
         let start = Instant::now();
+        // HTTP cache: serve fresh GETs from cache, revalidate stale ones.
+        if self.cache && method == http::Method::GET {
+            return self.run_cached(ctx, request, url, method, start).await;
+        }
         match tokio::time::timeout(request.timeout, self.run(ctx, request, url, method)).await {
             Ok(result) => result,
             Err(_) => Ok(timeout_response(request, start)),
@@ -597,9 +763,137 @@ impl ProtocolHandler for HttpHandler {
     }
 }
 
+impl HttpHandler {
+    /// Cache-aware GET: fresh hit → no network; stale-with-validator → conditional
+    /// request (304 → serve cached); otherwise fetch and store if cacheable.
+    async fn run_cached(
+        &self,
+        ctx: &mut VuContext,
+        request: &PreparedRequest,
+        url: Url,
+        method: http::Method,
+        start: Instant,
+    ) -> Result<ProtocolResponse, ProtocolError> {
+        let key = url.to_string();
+
+        // 1. Fresh hit.
+        let validator = {
+            let cache = ctx.extensions.get_or_insert_with(HttpCache::default);
+            if let Some(entry) = cache.entries.get(&key) {
+                if entry.is_fresh() {
+                    return Ok(entry.to_response(&key, "hit"));
+                }
+                (entry.etag.clone(), entry.last_modified.clone())
+            } else {
+                (None, None)
+            }
+        };
+
+        // 2. Build the (possibly conditional) request.
+        let mut effective = request.clone();
+        let (etag, last_mod) = validator;
+        if let Some(etag) = &etag {
+            effective
+                .headers
+                .push(("If-None-Match".into(), etag.clone()));
+        }
+        if let Some(lm) = &last_mod {
+            effective
+                .headers
+                .push(("If-Modified-Since".into(), lm.clone()));
+        }
+
+        let result =
+            match tokio::time::timeout(request.timeout, self.run(ctx, &effective, url, method))
+                .await
+            {
+                Ok(r) => r?,
+                Err(_) => return Ok(timeout_response(request, start)),
+            };
+
+        // 3. 304 Not Modified → serve the cached body, refresh freshness.
+        if result.status == 304 {
+            let cache = ctx.extensions.get_or_insert_with(HttpCache::default);
+            if let Some(entry) = cache.entries.get_mut(&key) {
+                entry.stored_at = Instant::now();
+                if let Some(age) = cache_max_age(&result.headers) {
+                    entry.max_age = age;
+                }
+                let mut resp = entry.to_response(&key, "revalidated");
+                resp.timings = result.timings;
+                resp.bytes_sent = result.bytes_sent;
+                return Ok(resp);
+            }
+        }
+
+        // 4. Store cacheable 200 responses.
+        if result.status == 200 && result.error.is_none() {
+            if let Some(max_age) = cache_max_age(&result.headers) {
+                let cache = ctx.extensions.get_or_insert_with(HttpCache::default);
+                cache.entries.insert(
+                    key.clone(),
+                    CacheEntry {
+                        status: result.status,
+                        status_text: result.status_text.clone(),
+                        headers: result.headers.clone(),
+                        body: result.body.clone(),
+                        bytes_received: result.bytes_received,
+                        protocol_version: result.protocol_version.clone(),
+                        stored_at: Instant::now(),
+                        max_age,
+                        etag: header_value(&result.headers, "etag"),
+                        last_modified: header_value(&result.headers, "last-modified"),
+                    },
+                );
+            }
+        }
+
+        let mut result = result;
+        if result.extras.is_null() {
+            result.extras = serde_json::json!({ "cache": "miss" });
+        }
+        Ok(result)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Build a W3C `traceparent` header: `00-<16-byte trace id>-<8-byte span id>-01`.
+/// Trace ids need only be unique, not cryptographically random, so this uses a
+/// SplitMix64 PRNG seeded from a monotonic counter and the wall clock.
+fn make_traceparent(seed: &mut u64) -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    *seed = seed
+        .wrapping_add(COUNTER.fetch_add(1, Ordering::Relaxed))
+        .wrapping_add(now);
+    let mut next = || {
+        // SplitMix64.
+        *seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = *seed;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    };
+    let trace = format!("{:016x}{:016x}", next(), next());
+    let span = format!("{:016x}", next());
+    format!("00-{trace}-{span}-01")
+}
+
+/// Render request headers for `--http-debug` output.
+fn debug_headers(headers: &http::HeaderMap) -> String {
+    headers
+        .iter()
+        .map(|(k, v)| format!("{}: {}", k, String::from_utf8_lossy(v.as_bytes())))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 pub(crate) fn parse_method(method: &str) -> Result<http::Method, ProtocolError> {
     if method.is_empty() {

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="loadr management UI — live load test dashboards">
+  <title>loadr — load testing</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234f9cf9'/%3E%3Cpath d='M9 7v18h14v-4h-9V7z' fill='white'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <aside class="sidebar">
+      <div class="logo"><span class="logo-mark">l</span>loadr<span class="logo-dot">.</span></div>
+      <nav id="nav">
+        <a href="#/overview" data-route="overview"><span class="nav-icon">◉</span> Overview</a>
+        <a href="#/runs" data-route="runs"><span class="nav-icon">▶</span> Runs</a>
+        <a href="#/tests" data-route="tests"><span class="nav-icon">≡</span> Tests</a>
+        <a href="#/agents" data-route="agents"><span class="nav-icon">⬡</span> Agents</a>
+        <a href="#/logs" data-route="logs"><span class="nav-icon">☰</span> Logs</a>
+      </nav>
+      <div class="sidebar-footer">
+        <button id="theme-toggle" class="btn btn-ghost" title="Toggle light/dark theme">◐ Theme</button>
+        <div class="sidebar-version">loadr web ui</div>
+      </div>
+    </aside>
+    <main id="main" aria-live="polite"></main>
+  </div>
+
+  <div id="toasts" aria-live="assertive"></div>
+
+  <div id="login-modal" class="modal-backdrop hidden">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="login-title">
+      <h2 id="login-title">Sign in to loadr</h2>
+      <p class="muted">This server requires authentication.</p>
+      <div class="login-tabs">
+        <button id="login-tab-basic" class="login-tab active" type="button">Password</button>
+        <button id="login-tab-token" class="login-tab" type="button">Token</button>
+      </div>
+      <form id="login-form">
+        <div id="login-basic-fields">
+          <label for="login-user">Username</label>
+          <input id="login-user" type="text" autocomplete="username">
+          <label for="login-pass">Password</label>
+          <input id="login-pass" type="password" autocomplete="current-password">
+        </div>
+        <div id="login-token-fields" class="hidden">
+          <label for="login-token">API token</label>
+          <input id="login-token" type="password" autocomplete="off">
+        </div>
+        <div id="login-error" class="login-error hidden"></div>
+        <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="chart.js"></script>
+  <script src="api.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

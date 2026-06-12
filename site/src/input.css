@@ -113,13 +113,26 @@ body {
   border-color: rgb(239 68 68 / 0.5);
 }
 
-/* Subtle grid background for hero */
+/* Subtle grid background for hero.
+   The grid + fade mask live on a ::before layer so the mask only affects the
+   decorative grid — NOT the hero text/terminal (mask-image masks an element's
+   whole content, which previously faded the copy out toward the bottom). */
 .hero-grid {
+  position: relative;
+  isolation: isolate;
+}
+.hero-grid::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
   background-image:
     linear-gradient(rgb(35 35 48 / 0.45) 1px, transparent 1px),
     linear-gradient(90deg, rgb(35 35 48 / 0.45) 1px, transparent 1px);
   background-size: 44px 44px;
   mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, black 35%, transparent 75%);
+  -webkit-mask-image: radial-gradient(ellipse 90% 70% at 50% 0%, black 35%, transparent 75%);
 }
 
 /* Animated pulse for live dot */

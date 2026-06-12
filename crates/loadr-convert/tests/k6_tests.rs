@@ -134,10 +134,7 @@ fn scenarios_script_converts() {
     assert_eq!(post.method.as_deref(), Some("POST"));
     match post.body.as_ref() {
         Some(Body::Spec(spec)) => {
-            assert_eq!(
-                spec.json,
-                Some(serde_json::json!({ "item": 42, "qty": 1 }))
-            );
+            assert_eq!(spec.json, Some(serde_json::json!({ "item": 42, "qty": 1 })));
         }
         other => panic!("expected json body, got {other:?}"),
     }

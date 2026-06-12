@@ -9,8 +9,9 @@ use std::collections::BTreeMap;
 
 use indexmap::IndexMap;
 use loadr_config::{
-    Body, BodySpec, Condition, CustomMetric, Dur, ExecutorKind, GroupStep, JsConfig, MetricKindSpec,
-    RequestStep, Scenario, Stage, Step, TestPlan, ThinkTimeSpec, ThresholdEntry, ThresholdList,
+    Body, BodySpec, Condition, CustomMetric, Dur, ExecutorKind, GroupStep, JsConfig,
+    MetricKindSpec, RequestStep, Scenario, Stage, Step, TestPlan, ThinkTimeSpec, ThresholdEntry,
+    ThresholdList,
 };
 
 use crate::{Conversion, ConversionWarning, ConvertError};
@@ -78,9 +79,7 @@ impl K6Converter {
     }
 
     fn scan_metrics(&mut self) {
-        let re = static_regex(
-            r#"new\s+(Trend|Counter|Rate|Gauge)\s*\(\s*['"]([^'"]+)['"]"#,
-        );
+        let re = static_regex(r#"new\s+(Trend|Counter|Rate|Gauge)\s*\(\s*['"]([^'"]+)['"]"#);
         let stripped = self.stripped.clone();
         for cap in re.captures_iter(&stripped) {
             let (Some(kind), Some(name)) = (cap.get(1), cap.get(2)) else {
@@ -129,9 +128,8 @@ impl K6Converter {
             .find('{')
             .ok_or_else(|| ConvertError::Options("`options` is not an object literal".into()))?;
         let open = m.end() + open_rel;
-        let close = match_delim(&self.stripped, open).ok_or_else(|| {
-            ConvertError::Options("unbalanced braces in `options` object".into())
-        })?;
+        let close = match_delim(&self.stripped, open)
+            .ok_or_else(|| ConvertError::Options("unbalanced braces in `options` object".into()))?;
         let literal = self.stripped[open..=close].to_string();
         let value = js_object_to_json(&literal)
             .map_err(|e| ConvertError::Options(format!("cannot interpret options: {e}")))?;
@@ -212,10 +210,11 @@ impl K6Converter {
                 let mut entries = Vec::new();
                 for item in items {
                     match item {
-                        serde_json::Value::String(s) => entries.push(ThresholdEntry::Expr(s.clone())),
+                        serde_json::Value::String(s) => {
+                            entries.push(ThresholdEntry::Expr(s.clone()))
+                        }
                         serde_json::Value::Object(o) => {
-                            let Some(threshold) =
-                                o.get("threshold").and_then(|v| v.as_str())
+                            let Some(threshold) = o.get("threshold").and_then(|v| v.as_str())
                             else {
                                 self.warn(
                                     format!("thresholds.{metric}"),
@@ -342,9 +341,10 @@ impl K6Converter {
                     None
                 }
             },
-            serde_json::Value::Number(n) => n.as_f64().filter(|v| *v >= 0.0).map(|secs| {
-                Dur::from(std::time::Duration::from_secs_f64(secs))
-            }),
+            serde_json::Value::Number(n) => n
+                .as_f64()
+                .filter(|v| *v >= 0.0)
+                .map(|secs| Dur::from(std::time::Duration::from_secs_f64(secs))),
             _ => {
                 self.warn(path.to_string(), "expected a duration string; skipped");
                 None
@@ -566,7 +566,10 @@ impl K6Converter {
         };
 
         let Some(url_arg) = args.first().cloned() else {
-            self.warn(format!("http.{method_token}"), "call without a URL; skipped");
+            self.warn(
+                format!("http.{method_token}"),
+                "call without a URL; skipped",
+            );
             return;
         };
         let Some(url) = self.url_from_arg(&url_arg) else {
@@ -726,23 +729,31 @@ impl K6Converter {
             }
         }
         // Math.random() * a + b   |   b + Math.random() * a   |   Math.random() * a
-        let re1 = static_regex(
-            r"^Math\.random\(\)\s*\*\s*([\d.]+)\s*(?:\+\s*([\d.]+))?$",
-        );
+        let re1 = static_regex(r"^Math\.random\(\)\s*\*\s*([\d.]+)\s*(?:\+\s*([\d.]+))?$");
         let re2 = static_regex(r"^([\d.]+)\s*\+\s*Math\.random\(\)\s*\*\s*([\d.]+)$");
         let parsed = re1
             .captures(inner)
             .map(|c| {
-                let a: f64 = c.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(0.0);
-                let b: f64 = c.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(0.0);
+                let a: f64 = c
+                    .get(1)
+                    .and_then(|m| m.as_str().parse().ok())
+                    .unwrap_or(0.0);
+                let b: f64 = c
+                    .get(2)
+                    .and_then(|m| m.as_str().parse().ok())
+                    .unwrap_or(0.0);
                 (a, b)
             })
             .or_else(|| {
                 re2.captures(inner).map(|c| {
-                    let b: f64 =
-                        c.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(0.0);
-                    let a: f64 =
-                        c.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(0.0);
+                    let b: f64 = c
+                        .get(1)
+                        .and_then(|m| m.as_str().parse().ok())
+                        .unwrap_or(0.0);
+                    let a: f64 = c
+                        .get(2)
+                        .and_then(|m| m.as_str().parse().ok())
+                        .unwrap_or(0.0);
                     (a, b)
                 })
             });
@@ -758,7 +769,7 @@ impl K6Converter {
         }
     }
 
-    fn convert_check(&mut self, inner: &str, steps: &mut Vec<Step>) {
+    fn convert_check(&mut self, inner: &str, steps: &mut [Step]) {
         let args = split_top_level_args(inner);
         if args.len() < 2 {
             self.warn("check()", "expected `check(res, { ... })`; skipped");
@@ -778,7 +789,10 @@ impl K6Converter {
                 continue;
             }
             let Some((key, value)) = split_key_value(entry) else {
-                self.warn("check()", format!("cannot parse check entry `{entry}`; skipped"));
+                self.warn(
+                    "check()",
+                    format!("cannot parse check entry `{entry}`; skipped"),
+                );
                 continue;
             };
             if let Some(cond) = self.condition_from_check(&key, &value, &res_ident) {
@@ -809,14 +823,24 @@ impl K6Converter {
         let (param, mut expr) = match arrow_re.captures(value.trim()) {
             Some(c) => (
                 c.get(1).map(|m| m.as_str()).unwrap_or("").to_string(),
-                c.get(2).map(|m| m.as_str()).unwrap_or("").trim().to_string(),
+                c.get(2)
+                    .map(|m| m.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string(),
             ),
             None => (res_ident.to_string(), value.trim().to_string()),
         };
         if expr.starts_with('{') {
             let ret_re = static_regex(r"(?s)^\{\s*return\s+(.*?);?\s*\}$");
             match ret_re.captures(&expr) {
-                Some(c) => expr = c.get(1).map(|m| m.as_str().trim()).unwrap_or("").to_string(),
+                Some(c) => {
+                    expr = c
+                        .get(1)
+                        .map(|m| m.as_str().trim())
+                        .unwrap_or("")
+                        .to_string()
+                }
                 None => {
                     self.warn(
                         format!("check `{name}`"),
@@ -831,9 +855,7 @@ impl K6Converter {
         // r.status === 200 (possibly || chains)
         let eq_re = regex::Regex::new(&format!(r"^{pe}\.status\s*===?\s*(\d+)$")).ok()?;
         let parts: Vec<&str> = expr.split("||").map(str::trim).collect();
-        if !parts.is_empty()
-            && parts.iter().all(|part| eq_re.is_match(part))
-        {
+        if !parts.is_empty() && parts.iter().all(|part| eq_re.is_match(part)) {
             let codes: Vec<i64> = parts
                 .iter()
                 .filter_map(|part| eq_re.captures(part))
@@ -860,17 +882,16 @@ impl K6Converter {
         }
 
         // r.body.includes('x')
-        let inc_re = regex::Regex::new(&format!(
-            r#"^{pe}\.body\.includes\(\s*(['"`])(.*)\1\s*\)$"#
-        ))
-        .ok()?;
+        let inc_re = regex::Regex::new(&format!(r"(?s)^{pe}\.body\.includes\((.+)\)$")).ok()?;
         if let Some(c) = inc_re.captures(&expr) {
-            return Some(Condition::BodyContains {
-                name: Some(name.to_string()),
-                value: c.get(2).map(|m| m.as_str()).unwrap_or("").to_string(),
-                negate: false,
-                on_failure: None,
-            });
+            if let Some(value) = c.get(1).and_then(|m| string_literal(m.as_str())) {
+                return Some(Condition::BodyContains {
+                    name: Some(name.to_string()),
+                    value,
+                    negate: false,
+                    on_failure: None,
+                });
+            }
         }
 
         // r.timings.duration < N
@@ -879,7 +900,10 @@ impl K6Converter {
         ))
         .ok()?;
         if let Some(c) = dur_re.captures(&expr) {
-            let ms: f64 = c.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(0.0);
+            let ms: f64 = c
+                .get(1)
+                .and_then(|m| m.as_str().parse().ok())
+                .unwrap_or(0.0);
             return Some(Condition::Duration {
                 name: Some(name.to_string()),
                 max: Dur::from(std::time::Duration::from_secs_f64(ms / 1000.0)),
@@ -975,9 +999,7 @@ fn stripped_script(original: &str) -> String {
     );
     for line in original.lines() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with("import ")
-            && (trimmed.contains("'k6") || trimmed.contains("\"k6"))
-        {
+        if trimmed.starts_with("import ") && (trimmed.contains("'k6") || trimmed.contains("\"k6")) {
             continue;
         }
         out.push_str(line);
@@ -1289,8 +1311,7 @@ fn tokenize_js_value(src: &str) -> Result<Vec<String>, String> {
             '0'..='9' | '-' | '+' | '.' => {
                 let start = i;
                 i += 1;
-                while i < chars.len()
-                    && matches!(chars[i], '0'..='9' | '.' | 'e' | 'E' | '+' | '-')
+                while i < chars.len() && matches!(chars[i], '0'..='9' | '.' | 'e' | 'E' | '+' | '-')
                 {
                     i += 1;
                 }
@@ -1379,4 +1400,86 @@ fn static_regex(pattern: &'static str) -> &'static regex::Regex {
     ));
     guard.insert(pattern, compiled);
     compiled
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn js_object_tolerates_js_syntax() {
+        let v =
+            js_object_to_json("{ vus: 5, duration: '30s', nested: { list: [1, 2,], ok: true, }, }")
+                .expect("parse");
+        assert_eq!(v["vus"], serde_json::json!(5));
+        assert_eq!(v["duration"], serde_json::json!("30s"));
+        assert_eq!(v["nested"]["list"], serde_json::json!([1, 2]));
+        assert_eq!(v["nested"]["ok"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn js_object_converts_env_refs() {
+        let v = js_object_to_json("{ host: __ENV.HOST, url: `${__ENV.BASE}/x` }").expect("parse");
+        assert_eq!(v["host"], serde_json::json!("${env.HOST}"));
+        assert_eq!(v["url"], serde_json::json!("${env.BASE}/x"));
+    }
+
+    #[test]
+    fn string_literal_handles_quotes_and_escapes() {
+        assert_eq!(string_literal("'a b'").as_deref(), Some("a b"));
+        assert_eq!(string_literal("\"x\\\"y\"").as_deref(), Some("x\"y"));
+        assert_eq!(string_literal("`t ${v}`").as_deref(), Some("t ${v}"));
+        assert_eq!(string_literal("'a' + 'b'"), None);
+        assert_eq!(string_literal("ident"), None);
+    }
+
+    #[test]
+    fn match_delim_skips_strings() {
+        let s = "fn(a, 'b)c', { d: ')' })";
+        assert_eq!(match_delim(s, 2), Some(s.len() - 1));
+    }
+
+    #[test]
+    fn split_args_is_bracket_and_string_aware() {
+        let args = split_top_level_args("url, JSON.stringify({a: 1, b: 2}), { h: ',' }");
+        assert_eq!(args.len(), 3);
+        assert_eq!(args[0], "url");
+        assert_eq!(args[1], "JSON.stringify({a: 1, b: 2})");
+    }
+
+    #[test]
+    fn strip_comments_preserves_strings() {
+        let out = strip_comments("const u = 'http://x'; // note\n/* gone */const v = 1;");
+        assert!(out.contains("'http://x'"));
+        assert!(!out.contains("note"));
+        assert!(!out.contains("gone"));
+        assert!(out.contains("const v = 1;"));
+    }
+
+    #[test]
+    fn sleep_variants() {
+        let mut cv = K6Converter::default();
+        let mut steps = Vec::new();
+        cv.convert_sleep("3", &mut steps);
+        cv.convert_sleep("Math.random() * 4 + 2", &mut steps);
+        cv.convert_sleep("Math.random() * 5", &mut steps);
+        assert_eq!(steps.len(), 3);
+        match &steps[1] {
+            Step::ThinkTime(ThinkTimeSpec::Uniform { min, max }) => {
+                assert_eq!(*min, Dur::from_secs(2));
+                assert_eq!(*max, Dur::from_secs(6));
+            }
+            other => panic!("expected uniform, got {other:?}"),
+        }
+        match &steps[2] {
+            Step::ThinkTime(ThinkTimeSpec::Uniform { min, max }) => {
+                assert_eq!(*min, Dur::from_secs(0));
+                assert_eq!(*max, Dur::from_secs(5));
+            }
+            other => panic!("expected uniform, got {other:?}"),
+        }
+        cv.convert_sleep("someVariable", &mut steps);
+        assert_eq!(steps.len(), 3, "unparseable sleep should be skipped");
+        assert!(cv.warnings.iter().any(|w| w.element.contains("sleep")));
+    }
 }

@@ -375,10 +375,7 @@ impl JmxConverter {
             self.warn(label, "CSV data set has no filename; skipped");
             return;
         }
-        let source = unique_name(
-            &mut self.data_names,
-            slugify(node.testname(), "csv"),
-        );
+        let source = unique_name(&mut self.data_names, slugify(node.testname(), "csv"));
         let variable_names: Vec<String> = node
             .prop("variableNames")
             .unwrap_or("")
@@ -442,10 +439,8 @@ impl JmxConverter {
             },
         );
         for name in variable_names {
-            self.rewrites.push((
-                format!("${{{name}}}"),
-                format!("${{data.{source}.{name}}}"),
-            ));
+            self.rewrites
+                .push((format!("${{{name}}}"), format!("${{data.{source}.{name}}}")));
         }
     }
 
@@ -491,7 +486,9 @@ impl JmxConverter {
 
         let (loops, forever) = match tg.element_prop("ThreadGroup.main_controller") {
             Some(lc) => {
-                let cont = lc.bool_prop("LoopController.continue_forever").unwrap_or(false);
+                let cont = lc
+                    .bool_prop("LoopController.continue_forever")
+                    .unwrap_or(false);
                 let raw = lc.prop("LoopController.loops").unwrap_or("1").trim();
                 let n: i64 = raw.parse().unwrap_or(1);
                 (n.max(1) as u64, cont || n == -1)
@@ -604,8 +601,10 @@ impl JmxConverter {
                     } else if n > 10 {
                         self.warn(
                             node.label(),
-                            format!("loop count {n} exceeds 10; children included once \
-                                     — wrap them in a JS loop if exact repetition matters"),
+                            format!(
+                                "loop count {n} exceeds 10; children included once \
+                                     — wrap them in a JS loop if exact repetition matters"
+                            ),
                         );
                         1
                     } else {
@@ -653,7 +652,10 @@ impl JmxConverter {
                             iterations_per_second: per_minute / 60.0,
                         });
                     } else {
-                        self.warn(node.label(), "constant throughput timer has no rate; skipped");
+                        self.warn(
+                            node.label(),
+                            "constant throughput timer has no rate; skipped",
+                        );
                     }
                 }
                 other => {
@@ -690,9 +692,21 @@ impl JmxConverter {
             .filter(|p| !p.is_empty())
             .unwrap_or("http")
             .to_ascii_lowercase();
-        let domain = node.prop("HTTPSampler.domain").unwrap_or("").trim().to_string();
-        let port = node.prop("HTTPSampler.port").unwrap_or("").trim().to_string();
-        let path_raw = node.prop("HTTPSampler.path").unwrap_or("").trim().to_string();
+        let domain = node
+            .prop("HTTPSampler.domain")
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let port = node
+            .prop("HTTPSampler.port")
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let path_raw = node
+            .prop("HTTPSampler.path")
+            .unwrap_or("")
+            .trim()
+            .to_string();
         let content_encoding = node
             .prop("HTTPSampler.contentEncoding")
             .unwrap_or("")
@@ -893,7 +907,11 @@ impl JmxConverter {
     fn convert_response_assertion(&mut self, node: &Node, req: &mut RequestStep) {
         let label = node.label();
         let name = non_empty(node.testname()).map(str::to_string);
-        let field = node.prop("Assertion.test_field").unwrap_or("").trim().to_string();
+        let field = node
+            .prop("Assertion.test_field")
+            .unwrap_or("")
+            .trim()
+            .to_string();
         let test_type = node.int_prop("Assertion.test_type").unwrap_or(16);
         let negate = test_type & 4 != 0;
         let kind = test_type & !(4 | 32); // strip NOT and OR flags
@@ -1012,7 +1030,9 @@ impl JmxConverter {
             other => {
                 self.warn(
                     node.label(),
-                    format!("size assertion operator {other} (e.g. `!=`) is not supported; skipped"),
+                    format!(
+                        "size assertion operator {other} (e.g. `!=`) is not supported; skipped"
+                    ),
                 );
                 return;
             }
@@ -1077,10 +1097,17 @@ impl JmxConverter {
 
     fn convert_regex_extractor(&mut self, node: &Node, req: &mut RequestStep) {
         let label = node.label();
-        let name = node.prop("RegexExtractor.refname").unwrap_or("").trim().to_string();
+        let name = node
+            .prop("RegexExtractor.refname")
+            .unwrap_or("")
+            .trim()
+            .to_string();
         let expr = node.prop("RegexExtractor.regex").unwrap_or("").to_string();
         if name.is_empty() || expr.is_empty() {
-            self.warn(label, "regex extractor is missing a name or expression; skipped");
+            self.warn(
+                label,
+                "regex extractor is missing a name or expression; skipped",
+            );
             return;
         }
         let template = node.prop("RegexExtractor.template").unwrap_or("$1$").trim();
@@ -1134,8 +1161,7 @@ impl JmxConverter {
             );
             return;
         }
-        let index =
-            self.match_number_index(&label, node.prop("JSONPostProcessor.match_numbers"));
+        let index = self.match_number_index(&label, node.prop("JSONPostProcessor.match_numbers"));
         for (i, (name, expr)) in names.iter().zip(exprs.iter()).enumerate() {
             req.extract.push(Extractor::Jsonpath {
                 name: (*name).to_string(),
@@ -1152,9 +1178,19 @@ impl JmxConverter {
 
     fn convert_boundary_extractor(&mut self, node: &Node, req: &mut RequestStep) {
         let label = node.label();
-        let name = node.prop("BoundaryExtractor.refname").unwrap_or("").trim().to_string();
-        let left = node.prop("BoundaryExtractor.lboundary").unwrap_or("").to_string();
-        let right = node.prop("BoundaryExtractor.rboundary").unwrap_or("").to_string();
+        let name = node
+            .prop("BoundaryExtractor.refname")
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let left = node
+            .prop("BoundaryExtractor.lboundary")
+            .unwrap_or("")
+            .to_string();
+        let right = node
+            .prop("BoundaryExtractor.rboundary")
+            .unwrap_or("")
+            .to_string();
         if name.is_empty() || (left.is_empty() && right.is_empty()) {
             self.warn(label, "boundary extractor incomplete; skipped");
             return;
@@ -1197,7 +1233,10 @@ impl JmxConverter {
                 duration: Dur::from_millis(ms),
             }),
             None => {
-                self.warn(node.label(), "constant timer delay is not a number; skipped");
+                self.warn(
+                    node.label(),
+                    "constant timer delay is not a number; skipped",
+                );
                 None
             }
         }
@@ -1238,7 +1277,10 @@ impl JmxConverter {
     fn convert_cookie_manager(&mut self, node: &Node) {
         // Automatic per-VU cookie handling is loadr's default already.
         self.plan.defaults.http.cookies = true;
-        if node.bool_prop("CookieManager.clearEachIteration").unwrap_or(false) {
+        if node
+            .bool_prop("CookieManager.clearEachIteration")
+            .unwrap_or(false)
+        {
             self.warn(
                 node.label(),
                 "`clear cookies each iteration` has no loadr equivalent; \
@@ -1365,4 +1407,92 @@ fn regex_template_group() -> &'static regex::Regex {
     RE.get_or_init(|| {
         regex::Regex::new(r"^\$(\d+)\$$").unwrap_or_else(|_| unreachable!("static regex"))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slugify_normalizes_names() {
+        assert_eq!(slugify("Browse Shop", "x"), "browse-shop");
+        assert_eq!(slugify("  API / v2 (load) ", "x"), "api-v2-load");
+        assert_eq!(slugify("***", "fallback"), "fallback");
+    }
+
+    #[test]
+    fn unique_name_dedupes() {
+        let mut taken = BTreeSet::new();
+        assert_eq!(unique_name(&mut taken, "a".into()), "a");
+        assert_eq!(unique_name(&mut taken, "a".into()), "a-2");
+        assert_eq!(unique_name(&mut taken, "a".into()), "a-3");
+    }
+
+    #[test]
+    fn nested_double_prop_is_read() {
+        let xml = r#"<?xml version="1.0"?>
+<jmeterTestPlan><hashTree>
+  <TestPlan testname="t"/>
+  <hashTree>
+    <ThreadGroup testname="g">
+      <elementProp name="ThreadGroup.main_controller" elementType="LoopController">
+        <stringProp name="LoopController.loops">-1</stringProp>
+      </elementProp>
+      <stringProp name="ThreadGroup.num_threads">2</stringProp>
+      <stringProp name="ThreadGroup.ramp_time">0</stringProp>
+      <boolProp name="ThreadGroup.scheduler">true</boolProp>
+      <stringProp name="ThreadGroup.duration">60</stringProp>
+    </ThreadGroup>
+    <hashTree>
+      <ConstantThroughputTimer testname="pace">
+        <doubleProp>
+          <name>throughput</name>
+          <value>30.0</value>
+        </doubleProp>
+      </ConstantThroughputTimer>
+      <hashTree/>
+      <HTTPSamplerProxy testname="ping">
+        <stringProp name="HTTPSampler.domain">example.com</stringProp>
+        <stringProp name="HTTPSampler.protocol">https</stringProp>
+        <stringProp name="HTTPSampler.path">/ping</stringProp>
+        <stringProp name="HTTPSampler.method">GET</stringProp>
+      </HTTPSamplerProxy>
+      <hashTree/>
+    </hashTree>
+  </hashTree>
+</hashTree></jmeterTestPlan>"#;
+        let conv = convert_jmx(xml).expect("convert");
+        let scenario = conv.plan.scenarios.get("g").expect("scenario");
+        let pacing = scenario.pacing.expect("pacing from doubleProp");
+        assert!((pacing.iterations_per_second - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn xml_entities_are_resolved() {
+        let xml = r#"<?xml version="1.0"?>
+<jmeterTestPlan><hashTree>
+  <TestPlan testname="A &amp; B"/>
+  <hashTree>
+    <ThreadGroup testname="g">
+      <stringProp name="ThreadGroup.num_threads">1</stringProp>
+      <stringProp name="ThreadGroup.ramp_time">0</stringProp>
+    </ThreadGroup>
+    <hashTree>
+      <HTTPSamplerProxy testname="q">
+        <stringProp name="HTTPSampler.domain">example.com</stringProp>
+        <stringProp name="HTTPSampler.protocol">https</stringProp>
+        <stringProp name="HTTPSampler.path">/search?q=a&amp;b</stringProp>
+      </HTTPSamplerProxy>
+      <hashTree/>
+    </hashTree>
+  </hashTree>
+</hashTree></jmeterTestPlan>"#;
+        let conv = convert_jmx(xml).expect("convert");
+        assert_eq!(conv.plan.name.as_deref(), Some("A & B"));
+        let scenario = conv.plan.scenarios.get("g").expect("scenario");
+        match &scenario.flow[0] {
+            Step::Request(r) => assert_eq!(r.url, "/search?q=a&b"),
+            other => panic!("expected request, got {other:?}"),
+        }
+    }
 }

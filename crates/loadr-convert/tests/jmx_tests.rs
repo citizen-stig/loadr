@@ -115,7 +115,12 @@ fn complex_plan_converts() {
     let plan = &conv.plan;
 
     assert_eq!(plan.name.as_deref(), Some("Complex Shop Plan"));
-    assert_eq!(plan.scenarios.len(), 2, "scenarios: {:?}", plan.scenarios.keys());
+    assert_eq!(
+        plan.scenarios.len(),
+        2,
+        "scenarios: {:?}",
+        plan.scenarios.keys()
+    );
 
     // Plan-level header manager -> defaults.
     assert_eq!(
@@ -123,7 +128,11 @@ fn complex_plan_converts() {
         Some("application/json")
     );
     assert_eq!(
-        plan.defaults.http.headers.get("X-Source").map(String::as_str),
+        plan.defaults
+            .http
+            .headers
+            .get("X-Source")
+            .map(String::as_str),
         Some("jmeter")
     );
 
@@ -198,7 +207,9 @@ fn complex_plan_converts() {
         other => panic!("expected jsonpath extractor, got {other:?}"),
     }
     match &cart.extract[2] {
-        Extractor::Boundary { name, left, right, .. } => {
+        Extractor::Boundary {
+            name, left, right, ..
+        } => {
             assert_eq!(name, "session");
             assert_eq!(left, "session=");
             assert_eq!(right, ";");
@@ -206,7 +217,9 @@ fn complex_plan_converts() {
         other => panic!("expected boundary extractor, got {other:?}"),
     }
     match &cart.extract[3] {
-        Extractor::Xpath { name, expression, .. } => {
+        Extractor::Xpath {
+            name, expression, ..
+        } => {
             assert_eq!(name, "page_title");
             assert_eq!(expression, "//title/text()");
         }
@@ -266,7 +279,10 @@ fn complex_plan_converts() {
     }
 
     // Second thread group: forever + scheduler, no ramp -> constant-vus.
-    let health = plan.scenarios.get("health-checks").expect("health scenario");
+    let health = plan
+        .scenarios
+        .get("health-checks")
+        .expect("health scenario");
     assert_eq!(health.executor, ExecutorKind::ConstantVus);
     assert_eq!(health.vus, Some(10));
     assert_eq!(health.duration, Some(loadr_config::Dur::from_secs(120)));
@@ -304,7 +320,7 @@ fn invalid_xml_is_an_error() {
 
 #[test]
 fn non_jmx_xml_is_rejected() {
-    let err = convert_jmx("<?xml version=\"1.0\"?><other><thing/></other>")
-        .expect_err("should fail");
+    let err =
+        convert_jmx("<?xml version=\"1.0\"?><other><thing/></other>").expect_err("should fail");
     assert!(matches!(err, ConvertError::NotJmx(_)), "got {err:?}");
 }

@@ -1,0 +1,11 @@
+[package]
+name = "loadr-plugin-example-native-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "native_protocol"
+
+[dependencies]

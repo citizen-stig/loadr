@@ -1,0 +1,12 @@
+[package]
+name = "loadr-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "loadr"
+path = "src/main.rs"
+
+[dependencies]

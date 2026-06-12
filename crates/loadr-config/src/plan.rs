@@ -1,0 +1,1660 @@
+//! The loadr YAML test definition schema.
+//!
+//! Every type here derives `JsonSchema` so `loadr schema` can emit a JSON Schema
+//! for editor validation/autocomplete.
+
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+
+use indexmap::IndexMap;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use crate::duration::Dur;
+
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+fn default_true() -> bool {
+    true
+}
+fn is_true(b: &bool) -> bool {
+    *b
+}
+
+/// Root of a loadr test definition file.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct TestPlan {
+    /// Human-readable test name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Free-form description.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Defaults applied to every request (base URL, headers, timeouts, TLS, ...).
+    #[serde(default)]
+    pub defaults: Defaults,
+    /// Named environment overrides; selected with `loadr run -e <name>`.
+    /// Each value is a partial test definition deep-merged over this file.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub env: BTreeMap<String, serde_json::Value>,
+    /// Variables available via `${vars.<name>}` interpolation.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub variables: IndexMap<String, serde_json::Value>,
+    /// Secrets resolved at runtime from the environment or files; available via
+    /// `${secrets.<name>}` and never printed in logs or reports.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub secrets: IndexMap<String, SecretSource>,
+    /// Data sources for parameterization, available via `${data.<source>.<column>}`.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub data: IndexMap<String, DataSource>,
+    /// Custom metrics that can be recorded from JS or YAML.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub metrics: IndexMap<String, CustomMetric>,
+    /// Embedded JavaScript configuration (inline script or external file).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub js: Option<JsConfig>,
+    /// Named scenarios; each runs concurrently with its own executor.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub scenarios: IndexMap<String, Scenario>,
+    /// Pass/fail criteria over metrics, k6-compatible (e.g. `p(95)<400`).
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub thresholds: IndexMap<String, ThresholdList>,
+    /// Metric outputs/exporters.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<OutputConfig>,
+    /// Plugins to load for this test.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plugins: Vec<PluginRef>,
+}
+
+// ---------------------------------------------------------------------------
+// Defaults
+// ---------------------------------------------------------------------------
+
+/// Defaults applied to all scenarios and requests.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct Defaults {
+    /// HTTP defaults (base URL, headers, timeout, TLS, redirects, proxy, ...).
+    #[serde(default)]
+    pub http: HttpDefaults,
+    /// Tags added to every metric sample.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tags: BTreeMap<String, String>,
+    /// Default think time applied between flow steps (overridable per scenario).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub think_time: Option<ThinkTimeSpec>,
+}
+
+/// HTTP client defaults.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct HttpDefaults {
+    /// Base URL prepended to relative request URLs, e.g. `https://api.example.com`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    /// Headers sent with every request (request-level headers take precedence).
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub headers: IndexMap<String, String>,
+    /// Request timeout (default `30s`).
+    #[serde(default = "HttpDefaults::default_timeout")]
+    pub timeout: Dur,
+    /// Follow redirects (default `true`).
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub follow_redirects: bool,
+    /// Maximum redirects to follow (default `10`).
+    #[serde(default = "HttpDefaults::default_max_redirects")]
+    pub max_redirects: u32,
+    /// HTTP version preference (default `auto` = ALPN-negotiated).
+    #[serde(default)]
+    pub version: HttpVersionPref,
+    /// Send `Accept-Encoding` and decompress responses (default `true`).
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub compression: bool,
+    /// Reuse connections across iterations of the same VU (default `true`).
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub keep_alive: bool,
+    /// HTTP/HTTPS proxy URL, e.g. `http://proxy.internal:3128`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy: Option<String>,
+    /// TLS settings (custom CAs, client certificates, verification).
+    #[serde(default)]
+    pub tls: TlsConfig,
+    /// Automatic cookie handling (per-VU cookie jar, default `true`).
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub cookies: bool,
+}
+
+impl HttpDefaults {
+    fn default_timeout() -> Dur {
+        Dur::from_secs(30)
+    }
+    fn default_max_redirects() -> u32 {
+        10
+    }
+}
+
+impl Default for HttpDefaults {
+    fn default() -> Self {
+        HttpDefaults {
+            base_url: None,
+            headers: IndexMap::new(),
+            timeout: Self::default_timeout(),
+            follow_redirects: true,
+            max_redirects: Self::default_max_redirects(),
+            version: HttpVersionPref::default(),
+            compression: true,
+            keep_alive: true,
+            proxy: None,
+            tls: TlsConfig::default(),
+            cookies: true,
+        }
+    }
+}
+
+/// Preferred HTTP protocol version.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum HttpVersionPref {
+    /// Negotiate via ALPN (HTTP/2 when the server supports it).
+    #[default]
+    Auto,
+    /// Force HTTP/1.1.
+    Http1,
+    /// Negotiate HTTP/2 over TLS; plaintext URLs use HTTP/1.1.
+    Http2,
+    /// HTTP/2 with prior knowledge (no upgrade), including over plaintext.
+    Http2PriorKnowledge,
+}
+
+/// TLS configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct TlsConfig {
+    /// Skip server certificate verification (NOT for production use).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub insecure_skip_verify: bool,
+    /// PEM file with additional trusted root CAs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ca_file: Option<PathBuf>,
+    /// PEM client certificate for mTLS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cert_file: Option<PathBuf>,
+    /// PEM client private key for mTLS.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_file: Option<PathBuf>,
+    /// Override the SNI server name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_name: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Scenarios & executors
+// ---------------------------------------------------------------------------
+
+/// A named scenario: an executor plus a workload (YAML `flow` and/or JS `exec`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct Scenario {
+    /// Executor type: how load is scheduled.
+    pub executor: ExecutorKind,
+    /// Number of VUs (`constant-vus`, `per-vu-iterations`, `shared-iterations`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vus: Option<u64>,
+    /// Total run duration (`constant-vus`, `constant-arrival-rate`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration: Option<Dur>,
+    /// Iteration count (`per-vu-iterations`: per VU; `shared-iterations`: total).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub iterations: Option<u64>,
+    /// Initial VU count (`ramping-vus`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_vus: Option<u64>,
+    /// Ramp stages (`ramping-vus`: target VUs; `ramping-arrival-rate`: target rate).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stages: Vec<Stage>,
+    /// Iterations started per `time_unit` (`constant-arrival-rate`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate: Option<f64>,
+    /// Initial rate (`ramping-arrival-rate`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_rate: Option<f64>,
+    /// Period the `rate` applies to (default `1s`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub time_unit: Option<Dur>,
+    /// VUs pre-allocated for arrival-rate executors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pre_allocated_vus: Option<u64>,
+    /// Maximum VUs an arrival-rate or externally-controlled executor may grow to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_vus: Option<u64>,
+    /// Hard cap on scenario duration for iteration-based executors (default `10m`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_duration: Option<Dur>,
+    /// Delay before this scenario starts, relative to test start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_time: Option<Dur>,
+    /// Time to let in-flight iterations finish after the scenario ends (default `30s`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graceful_stop: Option<Dur>,
+    /// Like `graceful_stop` but for VUs removed while ramping down (`ramping-vus`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graceful_ramp_down: Option<Dur>,
+    /// Name of an exported JS function to run per iteration (instead of/with `flow`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exec: Option<String>,
+    /// Declarative iteration body: requests, think time, JS snippets, groups.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub flow: Vec<Step>,
+    /// Target iteration pacing: a constant-throughput timer for this scenario's VUs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pacing: Option<PacingSpec>,
+    /// Default think time between request steps in this scenario.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub think_time: Option<ThinkTimeSpec>,
+    /// Tags added to all samples from this scenario.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tags: BTreeMap<String, String>,
+}
+
+/// Executor type, matching k6 semantics.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExecutorKind {
+    /// A fixed number of VUs iterating for a duration (closed model).
+    #[default]
+    ConstantVus,
+    /// VU count ramps between stage targets (closed model).
+    RampingVus,
+    /// Iterations start at a fixed rate regardless of completion (open model).
+    ConstantArrivalRate,
+    /// Iteration start rate ramps between stage targets (open model).
+    RampingArrivalRate,
+    /// Each VU runs a fixed number of iterations.
+    PerVuIterations,
+    /// A shared pool of iterations split among VUs.
+    SharedIterations,
+    /// VU count and duration controlled at runtime (API/web UI/controller).
+    ExternallyControlled,
+}
+
+impl ExecutorKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ExecutorKind::ConstantVus => "constant-vus",
+            ExecutorKind::RampingVus => "ramping-vus",
+            ExecutorKind::ConstantArrivalRate => "constant-arrival-rate",
+            ExecutorKind::RampingArrivalRate => "ramping-arrival-rate",
+            ExecutorKind::PerVuIterations => "per-vu-iterations",
+            ExecutorKind::SharedIterations => "shared-iterations",
+            ExecutorKind::ExternallyControlled => "externally-controlled",
+        }
+    }
+}
+
+/// One ramp stage: reach `target` over `duration`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Stage {
+    /// Stage length.
+    pub duration: Dur,
+    /// Target value at the end of the stage (VUs or rate, depending on executor).
+    pub target: f64,
+}
+
+/// A strict, validated executor specification produced by [`Scenario::executor_spec`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExecutorSpec {
+    ConstantVus {
+        vus: u64,
+        duration: std::time::Duration,
+    },
+    RampingVus {
+        start_vus: u64,
+        stages: Vec<(std::time::Duration, u64)>,
+    },
+    ConstantArrivalRate {
+        /// Iterations per second (already normalized by `time_unit`).
+        rate: f64,
+        duration: std::time::Duration,
+        pre_allocated_vus: u64,
+        max_vus: u64,
+    },
+    RampingArrivalRate {
+        /// Iterations per second at t=0.
+        start_rate: f64,
+        /// Stages with rates normalized to per-second.
+        stages: Vec<(std::time::Duration, f64)>,
+        pre_allocated_vus: u64,
+        max_vus: u64,
+    },
+    PerVuIterations {
+        vus: u64,
+        iterations: u64,
+        max_duration: std::time::Duration,
+    },
+    SharedIterations {
+        vus: u64,
+        iterations: u64,
+        max_duration: std::time::Duration,
+    },
+    ExternallyControlled {
+        max_vus: u64,
+        duration: Option<std::time::Duration>,
+    },
+}
+
+impl ExecutorSpec {
+    /// Total scheduled duration of the executor, excluding graceful stop.
+    /// `None` means unbounded/externally controlled.
+    pub fn scheduled_duration(&self) -> Option<std::time::Duration> {
+        match self {
+            ExecutorSpec::ConstantVus { duration, .. } => Some(*duration),
+            ExecutorSpec::RampingVus { stages, .. } => Some(stages.iter().map(|(d, _)| *d).sum()),
+            ExecutorSpec::ConstantArrivalRate { duration, .. } => Some(*duration),
+            ExecutorSpec::RampingArrivalRate { stages, .. } => {
+                Some(stages.iter().map(|(d, _)| *d).sum())
+            }
+            ExecutorSpec::PerVuIterations { max_duration, .. }
+            | ExecutorSpec::SharedIterations { max_duration, .. } => Some(*max_duration),
+            ExecutorSpec::ExternallyControlled { duration, .. } => *duration,
+        }
+    }
+
+    /// Peak number of VUs this executor may use.
+    pub fn peak_vus(&self) -> u64 {
+        match self {
+            ExecutorSpec::ConstantVus { vus, .. } => *vus,
+            ExecutorSpec::RampingVus { start_vus, stages } => stages
+                .iter()
+                .map(|(_, t)| *t)
+                .chain(std::iter::once(*start_vus))
+                .max()
+                .unwrap_or(0),
+            ExecutorSpec::ConstantArrivalRate { max_vus, .. }
+            | ExecutorSpec::RampingArrivalRate { max_vus, .. }
+            | ExecutorSpec::ExternallyControlled { max_vus, .. } => *max_vus,
+            ExecutorSpec::PerVuIterations { vus, .. }
+            | ExecutorSpec::SharedIterations { vus, .. } => *vus,
+        }
+    }
+}
+
+impl Scenario {
+    /// Validate executor parameters and produce the strict spec.
+    pub fn executor_spec(&self) -> Result<ExecutorSpec, String> {
+        let time_unit = self
+            .time_unit
+            .map(|d| d.as_duration())
+            .unwrap_or(std::time::Duration::from_secs(1));
+        if time_unit.is_zero() {
+            return Err("`time_unit` must be greater than zero".into());
+        }
+        let per_second = |rate: f64| rate / time_unit.as_secs_f64();
+        let default_max_duration = std::time::Duration::from_secs(600);
+
+        match self.executor {
+            ExecutorKind::ConstantVus => {
+                let vus = self.vus.ok_or("`constant-vus` requires `vus`")?;
+                let duration = self
+                    .duration
+                    .ok_or("`constant-vus` requires `duration`")?
+                    .as_duration();
+                if vus == 0 {
+                    return Err("`vus` must be at least 1".into());
+                }
+                if duration.is_zero() {
+                    return Err("`duration` must be greater than zero".into());
+                }
+                Ok(ExecutorSpec::ConstantVus { vus, duration })
+            }
+            ExecutorKind::RampingVus => {
+                if self.stages.is_empty() {
+                    return Err("`ramping-vus` requires at least one entry in `stages`".into());
+                }
+                let stages = self
+                    .stages
+                    .iter()
+                    .map(|s| {
+                        if s.target < 0.0 || s.target.fract() != 0.0 {
+                            Err(format!(
+                                "`ramping-vus` stage targets must be non-negative integers, got {}",
+                                s.target
+                            ))
+                        } else {
+                            Ok((s.duration.as_duration(), s.target as u64))
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(ExecutorSpec::RampingVus {
+                    start_vus: self.start_vus.unwrap_or(0),
+                    stages,
+                })
+            }
+            ExecutorKind::ConstantArrivalRate => {
+                let rate = self.rate.ok_or("`constant-arrival-rate` requires `rate`")?;
+                let duration = self
+                    .duration
+                    .ok_or("`constant-arrival-rate` requires `duration`")?
+                    .as_duration();
+                let pre = self
+                    .pre_allocated_vus
+                    .ok_or("`constant-arrival-rate` requires `pre_allocated_vus`")?;
+                if rate <= 0.0 {
+                    return Err("`rate` must be greater than zero".into());
+                }
+                let max_vus = self.max_vus.unwrap_or(pre);
+                if max_vus < pre {
+                    return Err("`max_vus` cannot be less than `pre_allocated_vus`".into());
+                }
+                Ok(ExecutorSpec::ConstantArrivalRate {
+                    rate: per_second(rate),
+                    duration,
+                    pre_allocated_vus: pre,
+                    max_vus,
+                })
+            }
+            ExecutorKind::RampingArrivalRate => {
+                if self.stages.is_empty() {
+                    return Err(
+                        "`ramping-arrival-rate` requires at least one entry in `stages`".into(),
+                    );
+                }
+                let pre = self
+                    .pre_allocated_vus
+                    .ok_or("`ramping-arrival-rate` requires `pre_allocated_vus`")?;
+                let max_vus = self.max_vus.unwrap_or(pre);
+                if max_vus < pre {
+                    return Err("`max_vus` cannot be less than `pre_allocated_vus`".into());
+                }
+                let stages = self
+                    .stages
+                    .iter()
+                    .map(|s| {
+                        if s.target < 0.0 {
+                            Err("`ramping-arrival-rate` stage targets must be non-negative"
+                                .to_string())
+                        } else {
+                            Ok((s.duration.as_duration(), per_second(s.target)))
+                        }
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(ExecutorSpec::RampingArrivalRate {
+                    start_rate: per_second(self.start_rate.unwrap_or(0.0)),
+                    stages,
+                    pre_allocated_vus: pre,
+                    max_vus,
+                })
+            }
+            ExecutorKind::PerVuIterations => {
+                let vus = self.vus.ok_or("`per-vu-iterations` requires `vus`")?;
+                let iterations = self
+                    .iterations
+                    .ok_or("`per-vu-iterations` requires `iterations`")?;
+                if vus == 0 || iterations == 0 {
+                    return Err("`vus` and `iterations` must be at least 1".into());
+                }
+                Ok(ExecutorSpec::PerVuIterations {
+                    vus,
+                    iterations,
+                    max_duration: self
+                        .max_duration
+                        .map(|d| d.as_duration())
+                        .unwrap_or(default_max_duration),
+                })
+            }
+            ExecutorKind::SharedIterations => {
+                let vus = self.vus.ok_or("`shared-iterations` requires `vus`")?;
+                let iterations = self
+                    .iterations
+                    .ok_or("`shared-iterations` requires `iterations`")?;
+                if vus == 0 || iterations == 0 {
+                    return Err("`vus` and `iterations` must be at least 1".into());
+                }
+                Ok(ExecutorSpec::SharedIterations {
+                    vus,
+                    iterations,
+                    max_duration: self
+                        .max_duration
+                        .map(|d| d.as_duration())
+                        .unwrap_or(default_max_duration),
+                })
+            }
+            ExecutorKind::ExternallyControlled => {
+                let max_vus = self
+                    .max_vus
+                    .ok_or("`externally-controlled` requires `max_vus`")?;
+                if max_vus == 0 {
+                    return Err("`max_vus` must be at least 1".into());
+                }
+                Ok(ExecutorSpec::ExternallyControlled {
+                    max_vus,
+                    duration: self.duration.map(|d| d.as_duration()),
+                })
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Flow steps
+// ---------------------------------------------------------------------------
+
+/// One step in a scenario flow, written as a single-key mapping:
+/// `- request: {...}`, `- think_time: {...}`, `- js: "..."`, `- group: {...}`.
+#[derive(Debug, Clone)]
+pub enum Step {
+    /// Execute a protocol request.
+    Request(Box<RequestStep>),
+    /// Pause (a JMeter-style timer).
+    ThinkTime(ThinkTimeSpec),
+    /// Run a JavaScript snippet or a named exported function.
+    Js(JsStep),
+    /// Group steps under a name; samples get a `group` tag.
+    Group(GroupStep),
+}
+
+const STEP_KINDS: &[&str] = &["request", "think_time", "js", "group"];
+
+impl Serialize for Step {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(Some(1))?;
+        match self {
+            Step::Request(r) => map.serialize_entry("request", r)?,
+            Step::ThinkTime(t) => map.serialize_entry("think_time", t)?,
+            Step::Js(j) => map.serialize_entry("js", j)?,
+            Step::Group(g) => map.serialize_entry("group", g)?,
+        }
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Step {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct StepVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for StepVisitor {
+            type Value = Step;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(
+                    f,
+                    "a step mapping with exactly one of: `request`, `think_time`, `js`, `group`"
+                )
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Step, A::Error> {
+                let key: Option<String> = map.next_key()?;
+                let key = key.ok_or_else(|| {
+                    serde::de::Error::custom(
+                        "empty step; expected `request`, `think_time`, `js` or `group`",
+                    )
+                })?;
+                let step = match key.as_str() {
+                    "request" => Step::Request(map.next_value()?),
+                    "think_time" => Step::ThinkTime(map.next_value()?),
+                    "js" => Step::Js(map.next_value()?),
+                    "group" => Step::Group(map.next_value()?),
+                    other => {
+                        let mut msg = format!(
+                            "unknown step type `{other}`, expected one of `request`, `think_time`, `js`, `group`"
+                        );
+                        let mut best: Option<(f64, &str)> = None;
+                        for cand in STEP_KINDS {
+                            let score = strsim::jaro_winkler(other, cand);
+                            if score > best.map(|(s, _)| s).unwrap_or(0.0) {
+                                best = Some((score, cand));
+                            }
+                        }
+                        if let Some((score, cand)) = best {
+                            if score >= 0.78 {
+                                msg.push_str(&format!(" (did you mean `{cand}`?)"));
+                            }
+                        }
+                        return Err(serde::de::Error::custom(msg));
+                    }
+                };
+                if let Some(extra) = map.next_key::<String>()? {
+                    return Err(serde::de::Error::custom(format!(
+                        "step has extra key `{extra}`; each step is a single-key mapping (check indentation)"
+                    )));
+                }
+                Ok(step)
+            }
+        }
+
+        deserializer.deserialize_map(StepVisitor)
+    }
+}
+
+impl JsonSchema for Step {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Step".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let request = generator.subschema_for::<RequestStep>();
+        let think_time = generator.subschema_for::<ThinkTimeSpec>();
+        let js = generator.subschema_for::<JsStep>();
+        let group = generator.subschema_for::<GroupStep>();
+        schemars::json_schema!({
+            "title": "Step",
+            "description": "One flow step: a single-key mapping",
+            "anyOf": [
+                { "type": "object", "properties": { "request": request }, "required": ["request"], "additionalProperties": false },
+                { "type": "object", "properties": { "think_time": think_time }, "required": ["think_time"], "additionalProperties": false },
+                { "type": "object", "properties": { "js": js }, "required": ["js"], "additionalProperties": false },
+                { "type": "object", "properties": { "group": group }, "required": ["group"], "additionalProperties": false }
+            ]
+        })
+    }
+}
+
+/// A JS step: a code string, or an object naming a function/file.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum JsStep {
+    /// Inline JS code, e.g. `js: "session.vars.n = Math.random()"`.
+    Code(String),
+    /// Reference to an exported function or a separate inline script.
+    Detailed {
+        /// Name of an exported function from the test's JS module.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        call: Option<String>,
+        /// Inline script body.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        script: Option<String>,
+    },
+}
+
+/// A named group of steps.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GroupStep {
+    /// Group name (becomes the `group` tag on nested samples).
+    pub name: String,
+    /// Steps inside the group.
+    pub steps: Vec<Step>,
+}
+
+/// JMeter-style timers.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ThinkTimeSpec {
+    /// Fixed pause.
+    Constant { duration: Dur },
+    /// Uniformly random pause in `[min, max]`.
+    Uniform { min: Dur, max: Dur },
+    /// Normally distributed pause (truncated at zero).
+    Gaussian { mean: Dur, std_dev: Dur },
+}
+
+/// Constant-throughput pacing: each VU spaces iteration starts so the scenario
+/// approaches `iterations_per_second` overall (JMeter constant throughput timer).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct PacingSpec {
+    /// Target iteration starts per second across the whole scenario.
+    pub iterations_per_second: f64,
+}
+
+// ---------------------------------------------------------------------------
+// Requests
+// ---------------------------------------------------------------------------
+
+/// A protocol request step.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct RequestStep {
+    /// Request name used in metrics and reports (defaults to the URL).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Protocol: inferred from the URL scheme when omitted
+    /// (`http(s)` → http, `ws(s)` → websocket, `grpc(s)` → grpc, `tcp`/`udp`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<String>,
+    /// HTTP method (default `GET`); ignored by non-HTTP protocols.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+    /// Absolute URL or path relative to `defaults.http.base_url`. Supports `${...}`.
+    pub url: String,
+    /// Request headers (HTTP) or metadata (gRPC). Values support `${...}`.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub headers: IndexMap<String, String>,
+    /// Query parameters appended to the URL.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub params: IndexMap<String, String>,
+    /// Request body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<Body>,
+    /// Per-request timeout override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<Dur>,
+    /// Per-request redirect override.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow_redirects: Option<bool>,
+    /// Tags added to this request's samples.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tags: BTreeMap<String, String>,
+    /// Values to extract from the response for later steps.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extract: Vec<Extractor>,
+    /// Assertions: failures mark the request failed (and can abort, see `on_failure`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assert: Vec<Condition>,
+    /// Checks: recorded to the `checks` metric, never fail the request.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<Condition>,
+    /// WebSocket-specific options.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ws: Option<WsOptions>,
+    /// gRPC-specific options.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grpc: Option<GrpcOptions>,
+    /// GraphQL-specific options (sent over HTTP POST).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graphql: Option<GraphqlOptions>,
+    /// Raw TCP/UDP socket options.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub socket: Option<SocketOptions>,
+}
+
+/// Request body: a plain string, or a structured spec.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum Body {
+    /// Raw string body (supports `${...}`).
+    Text(String),
+    /// Structured body.
+    Spec(BodySpec),
+}
+
+/// Structured request body. Exactly one of the fields must be set.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct BodySpec {
+    /// JSON body (sets `Content-Type: application/json`). String leaves support `${...}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub json: Option<serde_json::Value>,
+    /// Body read from a file at run start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<PathBuf>,
+    /// URL-encoded form (sets `Content-Type: application/x-www-form-urlencoded`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form: Option<IndexMap<String, String>>,
+    /// Multipart form data (sets `Content-Type: multipart/form-data`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multipart: Option<Vec<MultipartPart>>,
+}
+
+/// One part of a multipart body.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct MultipartPart {
+    /// Form field name.
+    pub name: String,
+    /// Literal value (supports `${...}`); mutually exclusive with `file`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+    /// File whose contents become the part body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<PathBuf>,
+    /// Part content type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_type: Option<String>,
+    /// Filename sent in the part headers (defaults to the file's name).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filename: Option<String>,
+}
+
+/// WebSocket request options.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct WsOptions {
+    /// Subprotocols offered in the handshake.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subprotocols: Vec<String>,
+    /// Messages to send after connecting.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub send: Vec<WsMessage>,
+    /// Number of messages to wait for before closing (default: one per sent message).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receive_count: Option<u64>,
+    /// Close when a received text message contains this substring.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receive_until: Option<String>,
+    /// Max time to keep the connection open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_duration: Option<Dur>,
+}
+
+/// A WebSocket message to send.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum WsMessage {
+    /// Text frame (supports `${...}`).
+    Text(String),
+    /// Structured frame.
+    Detailed {
+        /// Text payload (mutually exclusive with `binary_base64`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        /// Binary payload, base64-encoded.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        binary_base64: Option<String>,
+        /// Pause before sending this frame.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        delay: Option<Dur>,
+    },
+}
+
+/// gRPC request options.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct GrpcOptions {
+    /// `.proto` files defining the service (compiled in-process; no protoc needed).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proto_files: Vec<PathBuf>,
+    /// Include paths for proto imports.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proto_includes: Vec<PathBuf>,
+    /// Use server reflection instead of proto files.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub reflection: bool,
+    /// Fully-qualified service name, e.g. `helloworld.Greeter`.
+    pub service: String,
+    /// Method name, e.g. `SayHello`.
+    pub method: String,
+    /// Request message as JSON (string leaves support `${...}`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<serde_json::Value>,
+    /// Messages for client/bidi streaming calls.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub messages: Vec<serde_json::Value>,
+    /// gRPC metadata (in addition to request `headers`).
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub metadata: IndexMap<String, String>,
+}
+
+/// GraphQL request options.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct GraphqlOptions {
+    /// The GraphQL query/mutation document.
+    pub query: String,
+    /// Variables object (string leaves support `${...}`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variables: Option<serde_json::Value>,
+    /// Operation name when the document contains several.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_name: Option<String>,
+}
+
+/// Raw TCP/UDP options.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct SocketOptions {
+    /// Payload to send: UTF-8 text (supports `${...}`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub send_text: Option<String>,
+    /// Payload to send: hex-encoded bytes, e.g. `dead beef`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub send_hex: Option<String>,
+    /// Read until this many bytes have been received.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_bytes: Option<u64>,
+    /// Read until the connection closes (TCP) or first datagram (UDP).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub read_until_close: bool,
+    /// Read timeout (default: request timeout).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_timeout: Option<Dur>,
+}
+
+// ---------------------------------------------------------------------------
+// Extraction
+// ---------------------------------------------------------------------------
+
+/// Which of several matches to take.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MatchIndex {
+    #[default]
+    First,
+    Last,
+    Random,
+    All,
+}
+
+/// Extract a value from a response into a variable usable in later steps
+/// (`${name}`) and in JS (`session.vars.name`).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Extractor {
+    /// JSONPath over a JSON body, e.g. `$.items[0].id`.
+    Jsonpath {
+        /// Variable name to store the result under.
+        name: String,
+        /// JSONPath expression.
+        expression: String,
+        /// Value used when nothing matches (otherwise extraction fails).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        default: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        index: Option<MatchIndex>,
+    },
+    /// Regular expression over the body; capture group 1 by default.
+    Regex {
+        name: String,
+        /// Regular expression with at least one capture group.
+        expression: String,
+        /// Capture group to extract (default 1; 0 = whole match).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        group: Option<usize>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        default: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        index: Option<MatchIndex>,
+    },
+    /// XPath 1.0 over an XML body.
+    Xpath {
+        name: String,
+        expression: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        default: Option<String>,
+    },
+    /// CSS selector over an HTML body.
+    Css {
+        name: String,
+        /// Selector, e.g. `form input[name=csrf]`.
+        expression: String,
+        /// Attribute to read; omitted = element text.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attribute: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        default: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        index: Option<MatchIndex>,
+    },
+    /// JMeter-style boundary extractor: text between `left` and `right`.
+    Boundary {
+        name: String,
+        left: String,
+        right: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        default: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        index: Option<MatchIndex>,
+    },
+    /// Response header value.
+    Header {
+        name: String,
+        /// Header name, case-insensitive.
+        header: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        default: Option<String>,
+    },
+}
+
+impl Extractor {
+    pub fn name(&self) -> &str {
+        match self {
+            Extractor::Jsonpath { name, .. }
+            | Extractor::Regex { name, .. }
+            | Extractor::Xpath { name, .. }
+            | Extractor::Css { name, .. }
+            | Extractor::Boundary { name, .. }
+            | Extractor::Header { name, .. } => name,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Assertions & checks
+// ---------------------------------------------------------------------------
+
+/// What to do when an assertion fails.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureAction {
+    /// Mark the request failed and continue (default).
+    #[default]
+    Continue,
+    /// Mark failed and skip the rest of the iteration.
+    AbortIteration,
+    /// Mark failed and stop this scenario.
+    AbortScenario,
+    /// Mark failed and stop the whole test.
+    AbortTest,
+}
+
+/// A condition over a response, usable as an assertion (`assert:`) or check (`checks:`).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Condition {
+    /// Response status code (HTTP status, gRPC status code, ...).
+    Status {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        /// Exact status.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        equals: Option<i64>,
+        /// Any of these statuses.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        one_of: Option<Vec<i64>>,
+        /// Regex over the status, e.g. `2..`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        matches: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        on_failure: Option<FailureAction>,
+    },
+    /// Body contains a substring.
+    BodyContains {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        value: String,
+        /// Invert: fail when the substring IS present.
+        #[serde(default, skip_serializing_if = "is_false")]
+        negate: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        on_failure: Option<FailureAction>,
+    },
+    /// Body matches a regular expression.
+    BodyMatches {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        pattern: String,
+        #[serde(default, skip_serializing_if = "is_false")]
+        negate: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        on_failure: Option<FailureAction>,
+    },
+    /// JSONPath assertion: existence and/or equality.
+    Jsonpath {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        expression: String,
+        /// Expected value of the first match.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        equals: Option<serde_json::Value>,
+        /// Require/forbid a match (default: require).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exists: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        on_failure: Option<FailureAction>,
+    },
+    /// XPath assertion.
+    Xpath {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        expression: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        equals: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exists: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        on_failure: Option<FailureAction>,
+    },
+    /// Response duration below a limit.
+    Duration {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        max: Dur,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        on_failure: Option<FailureAction>,
+    },
+    /// Response body size bounds.
+    Size {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        equals: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        on_failure: Option<FailureAction>,
+    },
+    /// Response header value.
+    Header {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        /// Header name, case-insensitive.
+        header: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        equals: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        contains: Option<String>,
+        /// Require/forbid presence (default: require).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exists: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        on_failure: Option<FailureAction>,
+    },
+    /// Evaluate a JS expression; truthy passes. The response is in scope as `response`.
+    Js {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        expression: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        on_failure: Option<FailureAction>,
+    },
+}
+
+impl Condition {
+    pub fn display_name(&self) -> String {
+        let explicit = match self {
+            Condition::Status { name, .. }
+            | Condition::BodyContains { name, .. }
+            | Condition::BodyMatches { name, .. }
+            | Condition::Jsonpath { name, .. }
+            | Condition::Xpath { name, .. }
+            | Condition::Duration { name, .. }
+            | Condition::Size { name, .. }
+            | Condition::Header { name, .. }
+            | Condition::Js { name, .. } => name.clone(),
+        };
+        if let Some(n) = explicit {
+            return n;
+        }
+        match self {
+            Condition::Status {
+                equals,
+                one_of,
+                matches,
+                ..
+            } => {
+                if let Some(e) = equals {
+                    format!("status is {e}")
+                } else if let Some(o) = one_of {
+                    format!("status in {o:?}")
+                } else if let Some(m) = matches {
+                    format!("status matches {m}")
+                } else {
+                    "status".to_string()
+                }
+            }
+            Condition::BodyContains { value, negate, .. } => {
+                if *negate {
+                    format!("body does not contain {value:?}")
+                } else {
+                    format!("body contains {value:?}")
+                }
+            }
+            Condition::BodyMatches { pattern, .. } => format!("body matches /{pattern}/"),
+            Condition::Jsonpath { expression, .. } => format!("jsonpath {expression}"),
+            Condition::Xpath { expression, .. } => format!("xpath {expression}"),
+            Condition::Duration { max, .. } => format!("duration < {max}"),
+            Condition::Size { .. } => "body size".to_string(),
+            Condition::Header { header, .. } => format!("header {header}"),
+            Condition::Js { expression, .. } => format!("js: {expression}"),
+        }
+    }
+
+    pub fn on_failure(&self) -> FailureAction {
+        match self {
+            Condition::Status { on_failure, .. }
+            | Condition::BodyContains { on_failure, .. }
+            | Condition::BodyMatches { on_failure, .. }
+            | Condition::Jsonpath { on_failure, .. }
+            | Condition::Xpath { on_failure, .. }
+            | Condition::Duration { on_failure, .. }
+            | Condition::Size { on_failure, .. }
+            | Condition::Header { on_failure, .. }
+            | Condition::Js { on_failure, .. } => on_failure.unwrap_or_default(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Thresholds
+// ---------------------------------------------------------------------------
+
+/// Threshold list for one metric: a single expression or a list of entries.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ThresholdList {
+    Single(String),
+    Many(Vec<ThresholdEntry>),
+}
+
+impl ThresholdList {
+    pub fn entries(&self) -> Vec<ThresholdEntry> {
+        match self {
+            ThresholdList::Single(s) => vec![ThresholdEntry::Expr(s.clone())],
+            ThresholdList::Many(v) => v.clone(),
+        }
+    }
+}
+
+/// One threshold: an expression string, or an object with abort options.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ThresholdEntry {
+    /// e.g. `p(95)<400`, `rate>0.99`, `avg<200`, `count>1000`.
+    Expr(String),
+    Detailed {
+        /// Threshold expression.
+        threshold: String,
+        /// Abort the test as soon as this threshold fails.
+        #[serde(default, skip_serializing_if = "is_false")]
+        abort_on_fail: bool,
+        /// Don't evaluate for aborting until this much time has passed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        delay_abort_eval: Option<Dur>,
+    },
+}
+
+impl ThresholdEntry {
+    pub fn expression(&self) -> &str {
+        match self {
+            ThresholdEntry::Expr(s) => s,
+            ThresholdEntry::Detailed { threshold, .. } => threshold,
+        }
+    }
+    pub fn abort_on_fail(&self) -> bool {
+        match self {
+            ThresholdEntry::Expr(_) => false,
+            ThresholdEntry::Detailed { abort_on_fail, .. } => *abort_on_fail,
+        }
+    }
+    pub fn delay_abort_eval(&self) -> Option<Dur> {
+        match self {
+            ThresholdEntry::Expr(_) => None,
+            ThresholdEntry::Detailed {
+                delay_abort_eval, ..
+            } => *delay_abort_eval,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Data, secrets, metrics, JS, outputs, plugins
+// ---------------------------------------------------------------------------
+
+/// How rows of a data source are handed to VUs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DataMode {
+    /// All VUs draw from one shared, sequential cursor.
+    #[default]
+    Shared,
+    /// Each VU gets its own cursor over the full data set.
+    PerVu,
+}
+
+/// Behaviour when a data source is exhausted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OnEof {
+    /// Wrap around to the first row.
+    #[default]
+    Recycle,
+    /// Stop the VU's iterations.
+    Stop,
+}
+
+/// A data source for parameterization.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DataSource {
+    /// CSV file; columns become fields: `${data.<source>.<column>}`.
+    Csv {
+        path: PathBuf,
+        #[serde(default)]
+        mode: DataMode,
+        #[serde(default)]
+        on_eof: OnEof,
+        /// Field delimiter (default `,`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        delimiter: Option<char>,
+        /// First row is a header (default `true`).
+        #[serde(default = "default_true", skip_serializing_if = "is_true")]
+        has_header: bool,
+    },
+    /// Inline rows defined in the YAML itself.
+    Inline {
+        rows: Vec<IndexMap<String, serde_json::Value>>,
+        #[serde(default)]
+        mode: DataMode,
+        #[serde(default)]
+        on_eof: OnEof,
+    },
+}
+
+/// Where a secret's value comes from.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct SecretSource {
+    /// Environment variable name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<String>,
+    /// File whose (trimmed) contents are the secret.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<PathBuf>,
+}
+
+/// Kind of a custom metric.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MetricKindSpec {
+    Counter,
+    Gauge,
+    Rate,
+    Trend,
+}
+
+/// A user-defined metric, recordable from YAML (`js:` steps) and JS.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct CustomMetric {
+    pub kind: MetricKindSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// For trend metrics: values are durations in milliseconds.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub time: bool,
+}
+
+/// Embedded JavaScript configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct JsConfig {
+    /// External module file (ES module; may export setup/teardown/default/...).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<PathBuf>,
+    /// Inline module source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script: Option<String>,
+    /// Per-iteration wall-clock limit for JS execution (default `10s`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<Dur>,
+    /// JS heap limit in MiB per VU runtime (default `64`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_limit_mb: Option<u64>,
+}
+
+/// Metric output/exporter configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum OutputConfig {
+    /// Newline-delimited JSON samples + periodic aggregates.
+    Json { path: PathBuf },
+    /// CSV samples.
+    Csv { path: PathBuf },
+    /// Prometheus: optional scrape endpoint and/or remote-write push.
+    Prometheus {
+        /// Scrape endpoint listen address, e.g. `127.0.0.1:9091`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        listen: Option<String>,
+        /// Remote-write URL, e.g. `http://prometheus:9090/api/v1/write`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        remote_write_url: Option<String>,
+        /// Push interval (default `5s`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        interval: Option<Dur>,
+    },
+    /// InfluxDB line protocol over HTTP.
+    Influxdb {
+        /// e.g. `http://influxdb:8086`.
+        url: String,
+        /// Database (v1) or bucket (v2).
+        database: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        token: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        organization: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        interval: Option<Dur>,
+    },
+    /// OpenTelemetry metrics (OTLP).
+    Otlp {
+        /// e.g. `http://otel-collector:4317` (gRPC) or `:4318` (HTTP).
+        endpoint: String,
+        #[serde(default)]
+        protocol: OtlpProtocol,
+        #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+        headers: IndexMap<String, String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        interval: Option<Dur>,
+    },
+    /// StatsD over UDP.
+    Statsd {
+        /// e.g. `127.0.0.1:8125`.
+        address: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prefix: Option<String>,
+    },
+    /// An output provided by a plugin.
+    Plugin {
+        /// Plugin name (must be listed under `plugins:` or installed).
+        name: String,
+        #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+        config: serde_json::Value,
+    },
+}
+
+/// OTLP transport.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OtlpProtocol {
+    #[default]
+    Grpc,
+    Http,
+}
+
+/// Reference to a plugin to load.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct PluginRef {
+    /// Plugin name (resolved in the plugins directory unless `path` is given).
+    pub name: String,
+    /// Explicit path to a `.wasm` component or native dynamic library.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
+    /// Plugin-specific configuration, passed through verbatim.
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub config: serde_json::Value,
+    /// Set to `false` to keep the entry but skip loading.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub enabled: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FULL: &str = r#"
+name: checkout-flow
+description: Browse and checkout
+
+defaults:
+  http:
+    base_url: https://shop.example.com
+    headers: { User-Agent: loadr/1.0 }
+    timeout: 30s
+  tags: { team: payments }
+
+variables:
+  api_key: ${env.API_KEY}
+
+secrets:
+  db_pass: { env: DB_PASS }
+
+data:
+  users:
+    type: csv
+    path: users.csv
+    mode: shared
+    on_eof: recycle
+
+metrics:
+  pages_viewed: { kind: counter, description: pages }
+
+js:
+  script: |
+    export function setup() { return { token: "abc" }; }
+
+scenarios:
+  browse:
+    executor: ramping-vus
+    start_vus: 0
+    stages:
+      - { duration: 2m, target: 50 }
+      - { duration: 5m, target: 50 }
+    graceful_ramp_down: 10s
+    flow:
+      - request:
+          name: home
+          method: GET
+          url: /
+          extract:
+            - { type: regex, name: csrf, expression: 'csrf" value="([^"]+)' }
+          assert:
+            - { type: status, equals: 200 }
+            - { type: body_contains, value: Welcome }
+          checks:
+            - { type: duration, name: home fast, max: 500ms }
+      - think_time: { type: uniform, min: 1s, max: 3s }
+      - js: "session.counterAdd('pages_viewed', 1)"
+      - group:
+          name: checkout
+          steps:
+            - request:
+                method: POST
+                url: /cart
+                body:
+                  json: { item: 42, csrf: "${csrf}" }
+  api:
+    executor: constant-arrival-rate
+    rate: 100
+    time_unit: 1s
+    duration: 5m
+    pre_allocated_vus: 20
+    max_vus: 100
+    flow:
+      - request: { url: /api/health }
+
+thresholds:
+  http_req_duration:
+    - "p(95)<400"
+    - { threshold: "p(99)<800", abort_on_fail: true, delay_abort_eval: 30s }
+  checks: "rate>0.99"
+
+outputs:
+  - { type: json, path: results.jsonl }
+  - { type: prometheus, listen: 127.0.0.1:9091 }
+
+plugins:
+  - { name: my-extractor, config: { mode: fast } }
+"#;
+
+    #[test]
+    fn full_plan_round_trips() {
+        let plan: TestPlan = serde_yaml::from_str(FULL).expect("parse");
+        assert_eq!(plan.name.as_deref(), Some("checkout-flow"));
+        assert_eq!(plan.scenarios.len(), 2);
+        let browse = &plan.scenarios["browse"];
+        assert_eq!(browse.executor, ExecutorKind::RampingVus);
+        assert_eq!(browse.flow.len(), 4);
+        match &browse.flow[0] {
+            Step::Request(r) => {
+                assert_eq!(r.name.as_deref(), Some("home"));
+                assert_eq!(r.extract.len(), 1);
+                assert_eq!(r.assert.len(), 2);
+                assert_eq!(r.checks.len(), 1);
+            }
+            other => panic!("expected request, got {other:?}"),
+        }
+        let spec = browse.executor_spec().expect("spec");
+        match spec {
+            ExecutorSpec::RampingVus { start_vus, stages } => {
+                assert_eq!(start_vus, 0);
+                assert_eq!(stages.len(), 2);
+                assert_eq!(stages[0].1, 50);
+            }
+            other => panic!("unexpected spec {other:?}"),
+        }
+        let api_spec = plan.scenarios["api"].executor_spec().expect("spec");
+        match api_spec {
+            ExecutorSpec::ConstantArrivalRate { rate, max_vus, .. } => {
+                assert!((rate - 100.0).abs() < 1e-9);
+                assert_eq!(max_vus, 100);
+            }
+            other => panic!("unexpected spec {other:?}"),
+        }
+        // Round-trip through YAML again.
+        let yaml = serde_yaml::to_string(&plan).expect("serialize");
+        let back: TestPlan = serde_yaml::from_str(&yaml).expect("reparse");
+        assert_eq!(back.scenarios.len(), 2);
+    }
+
+    #[test]
+    fn executor_validation_errors() {
+        let mut s = Scenario {
+            executor: ExecutorKind::ConstantVus,
+            ..Default::default()
+        };
+        assert!(s.executor_spec().unwrap_err().contains("requires `vus`"));
+        s.vus = Some(10);
+        assert!(s
+            .executor_spec()
+            .unwrap_err()
+            .contains("requires `duration`"));
+        s.duration = Some(Dur::from_secs(60));
+        assert!(s.executor_spec().is_ok());
+
+        let s = Scenario {
+            executor: ExecutorKind::ConstantArrivalRate,
+            rate: Some(50.0),
+            duration: Some(Dur::from_secs(60)),
+            pre_allocated_vus: Some(20),
+            max_vus: Some(5),
+            ..Default::default()
+        };
+        assert!(s
+            .executor_spec()
+            .unwrap_err()
+            .contains("`max_vus` cannot be less"));
+    }
+
+    #[test]
+    fn rate_normalized_by_time_unit() {
+        let s = Scenario {
+            executor: ExecutorKind::ConstantArrivalRate,
+            rate: Some(600.0),
+            time_unit: Some(Dur::from_secs(60)),
+            duration: Some(Dur::from_secs(60)),
+            pre_allocated_vus: Some(10),
+            ..Default::default()
+        };
+        match s.executor_spec().unwrap() {
+            ExecutorSpec::ConstantArrivalRate { rate, .. } => {
+                assert!(
+                    (rate - 10.0).abs() < 1e-9,
+                    "600/min should be 10/s, got {rate}"
+                );
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_field_rejected() {
+        let err = serde_yaml::from_str::<TestPlan>("scenariosss: {}").unwrap_err();
+        assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn condition_display_names() {
+        let c: Condition = serde_yaml::from_str("{ type: status, equals: 200 }").unwrap();
+        assert_eq!(c.display_name(), "status is 200");
+        let c: Condition =
+            serde_yaml::from_str("{ type: duration, max: 500ms, name: fast }").unwrap();
+        assert_eq!(c.display_name(), "fast");
+    }
+}

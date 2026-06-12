@@ -1,0 +1,13 @@
+/target
+**/target
+Cargo.lock.orig
+*.swp
+.DS_Store
+/docs/book
+node_modules
+*.jsonl
+!testsupport/**/*.jsonl
+!crates/**/tests/data/**
+/dist
+.idea
+.vscode

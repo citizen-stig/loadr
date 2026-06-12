@@ -254,9 +254,22 @@ pub struct Scenario {
     /// Default think time between request steps in this scenario.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub think_time: Option<ThinkTimeSpec>,
+    /// Throttle: cap requests at a global rate ceiling regardless of the
+    /// executor (Gatling `throttle`/`reachRps`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub throttle: Option<ThrottleSpec>,
     /// Tags added to all samples from this scenario.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub tags: BTreeMap<String, String>,
+}
+
+/// A request-rate ceiling for a scenario (Gatling-style throttle).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct ThrottleSpec {
+    /// Maximum requests per second across the whole scenario. Iterations block
+    /// before each request until a token is available (token-bucket limiter).
+    pub requests_per_second: f64,
 }
 
 /// Executor type, matching k6 semantics.
@@ -543,7 +556,9 @@ impl Scenario {
 // ---------------------------------------------------------------------------
 
 /// One step in a scenario flow, written as a single-key mapping:
-/// `- request: {...}`, `- think_time: {...}`, `- js: "..."`, `- group: {...}`.
+/// `- request: {...}`, `- think_time: {...}`, `- js: "..."`, `- group: {...}`,
+/// plus control flow: `- repeat: {...}`, `- while: {...}`, `- if: {...}`,
+/// `- random: {...}`.
 #[derive(Debug, Clone)]
 pub enum Step {
     /// Execute a protocol request.
@@ -554,9 +569,27 @@ pub enum Step {
     Js(JsStep),
     /// Group steps under a name; samples get a `group` tag.
     Group(GroupStep),
+    /// Repeat nested steps a fixed number of times (Gatling `repeat`).
+    Repeat(RepeatStep),
+    /// Repeat nested steps while a JS condition holds (Gatling `during`/`asLongAs`).
+    While(WhileStep),
+    /// Branch on a JS condition (Gatling `doIf`).
+    If(IfStep),
+    /// Pick one branch at random — weighted, uniform or round-robin
+    /// (Locust weighted tasks; Gatling `randomSwitch`/`uniformRandomSwitch`/`roundRobinSwitch`).
+    Random(RandomStep),
 }
 
-const STEP_KINDS: &[&str] = &["request", "think_time", "js", "group"];
+const STEP_KINDS: &[&str] = &[
+    "request",
+    "think_time",
+    "js",
+    "group",
+    "repeat",
+    "while",
+    "if",
+    "random",
+];
 
 impl Serialize for Step {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -567,6 +600,10 @@ impl Serialize for Step {
             Step::ThinkTime(t) => map.serialize_entry("think_time", t)?,
             Step::Js(j) => map.serialize_entry("js", j)?,
             Step::Group(g) => map.serialize_entry("group", g)?,
+            Step::Repeat(r) => map.serialize_entry("repeat", r)?,
+            Step::While(w) => map.serialize_entry("while", w)?,
+            Step::If(i) => map.serialize_entry("if", i)?,
+            Step::Random(r) => map.serialize_entry("random", r)?,
         }
         map.end()
     }
@@ -582,25 +619,32 @@ impl<'de> Deserialize<'de> for Step {
             fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 write!(
                     f,
-                    "a step mapping with exactly one of: `request`, `think_time`, `js`, `group`"
+                    "a step mapping with exactly one of: {}",
+                    STEP_KINDS.join(", ")
                 )
             }
 
             fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Step, A::Error> {
                 let key: Option<String> = map.next_key()?;
                 let key = key.ok_or_else(|| {
-                    serde::de::Error::custom(
-                        "empty step; expected `request`, `think_time`, `js` or `group`",
-                    )
+                    serde::de::Error::custom(format!(
+                        "empty step; expected one of {}",
+                        STEP_KINDS.join(", ")
+                    ))
                 })?;
                 let step = match key.as_str() {
                     "request" => Step::Request(map.next_value()?),
                     "think_time" => Step::ThinkTime(map.next_value()?),
                     "js" => Step::Js(map.next_value()?),
                     "group" => Step::Group(map.next_value()?),
+                    "repeat" => Step::Repeat(map.next_value()?),
+                    "while" => Step::While(map.next_value()?),
+                    "if" => Step::If(map.next_value()?),
+                    "random" => Step::Random(map.next_value()?),
                     other => {
                         let mut msg = format!(
-                            "unknown step type `{other}`, expected one of `request`, `think_time`, `js`, `group`"
+                            "unknown step type `{other}`, expected one of {}",
+                            STEP_KINDS.join(", ")
                         );
                         let mut best: Option<(f64, &str)> = None;
                         for cand in STEP_KINDS {
@@ -640,6 +684,10 @@ impl JsonSchema for Step {
         let think_time = generator.subschema_for::<ThinkTimeSpec>();
         let js = generator.subschema_for::<JsStep>();
         let group = generator.subschema_for::<GroupStep>();
+        let repeat = generator.subschema_for::<RepeatStep>();
+        let while_ = generator.subschema_for::<WhileStep>();
+        let if_ = generator.subschema_for::<IfStep>();
+        let random = generator.subschema_for::<RandomStep>();
         schemars::json_schema!({
             "title": "Step",
             "description": "One flow step: a single-key mapping",
@@ -647,10 +695,91 @@ impl JsonSchema for Step {
                 { "type": "object", "properties": { "request": request }, "required": ["request"], "additionalProperties": false },
                 { "type": "object", "properties": { "think_time": think_time }, "required": ["think_time"], "additionalProperties": false },
                 { "type": "object", "properties": { "js": js }, "required": ["js"], "additionalProperties": false },
-                { "type": "object", "properties": { "group": group }, "required": ["group"], "additionalProperties": false }
+                { "type": "object", "properties": { "group": group }, "required": ["group"], "additionalProperties": false },
+                { "type": "object", "properties": { "repeat": repeat }, "required": ["repeat"], "additionalProperties": false },
+                { "type": "object", "properties": { "while": while_ }, "required": ["while"], "additionalProperties": false },
+                { "type": "object", "properties": { "if": if_ }, "required": ["if"], "additionalProperties": false },
+                { "type": "object", "properties": { "random": random }, "required": ["random"], "additionalProperties": false }
             ]
         })
     }
+}
+
+/// Repeat nested steps a fixed number of times.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RepeatStep {
+    /// How many times to run `steps`.
+    pub times: u64,
+    /// The steps to repeat.
+    pub steps: Vec<Step>,
+    /// Variable name exposed to JS as the 0-based loop counter (default `index`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub counter: Option<String>,
+}
+
+/// Repeat nested steps while a JavaScript condition is truthy.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WhileStep {
+    /// JS expression evaluated before each pass; the loop runs while it is truthy.
+    pub condition: String,
+    /// The steps to repeat.
+    pub steps: Vec<Step>,
+    /// Hard cap on iterations to prevent runaway loops (default 10000).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_iterations: Option<u64>,
+}
+
+/// Branch on a JavaScript condition.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IfStep {
+    /// JS expression; when truthy `then` runs, otherwise `else`.
+    pub condition: String,
+    /// Steps run when the condition is truthy.
+    pub then: Vec<Step>,
+    /// Steps run when the condition is falsy.
+    #[serde(default, rename = "else", skip_serializing_if = "Vec::is_empty")]
+    pub otherwise: Vec<Step>,
+}
+
+/// Strategy for choosing a branch in a `random` step.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SwitchStrategy {
+    /// Choose by `weight` (default weight 1.0). Higher weight = more likely.
+    #[default]
+    Weighted,
+    /// Each choice equally likely.
+    Uniform,
+    /// Cycle through choices in order, one per iteration (per VU).
+    RoundRobin,
+}
+
+/// Pick one of several branches at random (or round-robin).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RandomStep {
+    /// Selection strategy (default `weighted`).
+    #[serde(default)]
+    pub strategy: SwitchStrategy,
+    /// The branches to choose between.
+    pub choices: Vec<RandomChoice>,
+}
+
+/// One branch of a `random` step.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RandomChoice {
+    /// Relative weight for the `weighted` strategy (default 1.0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weight: Option<f64>,
+    /// Optional label, used in the `branch` tag on nested samples.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The steps for this branch.
+    pub steps: Vec<Step>,
 }
 
 /// A JS step: a code string, or an object naming a function/file.
@@ -1298,6 +1427,19 @@ pub enum OnEof {
     Stop,
 }
 
+/// Row selection order (Gatling feeder strategies).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PickStrategy {
+    /// Rows handed out in file order (the cursor advances by one each time).
+    #[default]
+    Sequential,
+    /// A uniformly random row each time (rows may repeat; `on_eof` is ignored).
+    Random,
+    /// The full set shuffled once per VU, then read in that order.
+    Shuffle,
+}
+
 /// A data source for parameterization.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -1309,12 +1451,25 @@ pub enum DataSource {
         mode: DataMode,
         #[serde(default)]
         on_eof: OnEof,
+        /// Row selection order (default `sequential`).
+        #[serde(default)]
+        pick: PickStrategy,
         /// Field delimiter (default `,`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         delimiter: Option<char>,
         /// First row is a header (default `true`).
         #[serde(default = "default_true", skip_serializing_if = "is_true")]
         has_header: bool,
+    },
+    /// JSON file: an array of objects, each object a row.
+    Json {
+        path: PathBuf,
+        #[serde(default)]
+        mode: DataMode,
+        #[serde(default)]
+        on_eof: OnEof,
+        #[serde(default)]
+        pick: PickStrategy,
     },
     /// Inline rows defined in the YAML itself.
     Inline {
@@ -1323,6 +1478,8 @@ pub enum DataSource {
         mode: DataMode,
         #[serde(default)]
         on_eof: OnEof,
+        #[serde(default)]
+        pick: PickStrategy,
     },
 }
 

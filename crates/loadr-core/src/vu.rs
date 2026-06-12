@@ -71,8 +71,8 @@ pub struct VuContext {
     pub run: Arc<RunContext>,
     pub rng: SmallRng,
     pub extensions: Extensions,
-    /// Per-VU data cursors (per_vu mode).
-    pub data_cursors: HashMap<String, usize>,
+    /// Per-VU data feeder state (cursors + shuffle orders).
+    pub data_state: crate::data::VuFeedState,
     /// Rows fetched this iteration (one row per source per iteration).
     pub current_rows: HashMap<String, Arc<crate::data::Row>>,
 }
@@ -98,7 +98,7 @@ impl VuContext {
             run,
             rng: SmallRng::seed_from_u64(0x10ad ^ vu_id.wrapping_mul(0x9E37_79B9_7F4A_7C15)),
             extensions: Extensions::default(),
-            data_cursors: HashMap::new(),
+            data_state: crate::data::VuFeedState::new(),
             current_rows: HashMap::new(),
         }
     }
@@ -129,7 +129,10 @@ impl VuContext {
         if let Some(row) = self.current_rows.get(source) {
             return Ok(row.clone());
         }
-        let row = self.run.data.next_row(source, &mut self.data_cursors)?;
+        let row = self
+            .run
+            .data
+            .next_row(source, &mut self.data_state, &mut self.rng)?;
         self.current_rows.insert(source.to_string(), row.clone());
         Ok(row)
     }
@@ -204,6 +207,7 @@ mod tests {
                 rows: vec![row],
                 mode: loadr_config::DataMode::Shared,
                 on_eof: loadr_config::OnEof::Recycle,
+                pick: loadr_config::PickStrategy::Sequential,
             },
         );
         let data = DataFeeds::load(&sources, std::path::Path::new(".")).expect("data");

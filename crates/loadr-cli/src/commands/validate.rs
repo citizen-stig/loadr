@@ -102,12 +102,17 @@ pub fn execute(args: ValidateArgs) -> anyhow::Result<i32> {
 }
 
 fn count_requests(plan: &loadr_config::TestPlan) -> usize {
-    fn steps(list: &[loadr_config::Step]) -> usize {
+    use loadr_config::Step;
+    fn steps(list: &[Step]) -> usize {
         list.iter()
             .map(|s| match s {
-                loadr_config::Step::Request(_) => 1,
-                loadr_config::Step::Group(g) => steps(&g.steps),
-                _ => 0,
+                Step::Request(_) => 1,
+                Step::Group(g) => steps(&g.steps),
+                Step::Repeat(r) => steps(&r.steps),
+                Step::While(w) => steps(&w.steps),
+                Step::If(c) => steps(&c.then) + steps(&c.otherwise),
+                Step::Random(r) => r.choices.iter().map(|c| steps(&c.steps)).sum(),
+                Step::ThinkTime(_) | Step::Js(_) => 0,
             })
             .sum()
     }

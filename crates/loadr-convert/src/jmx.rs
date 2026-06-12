@@ -434,6 +434,7 @@ impl JmxConverter {
                 path: filename.into(),
                 mode,
                 on_eof,
+                pick: Default::default(),
                 delimiter,
                 has_header,
             },

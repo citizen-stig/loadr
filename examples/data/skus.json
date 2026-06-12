@@ -1,0 +1,7 @@
+[
+  { "sku": "W-1", "name": "Widget" },
+  { "sku": "G-2", "name": "Gadget" },
+  { "sku": "D-3", "name": "Doohickey" },
+  { "sku": "T-4", "name": "Thingamajig" },
+  { "sku": "S-5", "name": "Sprocket" }
+]

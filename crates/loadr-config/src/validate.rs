@@ -133,6 +133,9 @@ pub fn validate(plan: &TestPlan, source: Option<&str>, opts: &ValidateOptions) -
                     }
                 }
             }
+            DataSource::Json { path, .. } => {
+                ctx.check_file(format!("data.{name}.path"), path);
+            }
             DataSource::Inline { rows, .. } => {
                 if rows.is_empty() {
                     ctx.error(format!("data.{name}.rows"), "inline data has no rows");
@@ -280,7 +283,10 @@ pub fn validate(plan: &TestPlan, source: Option<&str>, opts: &ValidateOptions) -
 fn step_uses_js(step: &Step) -> bool {
     match step {
         Step::Js(_) => true,
+        Step::While(_) | Step::If(_) => true, // conditions are JS expressions
         Step::Group(g) => g.steps.iter().any(step_uses_js),
+        Step::Repeat(r) => r.steps.iter().any(step_uses_js),
+        Step::Random(r) => r.choices.iter().any(|c| c.steps.iter().any(step_uses_js)),
         _ => false,
     }
 }
@@ -353,6 +359,52 @@ impl Ctx<'_> {
                         self.warning(format!("{path}.group"), "empty group");
                     }
                     self.check_steps(&format!("{path}.group"), "steps", &g.steps, declared);
+                }
+                Step::Repeat(r) => {
+                    if r.times == 0 {
+                        self.warning(format!("{path}.repeat.times"), "`repeat` runs zero times");
+                    }
+                    self.check_steps(&format!("{path}.repeat"), "steps", &r.steps, declared);
+                }
+                Step::While(w) => {
+                    if w.condition.trim().is_empty() {
+                        self.error(
+                            format!("{path}.while.condition"),
+                            "`while` needs a condition",
+                        );
+                    }
+                    self.check_steps(&format!("{path}.while"), "steps", &w.steps, declared);
+                }
+                Step::If(c) => {
+                    if c.condition.trim().is_empty() {
+                        self.error(format!("{path}.if.condition"), "`if` needs a condition");
+                    }
+                    self.check_steps(&format!("{path}.if"), "then", &c.then, declared);
+                    self.check_steps(&format!("{path}.if"), "else", &c.otherwise, declared);
+                }
+                Step::Random(r) => {
+                    if r.choices.is_empty() {
+                        self.error(
+                            format!("{path}.random.choices"),
+                            "`random` needs at least one choice",
+                        );
+                    }
+                    for (ci, choice) in r.choices.iter().enumerate() {
+                        if let Some(w) = choice.weight {
+                            if w < 0.0 {
+                                self.error(
+                                    format!("{path}.random.choices[{ci}].weight"),
+                                    "weight must not be negative",
+                                );
+                            }
+                        }
+                        self.check_steps(
+                            &format!("{path}.random.choices[{ci}]"),
+                            "steps",
+                            &choice.steps,
+                            declared,
+                        );
+                    }
                 }
             }
         }

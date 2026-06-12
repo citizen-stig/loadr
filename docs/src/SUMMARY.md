@@ -13,10 +13,12 @@
 - [Test definition overview](yaml/overview.md)
 - [Scenarios & executors](yaml/scenarios-executors.md)
 - [Requests](yaml/requests.md)
+- [Flow control (loops, branches)](yaml/flow-control.md)
 - [Extraction & correlation](yaml/extraction.md)
 - [Assertions & checks](yaml/assertions-checks.md)
 - [Thresholds](yaml/thresholds.md)
 - [Data parameterization](yaml/data.md)
+- [Feeders & throttling](yaml/feeders.md)
 - [Variables, secrets & interpolation](yaml/variables.md)
 - [Think time & pacing](yaml/timers.md)
 - [Outputs](yaml/outputs.md)
@@ -63,6 +65,10 @@
 - [Built-in metrics](reference/metrics.md)
 - [Exit codes](reference/exit-codes.md)
 - [JSON Schema & editor setup](reference/json-schema.md)
+
+# About
+
+- [Credits & influences](credits.md)
 
 # Architecture
 

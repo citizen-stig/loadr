@@ -122,6 +122,80 @@ thresholds:
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn flow_control_while_if_repeat() {
+    // while/if conditions are JS — exercise them through the real engine.
+    let server = loadr_testserver::HttpTestServer::spawn()
+        .await
+        .expect("server");
+    let dir = tempfile::tempdir().expect("tmp");
+    let yaml = format!(
+        r#"
+defaults:
+  http: {{ base_url: {base} }}
+js: {{ script: "" }}
+metrics:
+  loops: {{ kind: counter }}
+scenarios:
+  s:
+    executor: shared-iterations
+    vus: 1
+    iterations: 1
+    flow:
+      - js: "session.vars.n = 0"
+      - while:
+          condition: "Number(session.vars.n) < 3"
+          steps:
+            - request: {{ name: loop, url: /json, checks: [ {{ type: status, equals: 200 }} ] }}
+            - js: "session.vars.n = Number(session.vars.n) + 1; session.counterAdd('loops', 1)"
+      - if:
+          condition: "Number(session.vars.n) === 3"
+          then:
+            - request: {{ name: done, url: /headers, checks: [ {{ type: status, equals: 200 }} ] }}
+          else:
+            - request: {{ name: never, url: /status/500 }}
+      - repeat:
+          times: 2
+          steps:
+            - request: {{ name: twice, url: /json }}
+thresholds:
+  loops: [ "count==3" ]
+  checks: [ "rate>0.99" ]
+"#,
+        base = server.base_url()
+    );
+    let test = dir.path().join("t.yaml");
+    std::fs::write(&test, yaml).expect("write");
+    let summary = dir.path().join("s.json");
+    let output = Command::new(BIN)
+        .args([
+            "run",
+            "--quiet",
+            "--summary-export",
+            summary.to_str().expect("p"),
+            test.to_str().expect("p"),
+        ])
+        .output()
+        .expect("run");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "flow control run failed.\nstdout: {stdout}\nstderr: {stderr}"
+    );
+    let s: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&summary).expect("summary")).expect("json");
+    // 1 iteration: 3 loop reqs + 1 done + 2 repeat = 6 http_reqs; loops==3.
+    let reqs = s["metrics"]
+        .as_array()
+        .expect("metrics")
+        .iter()
+        .find(|m| m["metric"] == "http_reqs")
+        .expect("http_reqs");
+    assert_eq!(reqs["agg"]["sum"], serde_json::json!(6.0));
+    assert_eq!(s["thresholds_passed"], serde_json::json!(true));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn javascript_lifecycle_run() {
     let server = loadr_testserver::HttpTestServer::spawn()
         .await

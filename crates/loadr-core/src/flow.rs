@@ -44,10 +44,50 @@ pub struct ScenarioProgram {
     pub think_time: Option<ThinkTimeSpec>,
     /// Scenario-wide target iteration starts per second (per-VU pacing).
     pub pacing: Option<f64>,
+    /// Global request-rate ceiling (Gatling throttle), shared across all VUs.
+    pub throttle: Option<Arc<Throttle>>,
     /// scenario + global tags.
     pub tags: Arc<Tags>,
     pub http: Arc<HttpDefaults>,
     pub cookies_auto: bool,
+}
+
+/// A token-bucket-style request-rate limiter shared across a scenario's VUs.
+/// Each acquisition is granted a slot exactly `1/rps` after the previous one,
+/// so the global request rate never exceeds `rps`.
+pub struct Throttle {
+    interval: Duration,
+    next_slot: parking_lot::Mutex<Option<std::time::Instant>>,
+}
+
+impl Throttle {
+    pub fn new(requests_per_second: f64) -> Self {
+        let rps = requests_per_second.max(1e-9);
+        Throttle {
+            interval: Duration::from_secs_f64(1.0 / rps),
+            next_slot: parking_lot::Mutex::new(None),
+        }
+    }
+
+    /// Reserve the next slot and return how long to wait before using it.
+    fn reserve(&self) -> Duration {
+        let now = std::time::Instant::now();
+        let mut guard = self.next_slot.lock();
+        let slot = match *guard {
+            Some(t) if t > now => t,
+            _ => now,
+        };
+        *guard = Some(slot + self.interval);
+        slot.saturating_duration_since(now)
+    }
+
+    /// Block (async) until a request slot is available.
+    pub async fn acquire(&self) {
+        let wait = self.reserve();
+        if !wait.is_zero() {
+            tokio::time::sleep(wait).await;
+        }
+    }
 }
 
 pub enum CompiledStep {
@@ -61,6 +101,34 @@ pub enum CompiledStep {
         name: String,
         steps: Vec<CompiledStep>,
     },
+    Repeat {
+        times: u64,
+        counter: Option<String>,
+        steps: Vec<CompiledStep>,
+    },
+    While {
+        condition: String,
+        max_iterations: u64,
+        steps: Vec<CompiledStep>,
+    },
+    If {
+        condition: String,
+        then: Vec<CompiledStep>,
+        otherwise: Vec<CompiledStep>,
+    },
+    Random {
+        strategy: loadr_config::SwitchStrategy,
+        choices: Vec<CompiledChoice>,
+        /// Round-robin cursor (per VU, but the program is shared, so this is a
+        /// per-iteration fallback — actual round-robin state lives on the VU).
+        round_robin: std::sync::atomic::AtomicU64,
+    },
+}
+
+pub struct CompiledChoice {
+    pub weight: f64,
+    pub name: Option<String>,
+    pub steps: Vec<CompiledStep>,
 }
 
 pub struct CompiledRequest {
@@ -126,6 +194,9 @@ impl ScenarioProgram {
             exec: scenario.exec.clone(),
             think_time: scenario.think_time.or(plan.defaults.think_time),
             pacing: scenario.pacing.map(|p| p.iterations_per_second),
+            throttle: scenario
+                .throttle
+                .map(|t| Arc::new(Throttle::new(t.requests_per_second))),
             tags: Arc::new(tags),
             http: Arc::new(plan.defaults.http.clone()),
             cookies_auto: plan.defaults.http.cookies,
@@ -158,6 +229,36 @@ fn compile_steps(
                 Step::Group(GroupStep { name, steps }) => CompiledStep::Group {
                     name: name.clone(),
                     steps: compile_steps(steps, base_dir)?,
+                },
+                Step::Repeat(r) => CompiledStep::Repeat {
+                    times: r.times,
+                    counter: r.counter.clone(),
+                    steps: compile_steps(&r.steps, base_dir)?,
+                },
+                Step::While(w) => CompiledStep::While {
+                    condition: w.condition.clone(),
+                    max_iterations: w.max_iterations.unwrap_or(10_000),
+                    steps: compile_steps(&w.steps, base_dir)?,
+                },
+                Step::If(c) => CompiledStep::If {
+                    condition: c.condition.clone(),
+                    then: compile_steps(&c.then, base_dir)?,
+                    otherwise: compile_steps(&c.otherwise, base_dir)?,
+                },
+                Step::Random(r) => CompiledStep::Random {
+                    strategy: r.strategy,
+                    choices: r
+                        .choices
+                        .iter()
+                        .map(|c| {
+                            Ok(CompiledChoice {
+                                weight: c.weight.unwrap_or(1.0),
+                                name: c.name.clone(),
+                                steps: compile_steps(&c.steps, base_dir)?,
+                            })
+                        })
+                        .collect::<Result<Vec<_>, EngineError>>()?,
+                    round_robin: std::sync::atomic::AtomicU64::new(0),
                 },
             })
         })
@@ -416,10 +517,135 @@ impl FlowRunner {
                             return outcome;
                         }
                     }
+                    CompiledStep::Repeat {
+                        times,
+                        counter,
+                        steps,
+                    } => {
+                        let var = counter.clone().unwrap_or_else(|| "index".to_string());
+                        for i in 0..*times {
+                            vu.vars.insert(var.clone(), serde_json::json!(i));
+                            let outcome = self.run_steps(steps, vu, script).await;
+                            if outcome != IterationOutcome::Completed {
+                                return outcome;
+                            }
+                        }
+                    }
+                    CompiledStep::While {
+                        condition,
+                        max_iterations,
+                        steps,
+                    } => {
+                        let mut n = 0u64;
+                        while n < *max_iterations {
+                            if !self.eval_condition_bool(condition, vu, script) {
+                                break;
+                            }
+                            let outcome = self.run_steps(steps, vu, script).await;
+                            if outcome != IterationOutcome::Completed {
+                                return outcome;
+                            }
+                            n += 1;
+                        }
+                    }
+                    CompiledStep::If {
+                        condition,
+                        then,
+                        otherwise,
+                    } => {
+                        let branch = if self.eval_condition_bool(condition, vu, script) {
+                            then
+                        } else {
+                            otherwise
+                        };
+                        let outcome = self.run_steps(branch, vu, script).await;
+                        if outcome != IterationOutcome::Completed {
+                            return outcome;
+                        }
+                    }
+                    CompiledStep::Random {
+                        strategy,
+                        choices,
+                        round_robin,
+                    } => {
+                        if choices.is_empty() {
+                            continue;
+                        }
+                        let idx = self.pick_branch(*strategy, choices, round_robin, vu);
+                        let choice = &choices[idx];
+                        let label = choice
+                            .name
+                            .clone()
+                            .unwrap_or_else(|| format!("branch-{idx}"));
+                        vu.groups.push(label);
+                        let outcome = self.run_steps(&choice.steps, vu, script).await;
+                        vu.groups.pop();
+                        if outcome != IterationOutcome::Completed {
+                            return outcome;
+                        }
+                    }
                 }
             }
             IterationOutcome::Completed
         })
+    }
+
+    /// Evaluate a JS condition expression to a boolean (false on error / no engine).
+    fn eval_condition_bool(
+        &self,
+        expr: &str,
+        vu: &mut VuContext,
+        script: &mut Option<Box<dyn VuScript>>,
+    ) -> bool {
+        let Some(vu_script) = script.as_mut() else {
+            tracing::warn!("flow condition skipped: no script engine configured");
+            return false;
+        };
+        match run_script(
+            self,
+            vu,
+            vu_script.as_mut(),
+            ScriptInvocation::Eval(expr.to_string()),
+        ) {
+            Ok(v) => is_truthy(&v),
+            Err(e) => {
+                tracing::warn!(condition = %expr, error = %e, "flow condition errored");
+                false
+            }
+        }
+    }
+
+    /// Choose a branch index for a `random` step.
+    fn pick_branch(
+        &self,
+        strategy: loadr_config::SwitchStrategy,
+        choices: &[CompiledChoice],
+        round_robin: &std::sync::atomic::AtomicU64,
+        vu: &mut VuContext,
+    ) -> usize {
+        use loadr_config::SwitchStrategy;
+        use rand::RngExt;
+        match strategy {
+            SwitchStrategy::RoundRobin => {
+                let n = round_robin.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                (n as usize) % choices.len()
+            }
+            SwitchStrategy::Uniform => vu.rng.random_range(0..choices.len()),
+            SwitchStrategy::Weighted => {
+                let total: f64 = choices.iter().map(|c| c.weight.max(0.0)).sum();
+                if total <= 0.0 {
+                    return vu.rng.random_range(0..choices.len());
+                }
+                let mut pick = vu.rng.random_range(0.0..total);
+                for (i, c) in choices.iter().enumerate() {
+                    pick -= c.weight.max(0.0);
+                    if pick < 0.0 {
+                        return i;
+                    }
+                }
+                choices.len() - 1
+            }
+        }
     }
 
     async fn run_request(
@@ -428,6 +654,11 @@ impl FlowRunner {
         vu: &mut VuContext,
         script: &mut Option<Box<dyn VuScript>>,
     ) -> RequestFlow {
+        // 0. Global rate ceiling (Gatling throttle): wait for a request slot.
+        if let Some(throttle) = &self.program.throttle {
+            throttle.acquire().await;
+        }
+
         // 1. Render the request.
         let mut prepared = match self.prepare(req, vu, script) {
             Ok(p) => p,

@@ -377,6 +377,7 @@ impl Engine {
             exec: None,
             think_time: None,
             pacing: None,
+            throttle: None,
             tags: Arc::new({
                 let mut t = Tags::new();
                 t.insert("scenario".into(), "setup".into());

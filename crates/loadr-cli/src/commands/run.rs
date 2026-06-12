@@ -62,7 +62,13 @@ fn plan_uses_js(plan: &loadr_config::TestPlan) -> bool {
     fn step_uses(step: &loadr_config::Step) -> bool {
         match step {
             loadr_config::Step::Js(_) => true,
+            // `while`/`if` conditions are JS expressions.
+            loadr_config::Step::While(_) | loadr_config::Step::If(_) => true,
             loadr_config::Step::Group(g) => g.steps.iter().any(step_uses),
+            loadr_config::Step::Repeat(r) => r.steps.iter().any(step_uses),
+            loadr_config::Step::Random(r) => {
+                r.choices.iter().any(|c| c.steps.iter().any(step_uses))
+            }
             loadr_config::Step::Request(r) => {
                 let text_has_js = |s: &str| s.contains("${js:");
                 r.url.contains("${js:")
@@ -73,7 +79,7 @@ fn plan_uses_js(plan: &loadr_config::TestPlan) -> bool {
                         .chain(r.checks.iter())
                         .any(|c| matches!(c, loadr_config::Condition::Js { .. }))
             }
-            _ => false,
+            loadr_config::Step::ThinkTime(_) => false,
         }
     }
     plan.scenarios

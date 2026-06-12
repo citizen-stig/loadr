@@ -9,6 +9,7 @@ members = [
     "crates/loadr-plugin-api",
     "crates/loadr-agent",
     "crates/loadr-convert",
+    "crates/loadr-browser",
     "crates/loadr-cli",
     "plugins/loadr-plugin-webui",
     "plugins/examples/native-output",
@@ -33,6 +34,7 @@ loadr-outputs = { path = "crates/loadr-outputs" }
 loadr-plugin-api = { path = "crates/loadr-plugin-api" }
 loadr-agent = { path = "crates/loadr-agent" }
 loadr-convert = { path = "crates/loadr-convert" }
+loadr-browser = { path = "crates/loadr-browser" }
 loadr-plugin-webui = { path = "plugins/loadr-plugin-webui" }
 loadr-testserver = { path = "testsupport/loadr-testserver" }
 

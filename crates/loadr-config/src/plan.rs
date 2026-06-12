@@ -125,6 +125,23 @@ pub struct HttpDefaults {
     /// Automatic cookie handling (per-VU cookie jar, default `true`).
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub cookies: bool,
+    /// Simulate a browser HTTP cache per VU: cacheable GET responses
+    /// (`Cache-Control: max-age`, ETag/Last-Modified) are served from cache or
+    /// revalidated with conditional requests — JMeter's HTTP Cache Manager.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub cache: bool,
+    /// Drop response bodies after reading them (saves memory in big runs).
+    /// Extraction and body assertions still see the body; nothing is retained.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub discard_response_bodies: bool,
+    /// Inject a W3C `traceparent` header on every request for distributed-trace
+    /// correlation (like k6's tracing). The trace id is per request.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub tracing: bool,
+    /// Resolve these hostnames to fixed addresses, bypassing DNS
+    /// (`host` or `host:port` → `ip` or `ip:port`). k6's `options.hosts`.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub hosts: IndexMap<String, String>,
 }
 
 impl HttpDefaults {
@@ -150,6 +167,10 @@ impl Default for HttpDefaults {
             proxy: None,
             tls: TlsConfig::default(),
             cookies: true,
+            cache: false,
+            discard_response_bodies: false,
+            tracing: false,
+            hosts: IndexMap::new(),
         }
     }
 }
@@ -188,6 +209,12 @@ pub struct TlsConfig {
     /// Override the SNI server name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server_name: Option<String>,
+    /// Minimum TLS version: `1.2` or `1.3` (default `1.2`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_version: Option<String>,
+    /// Maximum TLS version: `1.2` or `1.3` (default: highest supported).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_version: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -245,6 +272,14 @@ pub struct Scenario {
     /// Name of an exported JS function to run per iteration (instead of/with `flow`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exec: Option<String>,
+    /// Exported JS function run once per VU before its first iteration
+    /// (Locust `on_start` — e.g. log in once per user).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_start: Option<String>,
+    /// Exported JS function run once per VU after its last iteration
+    /// (Locust `on_stop` — e.g. log out).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_stop: Option<String>,
     /// Declarative iteration body: requests, think time, JS snippets, groups.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub flow: Vec<Step>,

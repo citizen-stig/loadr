@@ -323,7 +323,10 @@ impl loadr_plugin_webui::UiBackend for ControllerBackend {
                 healthy: a.healthy,
                 active_vus: a.active_vus,
                 cores: a.cores,
-                last_heartbeat_ms: a.last_heartbeat_ms,
+                // The controller reports `last_heartbeat_ms` as a delta (ms since
+                // the last beat); the UI expects an absolute epoch timestamp.
+                last_heartbeat_ms: loadr_core::metrics::now_millis()
+                    .saturating_sub(a.last_heartbeat_ms),
                 labels: a.labels.into_iter().collect(),
             })
             .collect()

@@ -62,6 +62,8 @@ pub struct AgentView {
     pub healthy: bool,
     pub active_vus: u64,
     pub cores: u32,
+    /// Absolute wall-clock time (ms since the UNIX epoch) of the last heartbeat,
+    /// so the UI can render "seen Ns ago".
     pub last_heartbeat_ms: u64,
     pub labels: BTreeMap<String, String>,
 }

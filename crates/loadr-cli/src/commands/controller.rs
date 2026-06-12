@@ -1,7 +1,6 @@
 //! `loadr controller` — the distributed-mode control plane: coordination gRPC
 //! server + management web UI + optional Prometheus endpoint.
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -407,7 +406,7 @@ pub async fn http_json(
         builder = builder.header(http::header::CONTENT_TYPE, "application/json");
     }
     let request = builder.body(http_body_util::Full::new(bytes::Bytes::from(
-        body.map(|b| serde_json::to_vec(b))
+        body.map(serde_json::to_vec)
             .transpose()?
             .unwrap_or_default(),
     )))?;
@@ -422,6 +421,3 @@ pub async fn http_json(
     }
     Ok(value)
 }
-
-#[derive(Default)]
-pub struct LabelMap(pub HashMap<String, String>);

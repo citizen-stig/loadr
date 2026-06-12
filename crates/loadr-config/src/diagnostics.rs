@@ -241,11 +241,13 @@ fn find_key_colon(s: &str) -> Option<usize> {
             b'"' if !in_single => in_double = !in_double,
             b'{' | b'[' if !in_single && !in_double => depth += 1,
             b'}' | b']' if !in_single && !in_double => depth = depth.saturating_sub(1),
-            b':' if !in_single && !in_double && depth == 0 => {
-                // A key colon is followed by space/EOL.
-                if i + 1 >= bytes.len() || bytes[i + 1] == b' ' {
-                    return Some(i);
-                }
+            // A key colon is followed by space/EOL.
+            b':' if !in_single
+                && !in_double
+                && depth == 0
+                && (i + 1 >= bytes.len() || bytes[i + 1] == b' ') =>
+            {
+                return Some(i);
             }
             _ => {}
         }

@@ -1,5 +1,6 @@
 [package]
 name = "loadr-cli"
+description = "loadr: a modern load testing platform — k6 + JMeter in one binary"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,3 +11,36 @@ name = "loadr"
 path = "src/main.rs"
 
 [dependencies]
+loadr-config = { workspace = true }
+loadr-core = { workspace = true }
+loadr-convert = { workspace = true }
+loadr-protocols = { workspace = true }
+loadr-js = { workspace = true }
+loadr-outputs = { workspace = true }
+loadr-plugin-api = { workspace = true }
+loadr-agent = { workspace = true }
+loadr-plugin-webui = { workspace = true }
+clap = { workspace = true }
+clap_complete = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+owo-colors = { workspace = true }
+indicatif = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+http-body-util = { workspace = true }
+http = { workspace = true }
+bytes = { workspace = true }
+base64 = { workspace = true }
+humantime = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+loadr-testserver = { workspace = true }
+tempfile = { workspace = true }

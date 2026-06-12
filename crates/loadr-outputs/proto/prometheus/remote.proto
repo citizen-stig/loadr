@@ -1,0 +1,10 @@
+// Minimal subset of the Prometheus remote-write protocol
+// (https://github.com/prometheus/prometheus/blob/main/prompb/remote.proto).
+syntax = "proto3";
+package prometheus;
+
+import "prometheus/types.proto";
+
+message WriteRequest {
+  repeated TimeSeries timeseries = 1;
+}

@@ -1,0 +1,22 @@
+// Minimal subset of the Prometheus remote-write types
+// (https://github.com/prometheus/prometheus/blob/main/prompb/types.proto),
+// limited to what loadr needs for remote-write v1 (0.1.0).
+syntax = "proto3";
+package prometheus;
+
+message Sample {
+  double value = 1;
+  // Milliseconds since the UNIX epoch.
+  int64 timestamp = 2;
+}
+
+message Label {
+  string name = 1;
+  string value = 2;
+}
+
+message TimeSeries {
+  // Sorted by label name.
+  repeated Label labels = 1;
+  repeated Sample samples = 2;
+}

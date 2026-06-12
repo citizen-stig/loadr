@@ -30,5 +30,8 @@ fn all_examples_validate() {
         );
         checked += 1;
     }
-    assert!(checked >= 10, "expected at least 10 examples, found {checked}");
+    assert!(
+        checked >= 10,
+        "expected at least 10 examples, found {checked}"
+    );
 }

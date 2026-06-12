@@ -266,10 +266,8 @@ pub fn validate(plan: &TestPlan, source: Option<&str>, opts: &ValidateOptions) -
                     }
                 }
             }
-            OutputConfig::Influxdb { url: u, .. } => {
-                if url::Url::parse(u).is_err() {
-                    ctx.error(format!("{path}.url"), "invalid URL");
-                }
+            OutputConfig::Influxdb { url: u, .. } if url::Url::parse(u).is_err() => {
+                ctx.error(format!("{path}.url"), "invalid URL");
             }
             _ => {}
         }
@@ -500,10 +498,10 @@ impl Ctx<'_> {
                         }
                     }
                 },
-                Extractor::Jsonpath { expression, .. } => {
-                    if serde_json_path::JsonPath::parse(expression).is_err() {
-                        self.error(epath, format!("invalid JSONPath `{expression}`"));
-                    }
+                Extractor::Jsonpath { expression, .. }
+                    if serde_json_path::JsonPath::parse(expression).is_err() =>
+                {
+                    self.error(epath, format!("invalid JSONPath `{expression}`"));
                 }
                 _ => {}
             }
@@ -552,13 +550,11 @@ impl Ctx<'_> {
                     contains,
                     exists,
                     ..
-                } => {
-                    if equals.is_none() && contains.is_none() && exists.is_none() {
-                        self.error(
-                            cpath,
-                            "header condition needs `equals`, `contains` or `exists`",
-                        );
-                    }
+                } if equals.is_none() && contains.is_none() && exists.is_none() => {
+                    self.error(
+                        cpath,
+                        "header condition needs `equals`, `contains` or `exists`",
+                    );
                 }
                 _ => {}
             }

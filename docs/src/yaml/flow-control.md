@@ -82,4 +82,4 @@ Control-flow steps nest arbitrarily — a `random` branch can contain a
 `while`, a `repeat` can wrap an `if`, and `group` still tags everything inside.
 This is how you model realistic user journeys: *browse 1–5 pages, then with
 some probability add to cart, then maybe check out, retrying the payment up to
-3 times.* See [`examples/16-flow-control.yaml`](https://github.com/reaandrew/loadr.io/blob/main/examples/16-flow-control.yaml).
+3 times.* See `examples/16-flow-control.yaml`.

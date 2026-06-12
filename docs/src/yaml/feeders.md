@@ -63,4 +63,4 @@ starts) and from `pacing` (which spaces iterations): `throttle` is a ceiling on
 under a known rate limit, or to hold a flat load while a closed model would
 otherwise overshoot.
 
-See [`examples/17-feeders-and-throttle.yaml`](https://github.com/reaandrew/loadr.io/blob/main/examples/17-feeders-and-throttle.yaml).
+See `examples/17-feeders-and-throttle.yaml`.

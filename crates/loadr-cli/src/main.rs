@@ -14,7 +14,7 @@ use clap::{Parser, Subcommand};
     about = "A modern load testing platform: k6 + JMeter in one binary",
     long_about = "loadr runs declarative YAML load tests with embedded JavaScript, six built-in \
                   protocols, plugins, distributed agents and a live web UI.\n\
-                  Docs: https://reaandrew.github.io/loadr.io/",
+                  Docs: https://loadr.io/docs/",
     propagate_version = true
 )]
 struct Cli {

@@ -67,9 +67,9 @@ cargo build --release
 
 The two shipped examples are the best reference:
 
-- [`plugins/examples/native-output`](https://github.com/reaandrew/loadr.io/tree/main/plugins/examples/native-output) —
+- `plugins/examples/native-output` —
   an output plugin writing snapshot digests to a file;
-- [`plugins/examples/native-protocol`](https://github.com/reaandrew/loadr.io/tree/main/plugins/examples/native-protocol) —
+- `plugins/examples/native-protocol` —
   an `echo-proto` protocol handler, including how `request.options.plugin`
   config reaches your `execute`.
 

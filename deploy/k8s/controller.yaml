@@ -20,7 +20,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: controller
-          image: ghcr.io/reaandrew/loadr:latest
+          image: loadr/loadr:latest
           args:
             - controller
             - --bind=0.0.0.0:7625

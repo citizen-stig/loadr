@@ -7,8 +7,6 @@ src = "src"
 [output.html]
 additional-css = ["theme/loadr.css"]
 site-url = "/docs/"
-git-repository-url = "https://github.com/reaandrew/loadr.io"
-edit-url-template = "https://github.com/reaandrew/loadr.io/edit/main/docs/{path}"
 default-theme = "ayu"
 preferred-dark-theme = "ayu"
 

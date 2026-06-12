@@ -17,7 +17,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: agent
-          image: ghcr.io/reaandrew/loadr:latest
+          image: loadr/loadr:latest
           args:
             - agent
             - --join=loadr-controller:7625

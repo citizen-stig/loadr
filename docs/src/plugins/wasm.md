@@ -2,7 +2,7 @@
 
 WASM plugins are [component-model](https://component-model.bytecodealliance.org/)
 components against the WIT world in
-[`crates/loadr-plugin-api/wit/loadr.wit`](https://github.com/reaandrew/loadr.io/blob/main/crates/loadr-plugin-api/wit/loadr.wit).
+`crates/loadr-plugin-api/wit/loadr.wit`.
 The host runs them in wasmtime with **no filesystem and no network** — a
 malicious or buggy extractor can waste CPU, nothing else.
 

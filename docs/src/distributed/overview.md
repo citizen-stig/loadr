@@ -43,7 +43,7 @@ docker compose -f deploy/docker-compose.yml up --build
 ```
 
 Kubernetes manifests and a Helm chart live in
-[`deploy/`](https://github.com/reaandrew/loadr.io/tree/main/deploy) —
+`deploy/` —
 `helm install loadr deploy/helm/loadr --set agents.replicas=10`.
 
 ## What gets partitioned

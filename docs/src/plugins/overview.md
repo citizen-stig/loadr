@@ -61,5 +61,5 @@ scenarios:
 ```
 
 Working examples of **every type** ship in
-[`plugins/examples/`](https://github.com/reaandrew/loadr.io/tree/main/plugins/examples) —
+`plugins/examples/` —
 start there, then read [Developing a plugin](developing.md).

@@ -4,9 +4,8 @@
 
 **A modern load testing platform in a single Rust binary — everything k6 does, everything JMeter does, with a cleaner developer experience.**
 
-[![CI](https://github.com/reaandrew/loadr.io/actions/workflows/ci.yml/badge.svg)](https://github.com/reaandrew/loadr.io/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/reaandrew/loadr.io?include_prereleases)](https://github.com/reaandrew/loadr.io/releases)
-[![Docs](https://img.shields.io/badge/docs-loadr.io-8A2BE2)](https://reaandrew.github.io/loadr.io/)
+[![Docs](https://img.shields.io/badge/docs-loadr.io-dc2626)](https://loadr.io/docs/)
+[![License](https://img.shields.io/badge/license-proprietary-07070a)](LICENSE)
 
 *Declarative YAML tests · embedded JavaScript · 6 protocols · WASM & native plugins · distributed agents · live web UI*
 
@@ -71,13 +70,13 @@ $ loadr run test.yaml
 
 ```bash
 # From a release binary
-curl -sSL https://github.com/reaandrew/loadr.io/releases/latest/download/loadr-$(uname -m)-linux.tar.gz | tar xz
+curl -sSL https://loadr.io/download/loadr-$(uname -m)-linux.tar.gz | tar xz
 
 # From source
 cargo install --path crates/loadr-cli
 
 # Docker
-docker run --rm -v $PWD:/work ghcr.io/reaandrew/loadr run /work/test.yaml
+docker run --rm -v $PWD:/work loadr/loadr run /work/test.yaml
 ```
 
 ## Quickstart
@@ -155,7 +154,7 @@ itself is a service plugin. Examples for every type live in
 
 ## Documentation
 
-The full book lives at **[reaandrew.github.io/loadr.io](https://reaandrew.github.io/loadr.io/)**:
+The full book lives at **[loadr.io/docs](https://loadr.io/docs/)**:
 getting started, the complete YAML reference (with JSON Schema for your
 editor: `loadr schema > loadr.schema.json`), JS API docs, plugin development,
 distributed testing, and k6/JMeter migration guides. Architecture and design

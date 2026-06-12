@@ -1,6 +1,6 @@
 # Architecture overview
 
-(See also [`ARCHITECTURE.md`](https://github.com/reaandrew/loadr.io/blob/main/ARCHITECTURE.md)
+(See also `ARCHITECTURE.md`
 in the repository root.)
 
 ## Crate layout

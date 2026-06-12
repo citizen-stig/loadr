@@ -37,7 +37,7 @@ Or ad hoc from the CLI: `loadr run --output json=results.jsonl test.yaml`.
 | `plugin` | both | any installed output plugin |
 
 The Grafana dashboard in
-[`deploy/grafana/dashboards/`](https://github.com/reaandrew/loadr.io/tree/main/deploy/grafana/dashboards)
+`deploy/grafana/dashboards/`
 is pre-built against the Prometheus naming; `docker compose -f
 deploy/docker-compose.yml up` gives you the full Prometheus + Grafana stack.
 

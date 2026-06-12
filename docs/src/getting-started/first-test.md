@@ -73,5 +73,5 @@ straight into CI.
 
 - Watch it live: `loadr run --ui first.yaml` then open `http://127.0.0.1:6464`.
 - Save machine-readable results: `loadr run --summary-export results.json first.yaml`.
-- Browse [`examples/`](https://github.com/reaandrew/loadr.io/tree/main/examples)
+- Browse `examples/`
   — 15 runnable tests covering every feature.

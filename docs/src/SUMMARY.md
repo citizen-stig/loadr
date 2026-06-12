@@ -34,8 +34,11 @@
 
 - [HTTP](protocols/http.md)
 - [WebSocket](protocols/websocket.md)
+- [Server-Sent Events](protocols/sse.md)
 - [gRPC](protocols/grpc.md)
 - [GraphQL](protocols/graphql.md)
+- [Redis](protocols/redis.md)
+- [Browser](protocols/browser.md)
 - [TCP & UDP](protocols/sockets.md)
 
 # Distributed testing

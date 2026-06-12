@@ -19,6 +19,10 @@ scenarios:
     tags: { kind: api }          # tags on all samples from this scenario
 ```
 
+The scenario `tags` map (name → value) is attached to every sample from the
+scenario, and its **values** also drive `loadr run --tags` / `--exclude-tags`
+scenario selection — see [Selecting scenarios by tag](../getting-started/cli.md#selecting-scenarios-by-tag).
+
 ## Closed-model executors
 
 New iterations start only when a VU finishes its previous one — throughput

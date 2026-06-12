@@ -52,6 +52,11 @@ const KNOWN_PROTOCOLS: &[&str] = &[
     "websocket",
     "grpc",
     "graphql",
+    "sse",
+    "sses",
+    "redis",
+    "rediss",
+    "browser",
     "tcp",
     "udp",
 ];

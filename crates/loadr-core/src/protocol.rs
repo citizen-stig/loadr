@@ -197,6 +197,7 @@ impl ProtocolRegistry {
             return match p {
                 "https" => "http".to_string(),
                 "websocket" | "wss" => "ws".to_string(),
+                "sses" => "sse".to_string(),
                 other => other.to_string(),
             };
         }
@@ -205,6 +206,8 @@ impl ProtocolRegistry {
             "http" | "https" => "http",
             "ws" | "wss" => "ws",
             "grpc" | "grpcs" => "grpc",
+            "sse" | "sses" => "sse",
+            "redis" | "rediss" => "redis",
             "tcp" => "tcp",
             "udp" => "udp",
             _ => "http",
@@ -231,6 +234,10 @@ mod tests {
         assert_eq!(ProtocolRegistry::infer(None, "wss://x/"), "ws");
         assert_eq!(ProtocolRegistry::infer(None, "grpc://x/"), "grpc");
         assert_eq!(ProtocolRegistry::infer(None, "tcp://x:9"), "tcp");
+        assert_eq!(ProtocolRegistry::infer(None, "sse://x/"), "sse");
+        assert_eq!(ProtocolRegistry::infer(None, "sses://x/"), "sse");
+        assert_eq!(ProtocolRegistry::infer(None, "redis://x:6379"), "redis");
+        assert_eq!(ProtocolRegistry::infer(None, "rediss://x:6379"), "redis");
         assert_eq!(ProtocolRegistry::infer(None, "/relative"), "http");
         assert_eq!(
             ProtocolRegistry::infer(Some("graphql"), "https://x/"),
@@ -239,6 +246,11 @@ mod tests {
         assert_eq!(
             ProtocolRegistry::infer(Some("websocket"), "https://x/"),
             "ws"
+        );
+        assert_eq!(ProtocolRegistry::infer(Some("sses"), "sses://x/"), "sse");
+        assert_eq!(
+            ProtocolRegistry::infer(Some("browser"), "https://x/"),
+            "browser"
         );
     }
 

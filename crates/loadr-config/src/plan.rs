@@ -1051,6 +1051,9 @@ pub struct RequestStep {
     /// Raw TCP/UDP socket options.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub socket: Option<SocketOptions>,
+    /// Server-Sent Events stream options.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sse: Option<SseOptions>,
 }
 
 /// Request body: a plain string, or a structured spec.
@@ -1203,6 +1206,24 @@ pub struct SocketOptions {
     /// Read timeout (default: request timeout).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub read_timeout: Option<Dur>,
+}
+
+/// Server-Sent Events options: how long to keep the stream open.
+///
+/// With none set, the stream is read until the request `timeout` elapses or
+/// the server closes the connection.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct SseOptions {
+    /// Stop after this many events have been received.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub events: Option<u64>,
+    /// Stop once an event whose `event:` type equals this value arrives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<String>,
+    /// Stop after this wall-clock duration (capped by the request timeout).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration: Option<Dur>,
 }
 
 // ---------------------------------------------------------------------------

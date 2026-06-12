@@ -187,6 +187,7 @@ pub struct CompiledRequest {
     pub grpc: Option<loadr_config::GrpcOptions>,
     pub graphql: Option<loadr_config::GraphqlOptions>,
     pub socket: Option<loadr_config::SocketOptions>,
+    pub sse: Option<loadr_config::SseOptions>,
 }
 
 pub enum CompiledBody {
@@ -484,6 +485,7 @@ fn compile_request(
         grpc,
         graphql: req.graphql.clone(),
         socket: req.socket.clone(),
+        sse: req.sse.clone(),
     })
 }
 
@@ -1500,6 +1502,27 @@ impl FlowRunner {
                 read_until_close: socket.read_until_close,
                 read_timeout: socket.read_timeout.map(|d| d.as_duration()),
             });
+        }
+
+        // SSE stop-conditions are passed to the handler via the generic plugin
+        // options channel (the shape `SseLimits::from_plugin` expects).
+        if let Some(sse) = &req.sse {
+            let mut obj = serde_json::Map::new();
+            if let Some(events) = sse.events {
+                obj.insert("events".to_string(), serde_json::json!(events));
+            }
+            if let Some(until) = &sse.until {
+                obj.insert("until".to_string(), serde_json::json!(until));
+            }
+            if let Some(duration) = sse.duration {
+                obj.insert(
+                    "duration".to_string(),
+                    serde_json::json!(format!("{}ms", duration.as_duration().as_millis())),
+                );
+            }
+            if !obj.is_empty() {
+                options.plugin = Some(serde_json::Value::Object(obj));
+            }
         }
 
         let name = match &req.name {

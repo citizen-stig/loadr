@@ -21,7 +21,7 @@ mkdir -p "$DIST/assets" "$DIST/docs"
 cp "$ROOT/site/index.html" "$ROOT/site/404.html" "$DIST/"
 mkdir -p "$DIST/demos"
 cp "$ROOT/site/demos.html" "$DIST/demos/index.html"
-cp "$ROOT/site/assets/site.css" "$ROOT/site/assets/site.js" "$ROOT/site/assets/favicon.svg" "$DIST/assets/"
+cp "$ROOT/site/assets/site.css" "$ROOT/site/assets/site.js" "$ROOT/site/assets/consent.js" "$ROOT/site/assets/favicon.svg" "$DIST/assets/"
 cp -r "$ROOT/docs/book/." "$DIST/docs/"
 if [ -d "$ROOT/site/videos/out" ]; then
   mkdir -p "$DIST/videos"
@@ -34,10 +34,12 @@ fi
 echo "==> cache-busting assets"
 CSS_HASH=$(sha256sum "$DIST/assets/site.css" | cut -c1-10)
 JS_HASH=$(sha256sum "$DIST/assets/site.js" | cut -c1-10)
+CONSENT_HASH=$(sha256sum "$DIST/assets/consent.js" | cut -c1-10)
 find "$DIST" -name "*.html" -exec sed -i \
   -e "s#\(assets/site\.css\)\(?v=[0-9a-f]*\)\?#\1?v=${CSS_HASH}#g" \
-  -e "s#\(assets/site\.js\)\(?v=[0-9a-f]*\)\?#\1?v=${JS_HASH}#g" {} +
-echo "    css?v=${CSS_HASH}  js?v=${JS_HASH}"
+  -e "s#\(assets/site\.js\)\(?v=[0-9a-f]*\)\?#\1?v=${JS_HASH}#g" \
+  -e "s#\(assets/consent\.js\)\(?v=[0-9a-f]*\)\?#\1?v=${CONSENT_HASH}#g" {} +
+echo "    css?v=${CSS_HASH}  js?v=${JS_HASH}  consent?v=${CONSENT_HASH}"
 
 echo "==> syncing to s3://$BUCKET"
 # Long-lived cache for static assets…

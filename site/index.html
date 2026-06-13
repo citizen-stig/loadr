@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Google Analytics (gtag.js) loaded via Consent Mode; see /assets/consent.js -->
+<script src="/assets/consent.js"></script>
 <title>loadr — the load testing platform. k6, JMeter, Gatling & Locust ideas in one Rust binary.</title>
 <meta name="description" content="loadr is a modern load testing platform: declarative YAML tests, embedded JavaScript, HTTP/2, WebSocket, gRPC, GraphQL, TCP & UDP, WASM plugins, distributed agents with exact percentiles, and a built-in live web UI. One binary.">
 <meta property="og:title" content="loadr — the load testing platform">
@@ -625,30 +627,33 @@ $ loadr validate converted.yaml
 <section id="compare" class="border-t border-edge/60 py-24">
   <div class="mx-auto max-w-6xl px-5">
     <p class="kicker">How loadr compares</p>
-    <h2 class="mt-3 text-3xl font-extrabold tracking-tight text-white sm:text-4xl">loadr, k6 and JMeter side by side</h2>
-    <p class="mt-4 max-w-2xl text-smoke">k6 and JMeter are both excellent, widely-loved tools — this is simply where loadr sits relative to them; pick whatever fits your team. loadr also takes inspiration from <strong class="text-ash">Gatling</strong> (its flow-control DSL and feeders) and <strong class="text-ash">Locust</strong> (its weighted-task behaviour model) — see <a href="#credits" class="font-semibold text-flare hover:underline">Built on</a>.</p>
+    <h2 class="mt-3 text-3xl font-extrabold tracking-tight text-white sm:text-4xl">loadr next to k6, JMeter, Gatling &amp; Locust</h2>
+    <p class="mt-4 max-w-2xl text-smoke">All four are excellent, widely-loved tools that shaped this space — this is simply where loadr sits relative to them; pick whatever fits your team. Where a cell says <em class="not-italic text-ash">Enterprise</em> or <em class="not-italic text-ash">cloud</em>, the capability exists in that project's paid/hosted tier. See also <a href="#credits" class="font-semibold text-flare hover:underline">what loadr is built on</a>.</p>
     <div class="mt-10 overflow-x-auto rounded-2xl border border-edge">
-      <table class="w-full min-w-[760px] border-collapse bg-panel text-sm">
+      <table class="w-full min-w-[920px] border-collapse bg-panel text-sm">
         <thead>
           <tr class="border-b border-edge text-left">
             <th class="px-5 py-4 font-semibold text-smoke"></th>
             <th class="px-5 py-4 font-bold text-white">k6</th>
             <th class="px-5 py-4 font-bold text-white">JMeter</th>
+            <th class="px-5 py-4 font-bold text-white">Gatling</th>
+            <th class="px-5 py-4 font-bold text-white">Locust</th>
             <th class="bg-ember/10 px-5 py-4 font-black text-flare">loadr</th>
           </tr>
         </thead>
         <tbody class="text-smoke [&_td]:px-5 [&_td]:py-3.5 [&_tr]:border-b [&_tr]:border-edge/60">
-          <tr><td class="font-semibold text-ash">Test format</td><td>JavaScript</td><td>XML (GUI)</td><td class="bg-ember/5 text-ash">YAML + JS, JSON-Schema validated</td></tr>
-          <tr><td class="font-semibold text-ash">Open-model load (arrival rate)</td><td>✓</td><td>plugin</td><td class="bg-ember/5 text-ash">✓ all 7 executors</td></tr>
-          <tr><td class="font-semibold text-ash">Protocols built in</td><td>HTTP, WS, gRPC</td><td>many</td><td class="bg-ember/5 text-ash">HTTP/1.1+2, WS, gRPC + reflection, GraphQL, TCP, UDP</td></tr>
-          <tr><td class="font-semibold text-ash">JMeter-style assertions / extractors / timers</td><td>—</td><td>✓</td><td class="bg-ember/5 text-ash">✓ JSONPath, XPath, CSS, regex, boundary; 3 timers + pacing</td></tr>
-          <tr><td class="font-semibold text-ash">Extensions without rebuilding</td><td>— (xk6 recompile)</td><td>jars</td><td class="bg-ember/5 text-ash">✓ WASM (sandboxed) + native plugins</td></tr>
-          <tr><td class="font-semibold text-ash">Distributed execution</td><td>cloud</td><td>RMI</td><td class="bg-ember/5 text-ash">✓ built-in, gRPC + mTLS</td></tr>
-          <tr><td class="font-semibold text-ash">Fleet-wide percentiles</td><td>cloud</td><td>averaged</td><td class="bg-ember/5 text-ash">✓ exact (HDR histogram merge)</td></tr>
-          <tr><td class="font-semibold text-ash">Live management UI</td><td>cloud</td><td>—</td><td class="bg-ember/5 text-ash">✓ embedded</td></tr>
-          <tr><td class="font-semibold text-ash">Per-phase timings (DNS/TLS/TTFB)</td><td>✓</td><td>partial</td><td class="bg-ember/5 text-ash">✓ on every protocol</td></tr>
-          <tr><td class="font-semibold text-ash">Runtime footprint</td><td>Go binary</td><td>JVM + tuning</td><td class="bg-ember/5 text-ash">one Rust binary, distroless image</td></tr>
-          <tr><td class="font-semibold text-ash">Migration path in</td><td>—</td><td>—</td><td class="bg-ember/5 text-ash">✓ imports .jmx and k6 scripts</td></tr>
+          <tr><td class="font-semibold text-ash">Test format</td><td>JavaScript</td><td>XML (GUI)</td><td>Scala / Java / Kotlin DSL</td><td>Python</td><td class="bg-ember/5 text-ash">YAML + JS, JSON-Schema validated</td></tr>
+          <tr><td class="font-semibold text-ash">Open-model load (arrival rate)</td><td>✓</td><td>plugin</td><td>✓ injection profiles</td><td>custom shapes</td><td class="bg-ember/5 text-ash">✓ all 7 executors</td></tr>
+          <tr><td class="font-semibold text-ash">Protocols built in</td><td>HTTP, WS, gRPC</td><td>many</td><td>HTTP, WS, SSE, JMS</td><td>HTTP (custom clients)</td><td class="bg-ember/5 text-ash">HTTP/1.1+2, WS, gRPC + reflection, GraphQL, TCP, UDP</td></tr>
+          <tr><td class="font-semibold text-ash">Assertions / extractors / timers</td><td>checks</td><td>✓ full</td><td>checks + pauses</td><td>in Python</td><td class="bg-ember/5 text-ash">✓ JSONPath, XPath, CSS, regex, boundary; 3 timers + pacing</td></tr>
+          <tr><td class="font-semibold text-ash">Flow control &amp; feeders (Gatling-style)</td><td>code</td><td>controllers</td><td>✓ DSL</td><td>in Python</td><td class="bg-ember/5 text-ash">✓ repeat/while/if/switch/foreach + feeders + throttle</td></tr>
+          <tr><td class="font-semibold text-ash">Extensions without rebuilding</td><td>— (xk6 recompile)</td><td>jars</td><td>— (Scala recompile)</td><td>Python</td><td class="bg-ember/5 text-ash">✓ WASM (sandboxed) + native plugins</td></tr>
+          <tr><td class="font-semibold text-ash">Distributed execution</td><td>cloud</td><td>RMI</td><td>Enterprise</td><td>✓ master / worker</td><td class="bg-ember/5 text-ash">✓ built-in, gRPC + mTLS</td></tr>
+          <tr><td class="font-semibold text-ash">Fleet-wide percentiles</td><td>cloud</td><td>averaged</td><td>Enterprise</td><td>approximate</td><td class="bg-ember/5 text-ash">✓ exact (HDR histogram merge)</td></tr>
+          <tr><td class="font-semibold text-ash">Live management UI</td><td>cloud</td><td>—</td><td>Enterprise</td><td>✓ built-in</td><td class="bg-ember/5 text-ash">✓ embedded</td></tr>
+          <tr><td class="font-semibold text-ash">Per-phase timings (DNS/TLS/TTFB)</td><td>✓</td><td>partial</td><td>✓</td><td>—</td><td class="bg-ember/5 text-ash">✓ on every protocol</td></tr>
+          <tr><td class="font-semibold text-ash">Runtime footprint</td><td>Go binary</td><td>JVM + tuning</td><td>JVM</td><td>Python runtime</td><td class="bg-ember/5 text-ash">one Rust binary, distroless image</td></tr>
+          <tr><td class="font-semibold text-ash">Migration path in</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="bg-ember/5 text-ash">✓ imports .jmx and k6 scripts</td></tr>
         </tbody>
       </table>
     </div>
@@ -808,7 +813,7 @@ $ loadr report results.json -o report.html     # self-contained HTML report</cod
       </div>
     </div>
     <div class="mt-12 border-t border-edge/60 pt-6 text-xs text-smoke">
-      © 2026 loadr. Built in Rust. No telemetry, no tracking — including on this site.
+      © 2026 loadr. Built in Rust. The loadr tool ships zero telemetry — it never phones home. This site uses privacy-first, consent-based analytics only.
     </div>
   </div>
 </footer>

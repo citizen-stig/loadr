@@ -1,0 +1,25 @@
+# Real backend services for running the loadr examples end-to-end.
+#   docker compose -f examples/harness/docker-compose.yml up -d --build
+# Used by scripts/run-examples.sh. Real products where one exists (Redis,
+# go-httpbin), real protocol stacks elsewhere (grpcio + reflection, the
+# websockets library, asyncio sockets).
+services:
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+
+  httpbin:                      # real HTTP service (go-httpbin)
+    image: mccutchen/go-httpbin
+    ports: ["8080:8080"]
+
+  greeter:                      # real gRPC (grpcio) helloworld.Greeter + reflection
+    build: ./greeter
+    ports: ["50051:50051"]
+
+  echo:                         # real WS / SSE / TCP / UDP
+    build: ./echo
+    ports:
+      - "8081:8081"
+      - "8082:8082"
+      - "7000:7000"
+      - "8125:8125/udp"

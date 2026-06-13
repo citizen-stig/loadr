@@ -712,7 +712,7 @@ $ loadr validate converted.yaml
   <div class="mx-auto max-w-7xl px-5">
     <p class="kicker">Roadmap</p>
     <h2 class="mt-3 text-3xl font-extrabold tracking-tight text-white sm:text-4xl">What's coming</h2>
-    <p class="mt-4 max-w-2xl text-smoke">loadr already covers the core of k6, JMeter, Gatling and Locust. Here's where it's headed next — shaped by what those tools do that loadr doesn't yet. No dates, just direction; priorities shift with feedback.</p>
+    <p class="mt-4 max-w-2xl text-smoke">loadr already covers the core of k6, JMeter, Gatling and Locust. Here's where it's headed next — shaped by what those tools and their plugin ecosystems do that loadr doesn't yet. No dates, just direction; priorities shift with feedback.</p>
 
     <div class="mt-12 grid gap-6 lg:grid-cols-3">
       <!-- Next up -->
@@ -736,7 +736,8 @@ $ loadr validate converted.yaml
         </div>
         <ul class="space-y-4 text-sm text-smoke">
           <li><span class="font-semibold text-ash">Scriptable protocol clients in JS</span><br>Drive WebSocket and gRPC from JavaScript, plus <code class="text-flare">http.batch</code> and an async event loop / timers.</li>
-          <li><span class="font-semibold text-ash">Programmable load shapes</span><br>Compute load per-tick in code, plus richer injection profiles (<code class="text-flare">atOnceUsers</code>, <code class="text-flare">nothingFor</code>, stepped ramps).</li>
+          <li><span class="font-semibold text-ash">Server-side resource monitoring</span><br>Correlate CPU / memory / disk / network of the system-under-test with your load — JMeter's PerfMon, built in.</li>
+          <li><span class="font-semibold text-ash">Programmable load shapes</span><br>Compute load per-tick in code, richer injection profiles (<code class="text-flare">atOnceUsers</code>, <code class="text-flare">nothingFor</code>, stepped ramps), and throughput-shaping profiles that adjust concurrency to hold a target RPS.</li>
           <li><span class="font-semibold text-ash">Proxy recorder</span><br><code class="text-flare">loadr record</code> — capture real browser/API traffic and generate a test.</li>
           <li><span class="font-semibold text-ash">Manual pass/fail from JS</span><br>Mark a response failed/succeeded in script (Locust <code class="text-flare">catch_response</code>-style).</li>
         </ul>
@@ -751,6 +752,7 @@ $ loadr validate converted.yaml
           <li><span class="font-semibold text-ash">Messaging protocols</span><br>Kafka, MQTT, JMS and AMQP — likely as plugins on the existing plugin ABI.</li>
           <li><span class="font-semibold text-ash">Managed outputs &amp; dashboards</span><br>More exporters and hosted run-over-run trend comparison.</li>
           <li><span class="font-semibold text-ash">Distributed niceties</span><br><code class="text-flare">--expect-workers</code> gating and custom controller↔agent messages.</li>
+          <li><span class="font-semibold text-ash">Inter-VU coordination &amp; auto-stop</span><br>Pass data between virtual users at runtime, and stop a run automatically when error-rate or latency guards trip.</li>
           <li><span class="font-semibold text-ash">Plugin registry</span><br>A browsable catalog of community WASM &amp; native plugins.</li>
         </ul>
       </div>

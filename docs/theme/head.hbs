@@ -1,2 +1,28 @@
 <!-- Google Analytics (gtag.js) via Consent Mode + themed cookie banner. -->
 <script src="/assets/consent.js"></script>
+
+<!-- Persistent "back to loadr.io" link in the docs menu bar. -->
+<style>
+  .menu-bar .home-link {
+    margin-left: 0.5rem;
+    padding: 0 0.6rem;
+    line-height: var(--menu-bar-height, 50px);
+    font-weight: 600;
+    color: var(--icons);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .menu-bar .home-link:hover { color: var(--icons-hover); }
+</style>
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    var left = document.querySelector('.menu-bar .left-buttons') || document.querySelector('.menu-bar');
+    if (!left || document.querySelector('.menu-bar .home-link')) return;
+    var a = document.createElement('a');
+    a.href = '/';
+    a.className = 'home-link';
+    a.title = 'Back to loadr.io';
+    a.textContent = '← loadr.io';
+    left.appendChild(a);
+  });
+</script>

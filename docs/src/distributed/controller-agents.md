@@ -3,7 +3,7 @@
 ## The coordination protocol
 
 Controller and agents speak `loadr.coordination.v1` — a single bidirectional
-gRPC stream per agent (see [ADR-003](../adr/003-coordination.md)):
+gRPC stream per agent:
 
 ```text
 agent ──▶ Register{agent_id, name, protocol_version, cores, labels}

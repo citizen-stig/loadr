@@ -72,13 +72,3 @@
 # About
 
 - [Credits & influences](credits.md)
-
-# Architecture
-
-- [Architecture overview](adr/architecture.md)
-- [ADR-001: JavaScript runtime](adr/001-js-runtime.md)
-- [ADR-002: Plugin system](adr/002-plugins.md)
-- [ADR-003: Coordination protocol](adr/003-coordination.md)
-- [ADR-004: HTTP stack](adr/004-http-stack.md)
-- [ADR-005: Metrics engine](adr/005-metrics.md)
-- [ADR-006: Executor model](adr/006-executors.md)

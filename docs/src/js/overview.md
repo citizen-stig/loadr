@@ -1,7 +1,6 @@
 # Embedded JavaScript overview
 
-loadr embeds a JavaScript engine (QuickJS — see
-[ADR-001](../adr/001-js-runtime.md)) so dynamic logic lives next to the
+loadr embeds a JavaScript engine (QuickJS) so dynamic logic lives next to the
 declarative YAML. JS is usable three ways:
 
 ## 1. Inline expressions

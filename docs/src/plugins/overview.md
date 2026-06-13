@@ -1,7 +1,7 @@
 # Plugin system overview
 
 loadr extends through five plugin types over two mechanisms — without
-rebuilding the binary (unlike k6/xk6) and without a JVM (unlike JMeter).
+rebuilding the binary and without a JVM.
 
 | Plugin type | Extends | Typical examples |
 |---|---|---|

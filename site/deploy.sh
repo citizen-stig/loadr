@@ -28,6 +28,17 @@ if [ -d "$ROOT/site/videos/out" ]; then
   cp "$ROOT/site/videos/out/"*.mp4 "$ROOT/site/videos/out/"*.jpg "$DIST/videos/" 2>/dev/null || true
 fi
 
+# Cache-bust CSS/JS: site.css and site.js carry a 24h cache and stable names,
+# so browsers keep serving stale copies after a deploy. Append a content hash
+# to their references in the HTML — a new hash = a new URL = guaranteed refetch.
+echo "==> cache-busting assets"
+CSS_HASH=$(sha256sum "$DIST/assets/site.css" | cut -c1-10)
+JS_HASH=$(sha256sum "$DIST/assets/site.js" | cut -c1-10)
+find "$DIST" -name "*.html" -exec sed -i \
+  -e "s#\(assets/site\.css\)\(?v=[0-9a-f]*\)\?#\1?v=${CSS_HASH}#g" \
+  -e "s#\(assets/site\.js\)\(?v=[0-9a-f]*\)\?#\1?v=${JS_HASH}#g" {} +
+echo "    css?v=${CSS_HASH}  js?v=${JS_HASH}"
+
 echo "==> syncing to s3://$BUCKET"
 # Long-lived cache for static assets…
 aws-vault exec "$AWS_PROFILE" -- aws s3 sync "$DIST" "s3://$BUCKET" \

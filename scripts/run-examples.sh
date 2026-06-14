@@ -108,3 +108,11 @@ echo "    assertions need a backend returning that app's data shapes."
 
 [ "$KEEP" = "1" ] || { echo "==> tearing down"; docker compose -f "$COMPOSE" down >/dev/null 2>&1; }
 rm -rf "$RUNDIR"
+
+# Fail the run (for CI acceptance gating) only if an example could not execute
+# end-to-end. RAN* (a content/threshold assertion not met against the generic
+# stand-in backend) is expected and does not fail acceptance.
+if [ "$err" -gt 0 ]; then
+  echo "::error::$err example(s) failed to execute"
+  exit 1
+fi

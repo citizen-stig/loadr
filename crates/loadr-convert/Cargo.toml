@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license-file.workspace = true
 repository.workspace = true
+publish = false  # proprietary (Elastic-2.0); never publish to crates.io
 description = "Convert JMeter .jmx test plans and k6 scripts into loadr YAML test definitions"
 
 [dependencies]

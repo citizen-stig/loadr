@@ -23,44 +23,54 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
-        with:
-          egress-policy: audit
+        with: { egress-policy: audit }
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
-        with:
-          toolchain: stable
-          components: rustfmt, clippy
+        with: { toolchain: stable, components: "rustfmt, clippy" }
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
-    name: test
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  args: "--workspace" }
+          - { os: macos-latest,   args: "--workspace --exclude loadr-browser" }
+          - { os: windows-latest, args: "--workspace --exclude loadr-browser" }
     steps:
       - uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
-        with:
-          egress-policy: audit
+        with: { egress-policy: audit }
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
-        with:
-          toolchain: stable
+        with: { toolchain: stable }
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - run: cargo test --workspace --locked
+        with: { key: ${{ matrix.os }} }
+      - run: cargo test ${{ matrix.args }} --locked
 
-  security:
-    name: audit + deny
+  coverage:
+    name: coverage
     runs-on: ubuntu-latest
     steps:
       - uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
-        with:
-          egress-policy: audit
+        with: { egress-policy: audit }
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
-        with:
-          toolchain: stable
+        with: { toolchain: stable, components: llvm-tools-preview }
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # main
+        with: { tool: cargo-llvm-cov }
+      - name: Coverage
+        run: |
+          cargo llvm-cov --workspace --locked --lcov --output-path lcov.info \
+            --ignore-filename-regex 'testsupport/|tests/' --summary-only | tee cov.txt
+          echo "### Coverage" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"; tail -n 4 cov.txt >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5
+        continue-on-error: true
         with:
-          tool: cargo-audit,cargo-deny
-      - run: cargo audit
-      - run: cargo deny check
+          files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}

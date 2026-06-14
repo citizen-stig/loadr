@@ -1,0 +1,23 @@
+# gitleaks configuration — extends the full built-in ruleset.
+# We only ADD an allowlist for known-fake fixture credentials so example
+# files don't trip secret scanning; no detection rules are weakened.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Example fixtures and docs contain intentionally fake credentials"
+paths = [
+  '''examples/.*''',          # demo workloads + their CSV/JSON feeders (fake users/tokens)
+  '''testsupport/.*''',       # in-process test servers
+  '''.*_test\.rs''',
+]
+# Belt-and-braces: these placeholder values appear in examples/docs.
+regexes = [
+  '''demo-token''',
+  '''demo-key''',
+  '''correct-horse''',
+  '''battery-staple''',
+  '''hunter2''',
+  '''letmein123''',
+  '''tr0ub4dor''',
+]

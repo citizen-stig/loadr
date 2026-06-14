@@ -3,33 +3,23 @@
 ## Release binaries
 
 Download the archive for your platform from the
-[downloads page](https://loadr.io/#install), unpack it and
-put `loadr` on your `PATH`:
+[GitHub releases](https://github.com/levantar-ai/loadr/releases/latest), unpack
+it and put `loadr` on your `PATH`:
 
 ```bash
-curl -sSL https://loadr.io/download/loadr-x86_64-unknown-linux-gnu.tar.gz | tar xz
+curl -sSL https://github.com/levantar-ai/loadr/releases/latest/download/loadr-x86_64-unknown-linux-gnu.tar.gz | tar xz
 sudo mv loadr-*/loadr /usr/local/bin/
 loadr version
 ```
 
 Builds are published for Linux (x86_64, aarch64), macOS (Intel & Apple
-Silicon) and Windows.
+Silicon) and Windows — each with a SHA256 checksum and SLSA build provenance
+you can verify with `gh attestation verify`.
 
-## Docker
-
-```bash
-docker run --rm -v "$PWD:/work" loadr/loadr run /work/test.yaml
-```
-
-The image is distroless (no shell), runs as a non-root user, and contains only
-the `loadr` binary.
-
-## From source
-
-With the source tree on your machine:
+## From source (Cargo)
 
 ```bash
-cargo install --path crates/loadr-cli
+cargo install --git https://github.com/levantar-ai/loadr loadr-cli
 ```
 
 Rust 1.85+ is required. There are **no system dependencies** — protobuf

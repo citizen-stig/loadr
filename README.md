@@ -4,6 +4,8 @@
 
 **A modern load testing platform in a single Rust binary — everything k6 does, everything JMeter does, with a cleaner developer experience.**
 
+[![CI](https://github.com/levantar-ai/loadr/actions/workflows/ci.yml/badge.svg)](https://github.com/levantar-ai/loadr/actions/workflows/ci.yml)
+[![Release](https://github.com/levantar-ai/loadr/actions/workflows/release.yml/badge.svg)](https://github.com/levantar-ai/loadr/releases/latest)
 [![Docs](https://img.shields.io/badge/docs-loadr.io-dc2626)](https://loadr.io/docs/)
 [![License](https://img.shields.io/badge/license-proprietary-07070a)](LICENSE)
 
@@ -69,15 +71,15 @@ $ loadr run test.yaml
 ## Install
 
 ```bash
-# From a release binary
-curl -sSL https://loadr.io/download/loadr-$(uname -m)-linux.tar.gz | tar xz
+# From a release binary (Linux/macOS/Windows builds at the releases page)
+curl -sSL https://github.com/levantar-ai/loadr/releases/latest/download/loadr-x86_64-unknown-linux-gnu.tar.gz | tar xz
 
 # From source
-cargo install --path crates/loadr-cli
-
-# Docker
-docker run --rm -v $PWD:/work loadr/loadr run /work/test.yaml
+cargo install --git https://github.com/levantar-ai/loadr loadr-cli
 ```
+
+Every release ships SHA256 checksums and SLSA build provenance — verify a
+download with `gh attestation verify <archive> --repo levantar-ai/loadr`.
 
 ## Quickstart
 

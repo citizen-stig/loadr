@@ -1,8 +1,12 @@
 name: Release
 
 # semantic-release decides the next version from Conventional Commits, builds
-# signed multi-platform binaries, attaches them to a GitHub Release with SLSA
-# Level 3 provenance, and bumps the workspace version on main.
+# multi-platform binaries with SLSA provenance attestations, and publishes a
+# GitHub Release with the binaries + SHA256 checksums.
+#
+# The enterprise forces GITHUB_TOKEN to read-only, so release steps that need
+# write (tag, release, assets) use the org PAT secret, exactly like the other
+# levantar-ai repos.
 
 on:
   push:
@@ -21,7 +25,6 @@ env:
   BIN: loadr
 
 jobs:
-  # 1) Is a release due, and what version? (semantic-release dry-run)
   plan:
     name: Plan
     runs-on: ubuntu-latest
@@ -35,13 +38,14 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.PAT_TOKEN }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
       - run: npm install --no-audit --no-fund
       - id: plan
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
           set +e
           out="$(npx semantic-release --dry-run 2>&1)"
@@ -56,12 +60,15 @@ jobs:
             echo "::notice::No release due"
           fi
 
-  # 2) Build a binary for every platform, at the release version.
   build:
     name: build ${{ matrix.target }}
     needs: plan
     if: needs.plan.outputs.release == 'true'
     runs-on: ${{ matrix.os }}
+    permissions:
+      id-token: write       # for provenance attestation
+      attestations: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -100,7 +107,7 @@ jobs:
         shell: bash
         run: |
           name="${BIN}-${{ matrix.target }}"
-          mkdir -p "stage/$name"
+          mkdir -p "stage/$name" dist
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             cp "target/${{ matrix.target }}/release/${BIN}.exe" "stage/$name/"
           else
@@ -108,64 +115,29 @@ jobs:
           fi
           cp README.md LICENSE "stage/$name/" 2>/dev/null || true
           cp -r examples "stage/$name/"
-          mkdir -p dist
-          cd stage
-          if [ "${{ matrix.archive }}" = "zip" ]; then
-            7z a -tzip "../dist/$name.zip" "$name" >/dev/null
-            asset="$name.zip"
-          else
-            tar czf "../dist/$name.tar.gz" "$name"
-            asset="$name.tar.gz"
-          fi
-          cd ..
-          # checksum (portable across linux/macos/windows-bash)
-          if command -v sha256sum >/dev/null; then sha256sum "dist/$asset" | awk '{print $1}' > "dist/$asset.sha256"; \
-          else shasum -a 256 "dist/$asset" | awk '{print $1}' > "dist/$asset.sha256"; fi
+          ( cd stage
+            if [ "${{ matrix.archive }}" = "zip" ]; then 7z a -tzip "../dist/$name.zip" "$name" >/dev/null; asset="$name.zip";
+            else tar czf "../dist/$name.tar.gz" "$name"; asset="$name.tar.gz"; fi
+            cd ..
+            if command -v sha256sum >/dev/null; then sha256sum "dist/$asset" | awk '{print $1}' > "dist/$asset.sha256";
+            else shasum -a 256 "dist/$asset" | awk '{print $1}' > "dist/$asset.sha256"; fi
+            echo "asset=$asset" >> "$GITHUB_OUTPUT" )
+      - name: Attest provenance
+        continue-on-error: true
+        uses: actions/attest-build-provenance@c074443f1aee8d4aeeae555aebba3282517141b2 # v2.2.3
+        with:
+          subject-path: dist/${{ steps.pkg.outputs.asset }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dist-${{ matrix.target }}
           path: dist/
           if-no-files-found: error
 
-  # 3) Aggregate artifacts, checksum, and emit base64 subjects for SLSA.
-  collect:
-    name: Collect + checksum
-    needs: build
-    runs-on: ubuntu-latest
-    outputs:
-      hashes: ${{ steps.hash.outputs.hashes }}
-    steps:
-      - uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
-        with:
-          egress-policy: audit
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          pattern: dist-*
-          path: incoming
-          merge-multiple: true
-      - id: hash
-        run: |
-          mkdir -p dist && cp incoming/* dist/
-          cd dist
-          sha256sum *.tar.gz *.zip 2>/dev/null > SHA256SUMS
-          cat SHA256SUMS
-          echo "hashes=$(base64 -w0 SHA256SUMS)" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: dist
-          path: dist/
-          if-no-files-found: error
-
-  # 4) Cut the release: bump version on main, tag, GitHub Release + attach assets.
   release:
     name: semantic-release
-    needs: [plan, collect]
+    needs: [plan, build]
     if: needs.plan.outputs.release == 'true'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      issues: write
-      pull-requests: write
     steps:
       - uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
         with:
@@ -173,35 +145,21 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           fetch-depth: 0
-          persist-credentials: true
-      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
-        with:
-          toolchain: stable
+          token: ${{ secrets.PAT_TOKEN }}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: dist
-          path: dist
+          pattern: dist-*
+          path: incoming
+          merge-multiple: true
+      - name: Assemble dist + checksums
+        run: |
+          mkdir -p dist && cp incoming/* dist/
+          ( cd dist && sha256sum *.tar.gz *.zip 2>/dev/null > SHA256SUMS && cat SHA256SUMS )
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
       - run: npm install --no-audit --no-fund
       - name: Release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: npx semantic-release
-
-  # 5) SLSA L3 provenance for every artifact, uploaded to the release.
-  provenance:
-    name: SLSA provenance
-    needs: [plan, collect, release]
-    if: needs.plan.outputs.release == 'true'
-    permissions:
-      actions: read
-      id-token: write
-      contents: write
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
-    with:
-      base64-subjects: ${{ needs.collect.outputs.hashes }}
-      upload-assets: true
-      upload-tag-name: v${{ needs.plan.outputs.version }}
-      provenance-name: ${{ needs.plan.outputs.version }}.intoto.jsonl

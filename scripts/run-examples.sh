@@ -33,6 +33,7 @@ echo "==> waiting for services"
 for i in $(seq 1 40); do
   docker compose -f "$COMPOSE" exec -T redis redis-cli ping 2>/dev/null | grep -q PONG \
     && curl -fsS -o /dev/null http://127.0.0.1:8080/get 2>/dev/null \
+    && curl -fsS -o /dev/null http://127.0.0.1:8085/ 2>/dev/null \
     && (echo > /dev/tcp/127.0.0.1/50051) 2>/dev/null \
     && (echo > /dev/tcp/127.0.0.1/8081) 2>/dev/null \
     && { echo "    services ready"; break; }
@@ -43,16 +44,20 @@ done
 cp -r "$ROOT/examples/." "$RUNDIR/"
 
 repoint() {  # stdin -> stdout: point hosts at local services, shorten durations
+  # Shortens scenario/stage/session durations only; leaves think_time untouched
+  # (shortening think_time would starve throughput and miss count thresholds).
   perl -pe '
     s{https?://httpbin\.org}{http://127.0.0.1:8080}g;
-    s{https?://[a-z0-9.-]*example\.com}{http://127.0.0.1:8080/anything}g;
+    s{https?://[a-z0-9.-]*example\.com}{http://127.0.0.1:8085}g;
     s{wss?://[^/\s"'\'']+}{ws://127.0.0.1:8081}g;
     s{sses?://[^/\s"'\'']+}{sse://127.0.0.1:8082}g;
     s{grpc://[^/\s"'\'']+}{grpc://127.0.0.1:50051}g;
     s{tcp://[^/\s"'\'']+}{tcp://127.0.0.1:7000}g;
     s{udp://[^/\s"'\'']+}{udp://127.0.0.1:8125}g;
     s{rediss?://[^/\s"'\'']+}{redis://127.0.0.1:6379}g;
-    s{\bduration:\s*\d+(ms|s|m|h)\b}{duration: 3s}g;
+    s{^(\s*)duration:\s*\d+(?:ms|s|m|h)\b}{${1}duration: 6s};
+    s{(\{\s*)duration:\s*\d+(?:ms|s|m|h)(\s*,\s*target:)}{${1}duration: 3s${2}}g;
+    s{\bsession_duration:\s*\d+(?:ms|s|m|h)\b}{session_duration: 1s}g;
   '
 }
 

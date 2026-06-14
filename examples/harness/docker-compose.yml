@@ -8,9 +8,13 @@ services:
     image: redis:7-alpine
     ports: ["6379:6379"]
 
-  httpbin:                      # real HTTP service (go-httpbin)
+  httpbin:                      # real HTTP service (go-httpbin) — httpbin-style examples
     image: mccutchen/go-httpbin
     ports: ["8080:8080"]
+
+  demoapp:                      # real HTTP app implementing the examples' endpoints
+    build: ./demoapp
+    ports: ["8085:8085"]
 
   greeter:                      # real gRPC (grpcio) helloworld.Greeter + reflection
     build: ./greeter

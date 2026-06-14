@@ -1,0 +1,20 @@
+# Local git hooks for loadr. Install with: lefthook install
+pre-commit:
+  parallel: true
+  commands:
+    fmt:
+      glob: "*.rs"
+      run: cargo fmt --all -- --check
+    clippy:
+      glob: "*.rs"
+      run: cargo clippy --workspace --all-targets -- -D warnings
+pre-push:
+  commands:
+    test:
+      run: cargo test --workspace
+commit-msg:
+  commands:
+    conventional:
+      run: |
+        head -1 {1} | grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?!?: .+' \
+          || { echo "✗ commit message must follow Conventional Commits (feat:, fix:, chore: ...)"; exit 1; }

@@ -1,98 +1,207 @@
 name: Release
 
+# semantic-release decides the next version from Conventional Commits, builds
+# signed multi-platform binaries, attaches them to a GitHub Release with SLSA
+# Level 3 provenance, and bumps the workspace version on main.
+
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
+  BIN: loadr
 
 jobs:
-  binaries:
-    name: binaries (${{ matrix.target }})
+  # 1) Is a release due, and what version? (semantic-release dry-run)
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.plan.outputs.release }}
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+      - run: npm install --no-audit --no-fund
+      - id: plan
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          out="$(npx semantic-release --dry-run 2>&1)"
+          echo "$out"
+          ver="$(printf '%s\n' "$out" | grep -oiE 'next release version is [0-9]+\.[0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+          if [ -n "$ver" ]; then
+            echo "release=true"  >> "$GITHUB_OUTPUT"
+            echo "version=$ver"  >> "$GITHUB_OUTPUT"
+            echo "::notice::Releasing v$ver"
+          else
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No release due"
+          fi
+
+  # 2) Build a binary for every platform, at the release version.
+  build:
+    name: build ${{ matrix.target }}
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, archive: tar.gz }
-          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu, archive: tar.gz, cross: true }
-          - { os: macos-latest, target: aarch64-apple-darwin, archive: tar.gz }
-          - { os: macos-latest, target: x86_64-apple-darwin, archive: tar.gz }
-          - { os: windows-latest, target: x86_64-pc-windows-msvc, archive: zip }
+          - { target: x86_64-unknown-linux-gnu,  os: ubuntu-latest,  archive: tar.gz }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-latest,  archive: tar.gz, linker: aarch64-linux-gnu-gcc, apt: gcc-aarch64-linux-gnu }
+          - { target: x86_64-apple-darwin,        os: macos-latest,   archive: tar.gz }
+          - { target: aarch64-apple-darwin,       os: macos-latest,   archive: tar.gz }
+          - { target: x86_64-pc-windows-msvc,     os: windows-latest, archive: zip }
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
         with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - name: Set release version
+        shell: bash
+        run: bash scripts/set-version.sh "${{ needs.plan.outputs.version }}"
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
-          key: release-${{ matrix.target }}
-      - name: Install cross-compilation tools
-        if: matrix.cross
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc' >> "$GITHUB_ENV"
+          key: ${{ matrix.target }}
+      - name: Install cross linker
+        if: matrix.apt != ''
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.apt }}
       - name: Build
+        shell: bash
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.linker }}
+          CC_aarch64_unknown_linux_gnu: ${{ matrix.linker }}
         run: cargo build --release -p loadr-cli --target ${{ matrix.target }}
-      - name: Package (unix)
-        if: matrix.archive == 'tar.gz'
+      - name: Package
+        id: pkg
+        shell: bash
         run: |
-          name="loadr-${GITHUB_REF_NAME}-${{ matrix.target }}"
-          mkdir "$name"
-          cp "target/${{ matrix.target }}/release/loadr" "$name/"
-          cp README.md LICENSE "$name/" || true
-          cp -r examples "$name/"
-          tar czf "$name.tar.gz" "$name"
-      - name: Package (windows)
-        if: matrix.archive == 'zip'
-        shell: pwsh
-        run: |
-          $name = "loadr-$env:GITHUB_REF_NAME-${{ matrix.target }}"
-          New-Item -ItemType Directory -Path $name | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/loadr.exe" $name/
-          Copy-Item README.md $name/ -ErrorAction SilentlyContinue
-          Copy-Item examples $name/ -Recurse
-          Compress-Archive -Path $name -DestinationPath "$name.zip"
-      - uses: softprops/action-gh-release@v2
+          name="${BIN}-${{ matrix.target }}"
+          mkdir -p "stage/$name"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            cp "target/${{ matrix.target }}/release/${BIN}.exe" "stage/$name/"
+          else
+            cp "target/${{ matrix.target }}/release/${BIN}" "stage/$name/"
+          fi
+          cp README.md LICENSE "stage/$name/" 2>/dev/null || true
+          cp -r examples "stage/$name/"
+          mkdir -p dist
+          cd stage
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            7z a -tzip "../dist/$name.zip" "$name" >/dev/null
+            asset="$name.zip"
+          else
+            tar czf "../dist/$name.tar.gz" "$name"
+            asset="$name.tar.gz"
+          fi
+          cd ..
+          # checksum (portable across linux/macos/windows-bash)
+          if command -v sha256sum >/dev/null; then sha256sum "dist/$asset" | awk '{print $1}' > "dist/$asset.sha256"; \
+          else shasum -a 256 "dist/$asset" | awk '{print $1}' > "dist/$asset.sha256"; fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          files: |
-            loadr-*.tar.gz
-            loadr-*.zip
-          generate_release_notes: true
+          name: dist-${{ matrix.target }}
+          path: dist/
+          if-no-files-found: error
 
-  docker:
-    name: docker publish
+  # 3) Aggregate artifacts, checksum, and emit base64 subjects for SLSA.
+  collect:
+    name: Collect + checksum
+    needs: build
     runs-on: ubuntu-latest
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/metadata-action@v5
-        id: meta
+          egress-policy: audit
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          images: ghcr.io/${{ github.repository_owner }}/loadr
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            latest
-      - uses: docker/build-push-action@v6
+          pattern: dist-*
+          path: incoming
+          merge-multiple: true
+      - id: hash
+        run: |
+          mkdir -p dist && cp incoming/* dist/
+          cd dist
+          sha256sum *.tar.gz *.zip 2>/dev/null > SHA256SUMS
+          cat SHA256SUMS
+          echo "hashes=$(base64 -w0 SHA256SUMS)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          context: .
-          file: deploy/Dockerfile
-          push: true
-          platforms: linux/amd64
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  # 4) Cut the release: bump version on main, tag, GitHub Release + attach assets.
+  release:
+    name: semantic-release
+    needs: [plan, collect]
+    if: needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: dist
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "20"
+      - run: npm install --no-audit --no-fund
+      - name: Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx semantic-release
+
+  # 5) SLSA L3 provenance for every artifact, uploaded to the release.
+  provenance:
+    name: SLSA provenance
+    needs: [plan, collect, release]
+    if: needs.plan.outputs.release == 'true'
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: ${{ needs.collect.outputs.hashes }}
+      upload-assets: true
+      upload-tag-name: v${{ needs.plan.outputs.version }}
+      provenance-name: ${{ needs.plan.outputs.version }}.intoto.jsonl

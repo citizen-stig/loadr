@@ -85,15 +85,15 @@ jobs:
     name: dependency review
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    # Non-blocking: this action needs GitHub's Dependency Graph enabled on the
-    # repo, which the org currently disables — so it can only error, not run.
-    # cargo-audit + cargo-deny (above) are the enforcing supply-chain gates.
-    # Remove continue-on-error to restore blocking once the graph is enabled.
-    continue-on-error: true
     steps:
       - uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
         with: { egress-policy: audit }
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
       - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4
+        # Non-blocking (step-level so the job still reports green): this action
+        # needs GitHub's Dependency Graph, which the org currently disables, so
+        # it can only error. cargo-audit + cargo-deny are the enforcing gates.
+        # Drop continue-on-error to restore blocking once the graph is enabled.
+        continue-on-error: true
         with:
           fail-on-severity: high

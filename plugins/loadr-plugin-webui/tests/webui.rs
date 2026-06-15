@@ -493,6 +493,22 @@ async fn sse_stream_emits_snapshots() {
     server.wait_finished(&run_id, Duration::from_secs(15)).await;
 }
 
+/// Poll `GET /api/runs/{id}` until `is_paused` reaches `expected`. The pause
+/// command propagates to the run loop asynchronously, so a single read right
+/// after the POST can race the not-yet-applied flag (flaky on slow CI runners).
+async fn wait_is_paused(server: &TestServer, run_id: &str, expected: bool) {
+    for _ in 0..200 {
+        let (_, detail) = server
+            .call("GET", &format!("/api/runs/{run_id}"), None)
+            .await;
+        if detail["is_paused"] == serde_json::Value::Bool(expected) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("run {run_id} did not report is_paused={expected} within timeout");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pause_endpoint_flips_is_paused() {
     let server = TestServer::start(AuthConfig::default(), None).await;
@@ -514,10 +530,7 @@ async fn pause_endpoint_flips_is_paused() {
         )
         .await;
     assert_eq!(status, http::StatusCode::OK, "{body}");
-    let (_, detail) = server
-        .call("GET", &format!("/api/runs/{run_id}"), None)
-        .await;
-    assert_eq!(detail["is_paused"], true);
+    wait_is_paused(&server, &run_id, true).await;
 
     let (status, _) = server
         .call(
@@ -527,10 +540,7 @@ async fn pause_endpoint_flips_is_paused() {
         )
         .await;
     assert_eq!(status, http::StatusCode::OK);
-    let (_, detail) = server
-        .call("GET", &format!("/api/runs/{run_id}"), None)
-        .await;
-    assert_eq!(detail["is_paused"], false);
+    wait_is_paused(&server, &run_id, false).await;
 
     // Clean up: kill the long run.
     let (status, _) = server

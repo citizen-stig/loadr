@@ -382,3 +382,55 @@ scenarios:
     // 50 iterations all completed (no early stop from the feeder).
     assert_eq!(handler.count.load(Ordering::Relaxed), 50);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn timeline_is_captured_over_the_run() {
+    use std::time::Duration;
+    let handler = Arc::new(RecordingHandler::default());
+    let yaml = r#"
+scenarios:
+  s:
+    executor: constant-vus
+    vus: 2
+    duration: 1500ms
+    flow:
+      - request: { url: "http://x/ping" }
+      - think_time: { type: constant, duration: 50ms }
+"#;
+    let loaded = loadr_config::load_str(yaml, &loadr_config::LoadOptions::new()).expect("parse");
+    let engine = Engine::new(
+        loaded.plan,
+        std::path::PathBuf::from("."),
+        EngineOptions {
+            protocols: registry(handler.clone()),
+            // Fast snapshots so a short run still yields several timeline points.
+            snapshot_interval: Duration::from_millis(250),
+            ..Default::default()
+        },
+    )
+    .expect("engine");
+    let result = engine.run().await.expect("run");
+
+    let tl = &result.summary.timeline;
+    assert!(
+        tl.len() >= 3,
+        "expected several timeline points, got {}",
+        tl.len()
+    );
+    // Elapsed time is monotonically non-decreasing.
+    for w in tl.windows(2) {
+        assert!(w[1].elapsed_secs >= w[0].elapsed_secs);
+    }
+    // Active VUs were captured (constant-vus = 2).
+    assert!(
+        tl.iter().any(|p| p.active_vus >= 1.0),
+        "active VUs never recorded"
+    );
+    // Throughput was observed at some point.
+    assert!(tl.iter().any(|p| p.rps > 0.0), "no throughput recorded");
+    // Latency percentiles present once requests have completed.
+    assert!(
+        tl.iter().any(|p| p.latency_p95.is_some()),
+        "no latency percentiles recorded"
+    );
+}

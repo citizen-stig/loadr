@@ -63,6 +63,10 @@
 - [Migrating from k6](migration/from-k6.md)
 - [Migrating from JMeter](migration/from-jmeter.md)
 
+# Reporting
+
+- [HTML reports & time-series charts](reporting.md)
+
 # Reference
 
 - [Built-in metrics](reference/metrics.md)

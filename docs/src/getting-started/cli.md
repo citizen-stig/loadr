@@ -122,5 +122,9 @@ loadr run --summary-export results.json test.yaml
 loadr report results.json -o report.html
 ```
 
-Produces a self-contained HTML file: metric tables, latency percentiles,
-check and threshold outcomes — shareable with people who don't run loadr.
+Produces a self-contained HTML file: interactive time-series charts
+(throughput, latency p50/p95/p99, active VUs, error rate) plus the aggregate
+metric tables, latency percentiles, and check and threshold outcomes —
+shareable with people who don't run loadr. No network assets; the charts are
+inline SVG drawn by a small inline script. See [HTML reports](../reporting.md)
+for the chart details and the `timeline` schema.

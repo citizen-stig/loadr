@@ -62,6 +62,7 @@ pub(crate) fn fixture_summary() -> Summary {
         &mut agg,
         Vec::new(),
         None,
+        Vec::new(),
     )
 }
 

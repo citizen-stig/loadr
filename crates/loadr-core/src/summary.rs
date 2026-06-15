@@ -25,6 +25,115 @@ pub struct MetricSummary {
     pub agg: AggValues,
 }
 
+/// A single time bucket in the run timeline, derived from one live snapshot.
+///
+/// One point is emitted per snapshot interval. All values describe the run at
+/// `elapsed_secs`; throughput and `error_rate` cover the interval window, while
+/// latency percentiles and `active_vus` are point-in-time. This is the data the
+/// HTML report charts and is exact enough for visual analysis (latency
+/// percentiles come from the live, count-weighted merge — the aggregate table
+/// remains the source of exact end-of-run figures).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TimelinePoint {
+    /// Seconds since the run started.
+    pub elapsed_secs: f64,
+    /// Successful + failed requests per second over the interval.
+    pub rps: f64,
+    /// Completed iterations per second over the interval.
+    pub iterations_ps: f64,
+    /// Active virtual users at this instant.
+    pub active_vus: f64,
+    /// Fraction of requests that failed over the interval, in `[0, 1]`.
+    pub error_rate: f64,
+    /// `http_req_duration` average in milliseconds (null if no samples yet).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub latency_avg: Option<f64>,
+    /// `http_req_duration` p50 in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub latency_p50: Option<f64>,
+    /// `http_req_duration` p95 in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub latency_p95: Option<f64>,
+    /// `http_req_duration` p99 in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub latency_p99: Option<f64>,
+}
+
+impl TimelinePoint {
+    /// Derive a timeline point from a live snapshot.
+    pub fn from_snapshot(snap: &crate::aggregate::Snapshot) -> TimelinePoint {
+        let interval = if snap.interval_secs > 0.0 {
+            snap.interval_secs
+        } else {
+            1.0
+        };
+
+        // Throughput over the interval (summed across all tag sets).
+        let interval_count = |metric: &str| -> f64 {
+            snap.series
+                .iter()
+                .filter(|s| s.metric == metric)
+                .map(|s| s.interval_count)
+                .sum::<u64>() as f64
+        };
+
+        // Pass/fail merged exactly across tag sets: a "failed" rate metric.
+        let error_rate = {
+            let (passes, total) = snap
+                .series
+                .iter()
+                .filter(|s| s.metric == "http_req_failed")
+                .fold((0.0_f64, 0_u64), |(p, t), s| {
+                    (p + s.agg.sum, t + s.agg.count)
+                });
+            if total > 0 {
+                passes / total as f64
+            } else {
+                0.0
+            }
+        };
+
+        // Latency: count-weighted merge of the trend statistic across tag sets.
+        let latency = |pick: fn(&AggValues) -> Option<f64>| -> Option<f64> {
+            let mut acc = 0.0_f64;
+            let mut total = 0_u64;
+            for s in snap
+                .series
+                .iter()
+                .filter(|s| s.metric == "http_req_duration")
+            {
+                if s.agg.count == 0 {
+                    continue;
+                }
+                if let Some(v) = pick(&s.agg) {
+                    acc += v * s.agg.count as f64;
+                    total += s.agg.count;
+                }
+            }
+            (total > 0).then_some(acc / total as f64)
+        };
+
+        let active_vus = snap
+            .series
+            .iter()
+            .filter(|s| s.metric == "vus")
+            .filter_map(|s| s.agg.last)
+            .sum();
+
+        TimelinePoint {
+            elapsed_secs: snap.elapsed_secs,
+            rps: interval_count("http_reqs") / interval,
+            iterations_ps: interval_count("iterations") / interval,
+            active_vus,
+            error_rate,
+            latency_avg: latency(|a| a.avg),
+            latency_p50: latency(|a| a.med),
+            latency_p95: latency(|a| a.p95),
+            latency_p99: latency(|a| a.p99),
+        }
+    }
+}
+
 /// The end-of-run summary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Summary {
@@ -43,6 +152,11 @@ pub struct Summary {
     pub aborted: Option<String>,
     /// The final full snapshot (per-tag series detail).
     pub snapshot: Snapshot,
+    /// Per-interval time series for charting (throughput, latency percentiles,
+    /// active VUs, error rate). One point per snapshot interval. Empty for
+    /// summaries produced before timeline capture existed.
+    #[serde(default)]
+    pub timeline: Vec<TimelinePoint>,
 }
 
 impl Summary {
@@ -56,6 +170,7 @@ impl Summary {
         agg: &mut Aggregator,
         thresholds: Vec<ThresholdStatus>,
         aborted: Option<String>,
+        timeline: Vec<TimelinePoint>,
     ) -> Summary {
         let snapshot = agg.snapshot();
         // Merge each metric across all tag sets.
@@ -115,6 +230,7 @@ impl Summary {
             thresholds_passed,
             aborted,
             snapshot,
+            timeline,
         }
     }
 
@@ -282,6 +398,7 @@ mod tests {
                 abort_on_fail: false,
             }],
             None,
+            Vec::new(),
         )
     }
 
@@ -316,5 +433,68 @@ mod tests {
         let back: Summary = serde_json::from_value(json).expect("round trip");
         assert_eq!(back.run_id, "run-1");
         assert_eq!(back.checks.len(), 1);
+    }
+
+    #[test]
+    fn timeline_point_from_snapshot() {
+        let mut agg = Aggregator::new();
+        for i in 0..20 {
+            agg.record(&Sample {
+                metric: Arc::from("http_reqs"),
+                kind: MetricKind::Counter,
+                value: 1.0,
+                tags: Arc::new(Tags::new()),
+                timestamp_ms: now_millis(),
+            });
+            agg.record(&Sample {
+                metric: Arc::from("http_req_duration"),
+                kind: MetricKind::Trend,
+                value: 10.0 + i as f64,
+                tags: Arc::new(Tags::new()),
+                timestamp_ms: now_millis(),
+            });
+            agg.record(&Sample {
+                metric: Arc::from("http_req_failed"),
+                kind: MetricKind::Rate,
+                value: if i % 4 == 0 { 1.0 } else { 0.0 },
+                tags: Arc::new(Tags::new()),
+                timestamp_ms: now_millis(),
+            });
+        }
+        agg.record(&Sample {
+            metric: Arc::from("vus"),
+            kind: MetricKind::Gauge,
+            value: 5.0,
+            tags: Arc::new(Tags::new()),
+            timestamp_ms: now_millis(),
+        });
+        let snap = agg.snapshot();
+        let p = TimelinePoint::from_snapshot(&snap);
+        assert!(p.rps > 0.0, "rps should be positive");
+        assert_eq!(p.active_vus, 5.0);
+        // 5 of 20 requests failed → 25%.
+        assert!((p.error_rate - 0.25).abs() < 1e-9, "err={}", p.error_rate);
+        assert!(p.latency_p95.unwrap() >= p.latency_p50.unwrap());
+        assert!(p.latency_avg.unwrap() > 0.0);
+    }
+
+    #[test]
+    fn timeline_survives_round_trip() {
+        let mut s = build_summary();
+        s.timeline = vec![TimelinePoint {
+            elapsed_secs: 1.0,
+            rps: 10.0,
+            iterations_ps: 4.0,
+            active_vus: 3.0,
+            error_rate: 0.1,
+            latency_avg: Some(12.0),
+            latency_p50: Some(10.0),
+            latency_p95: Some(40.0),
+            latency_p99: None,
+        }];
+        let back: Summary = serde_json::from_value(s.to_json()).expect("round trip");
+        assert_eq!(back.timeline.len(), 1);
+        assert_eq!(back.timeline[0].rps, 10.0);
+        assert_eq!(back.timeline[0].latency_p99, None);
     }
 }

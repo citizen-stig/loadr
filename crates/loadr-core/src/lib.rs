@@ -37,7 +37,7 @@ pub use protocol::{
 pub use script::{
     HostHttpRequest, HostHttpResponse, ScriptEngine, ScriptHost, ScriptLogLevel, VuScript,
 };
-pub use summary::Summary;
+pub use summary::{Summary, TimelinePoint};
 pub use thresholds::ThresholdStatus;
 pub use vu::{RunContext, VuContext};
 

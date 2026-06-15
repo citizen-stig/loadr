@@ -19,7 +19,7 @@ use crate::metrics::{BuiltinMetrics, MetricRegistry, MetricsBus, Sample, Tags};
 use crate::output::Output;
 use crate::protocol::ProtocolRegistry;
 use crate::script::ScriptEngine;
-use crate::summary::Summary;
+use crate::summary::{Summary, TimelinePoint};
 use crate::thresholds::{compile_thresholds, evaluate_all, CompiledThreshold, ThresholdStatus};
 use crate::vu::{RunContext, VuContext};
 
@@ -547,7 +547,7 @@ impl Engine {
         gauge_task.1.cancel();
         let _ = gauge_task.0.await;
         drop(bus);
-        let (mut aggregator, mut outputs, threshold_statuses) = agg_task
+        let (mut aggregator, mut outputs, threshold_statuses, timeline) = agg_task
             .await
             .map_err(|e| EngineError::Other(format!("aggregator task panicked: {e}")))?;
 
@@ -559,6 +559,7 @@ impl Engine {
             &mut aggregator,
             threshold_statuses,
             aborted.clone(),
+            timeline,
         );
         for output in &mut outputs {
             output.finish(&summary).await;
@@ -621,8 +622,14 @@ async fn aggregator_loop(
     thresholds_tx: watch::Sender<Arc<Vec<ThresholdStatus>>>,
     abort_tx: mpsc::UnboundedSender<String>,
     interval: Duration,
-) -> (Aggregator, Vec<Box<dyn Output>>, Vec<ThresholdStatus>) {
+) -> (
+    Aggregator,
+    Vec<Box<dyn Output>>,
+    Vec<ThresholdStatus>,
+    Vec<TimelinePoint>,
+) {
     let mut agg = Aggregator::new();
+    let mut timeline: Vec<TimelinePoint> = Vec::new();
     let mut batch: Vec<Sample> = Vec::with_capacity(1024);
     let mut ticker = tokio::time::interval(interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -663,6 +670,7 @@ async fn aggregator_loop(
                     batch.clear();
                 }
                 let snapshot = Arc::new(agg.snapshot());
+                timeline.push(TimelinePoint::from_snapshot(&snapshot));
                 for output in &mut outputs {
                     output.on_snapshot(&snapshot).await;
                 }
@@ -686,8 +694,19 @@ async fn aggregator_loop(
     let _ = thresholds_tx.send(Arc::new(statuses.clone()));
     let last_statuses = statuses;
     let final_snapshot = Arc::new(agg.snapshot());
+    // Capture a trailing point for the residual window since the last tick so
+    // short runs (shorter than one interval) still produce a timeline, and the
+    // tail of every run is represented.
+    if final_snapshot.interval_secs > 0.0
+        && final_snapshot
+            .series
+            .iter()
+            .any(|s| s.interval_count > 0 || s.metric == "vus")
+    {
+        timeline.push(TimelinePoint::from_snapshot(&final_snapshot));
+    }
     let _ = snapshots_tx.send(final_snapshot);
-    (agg, outputs, last_statuses)
+    (agg, outputs, last_statuses, timeline)
 }
 
 fn resolve_static_value(

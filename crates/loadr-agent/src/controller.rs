@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use futures::Stream;
 use loadr_core::thresholds::{compile_thresholds, evaluate_all, CompiledThreshold};
-use loadr_core::{Aggregator, MetricsDelta, Snapshot, Summary, ThresholdStatus};
+use loadr_core::{Aggregator, MetricsDelta, Snapshot, Summary, ThresholdStatus, TimelinePoint};
 use parking_lot::Mutex;
 use tokio::sync::{mpsc, watch};
 use tokio_stream::wrappers::{ReceiverStream, TcpListenerStream};
@@ -193,6 +193,10 @@ struct ControllerRun {
     snapshot_tx: watch::Sender<Arc<Snapshot>>,
     snapshot_rx: watch::Receiver<Arc<Snapshot>>,
     last_recompute: Mutex<Instant>,
+    /// Per-interval time series for the HTML report, sampled ~once a second
+    /// from the centrally merged snapshot.
+    timeline: Mutex<Vec<TimelinePoint>>,
+    last_timeline: Mutex<Instant>,
 }
 
 struct Inner {
@@ -356,6 +360,16 @@ impl Inner {
         let snapshot = Arc::new(agg.snapshot());
         drop(agg);
         *run.threshold_statuses.lock() = statuses;
+        if snapshot.interval_secs > 0.0
+            && snapshot
+                .series
+                .iter()
+                .any(|s| s.interval_count > 0 || s.metric == "vus")
+        {
+            run.timeline
+                .lock()
+                .push(TimelinePoint::from_snapshot(&snapshot));
+        }
         let _ = run.snapshot_tx.send(snapshot);
         tracing::info!(run_id = %run.run_id, state = final_state.as_str(), "run completed");
     }
@@ -371,6 +385,17 @@ impl Inner {
             *last = Instant::now();
         }
         let snapshot = Arc::new(run.agg.lock().snapshot());
+        // Sample the timeline ~once a second (the recompute itself is throttled
+        // to 250ms, which is too fine-grained for charting).
+        {
+            let mut last = run.last_timeline.lock();
+            if last.elapsed() >= Duration::from_millis(950) {
+                *last = Instant::now();
+                run.timeline
+                    .lock()
+                    .push(TimelinePoint::from_snapshot(&snapshot));
+            }
+        }
         let _ = run.snapshot_tx.send(snapshot);
     }
 
@@ -714,6 +739,8 @@ impl ControllerHandle {
             snapshot_tx,
             snapshot_rx,
             last_recompute: Mutex::new(Instant::now()),
+            timeline: Mutex::new(Vec::new()),
+            last_timeline: Mutex::new(Instant::now()),
         });
         self.inner.runs.lock().insert(run_id.clone(), run.clone());
 
@@ -901,6 +928,7 @@ impl ControllerHandle {
         }
         let thresholds = run.threshold_statuses.lock().clone();
         let aborted = run.abort_reason.lock().clone();
+        let timeline = run.timeline.lock().clone();
         let mut agg = run.agg.lock();
         Some(Summary::build(
             run.name.clone(),
@@ -910,6 +938,7 @@ impl ControllerHandle {
             &mut agg,
             thresholds,
             aborted,
+            timeline,
         ))
     }
 

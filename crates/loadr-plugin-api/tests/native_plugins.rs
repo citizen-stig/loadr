@@ -78,6 +78,7 @@ async fn output_plugin_writes_report_file() {
         &mut agg,
         Vec::new(),
         None,
+        Vec::new(),
     );
     output.finish(&summary).await;
 

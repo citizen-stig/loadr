@@ -73,6 +73,9 @@ pub const BUILTIN_METRIC_DEFS: &[(&str, MetricKind, bool)] = &[
     ("vus", MetricKind::Gauge, false),
     ("vus_max", MetricKind::Gauge, false),
     ("checks", MetricKind::Rate, false),
+    // Script (JS) exceptions raised in hooks, exec functions, and js steps.
+    // Tagged with `exception` (a normalised message) and `scenario`.
+    ("vu_exceptions", MetricKind::Counter, false),
     ("data_sent", MetricKind::Counter, false),
     ("data_received", MetricKind::Counter, false),
     ("ws_connecting", MetricKind::Trend, true),
@@ -240,6 +243,7 @@ pub struct BuiltinMetrics {
     pub vus: Arc<str>,
     pub vus_max: Arc<str>,
     pub checks: Arc<str>,
+    pub vu_exceptions: Arc<str>,
     pub data_sent: Arc<str>,
     pub data_received: Arc<str>,
 }
@@ -268,6 +272,7 @@ impl BuiltinMetrics {
             vus: name("vus"),
             vus_max: name("vus_max"),
             checks: name("checks"),
+            vu_exceptions: name("vu_exceptions"),
             data_sent: name("data_sent"),
             data_received: name("data_received"),
         }

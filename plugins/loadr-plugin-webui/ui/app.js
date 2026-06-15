@@ -87,6 +87,120 @@
     },
   };
 
+  // -------------------------------------------------------------------------
+  // Failure breakdown export (CSV / HTML report)
+  // -------------------------------------------------------------------------
+
+  // Quote a CSV field per RFC 4180 when it contains a comma, quote, or newline.
+  function csvField(value) {
+    const s = value == null ? '' : String(value);
+    if (/[",\n\r]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+    return s;
+  }
+
+  // Flatten a failures breakdown object into CSV rows: category, cause, count, share.
+  function failuresToCsv(f) {
+    const lines = ['category,cause,count,share_pct'];
+    if (f) {
+      const groups = [
+        ['http_status', f.by_status],
+        ['transport_error', f.by_error_kind],
+        ['failed_check', f.by_check],
+        ['script_exception', f.by_exception],
+      ];
+      for (const [category, rows] of groups) {
+        for (const r of rows || []) {
+          lines.push(
+            [
+              csvField(category),
+              csvField(r.key),
+              csvField(r.count),
+              csvField(((r.share || 0) * 100).toFixed(2)),
+            ].join(',')
+          );
+        }
+      }
+    }
+    return lines.join('\r\n') + '\r\n';
+  }
+
+  // Render a self-contained HTML report of the failure breakdown.
+  function failuresToHtml(f, runLabel) {
+    const esc = (s) =>
+      String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const section = (title, rows) => {
+      const body = (rows || []).length
+        ? (rows || [])
+            .map(
+              (r) =>
+                '<tr><td>' +
+                esc(r.key) +
+                '</td><td class="n">' +
+                esc(r.count) +
+                '</td><td class="n">' +
+                ((r.share || 0) * 100).toFixed(1) +
+                '%</td></tr>'
+            )
+            .join('')
+        : '<tr><td colspan="3" class="muted">none</td></tr>';
+      return (
+        '<h2>' +
+        esc(title) +
+        '</h2><table><thead><tr><th>Cause</th><th class="n">Count</th><th class="n">Share</th></tr></thead><tbody>' +
+        body +
+        '</tbody></table>'
+      );
+    };
+    const total = (f && f.total) || 0;
+    return (
+      '<!doctype html><html><head><meta charset="utf-8"><title>loadr failure breakdown</title>' +
+      '<style>body{font:14px system-ui,sans-serif;margin:2rem;color:#111;background:#fff}' +
+      'h1{margin:0 0 .25rem}h2{margin:1.5rem 0 .5rem;font-size:1rem}' +
+      'table{border-collapse:collapse;width:100%;max-width:680px}' +
+      'th,td{text-align:left;padding:.35rem .6rem;border-bottom:1px solid #e5e7eb}' +
+      '.n{text-align:right;font-variant-numeric:tabular-nums}.muted{color:#888}' +
+      '.sub{color:#666;margin:0 0 1rem}</style></head><body>' +
+      '<h1>loadr — failure breakdown</h1>' +
+      '<p class="sub">' +
+      esc(runLabel || '') +
+      (runLabel ? ' · ' : '') +
+      esc(total) +
+      ' total failures · generated ' +
+      esc(new Date().toLocaleString()) +
+      '</p>' +
+      section('HTTP status (4xx / 5xx)', f && f.by_status) +
+      section('Transport / error kind', f && f.by_error_kind) +
+      section('Failed checks', f && f.by_check) +
+      section('Script exceptions', f && f.by_exception) +
+      '</body></html>'
+    );
+  }
+
+  // Trigger a browser download of `content` as a file (no server round-trip).
+  function triggerDownload(filename, content, mime) {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = h('a', { href: url, download: filename });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  function fileStamp() {
+    return new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  }
+
+  function downloadFailuresCsv(f) {
+    if (!f || !f.total) return;
+    triggerDownload('loadr-failures-' + fileStamp() + '.csv', failuresToCsv(f), 'text/csv;charset=utf-8');
+  }
+
+  function downloadFailuresHtml(f, runLabel) {
+    if (!f || !f.total) return;
+    triggerDownload('loadr-failures-' + fileStamp() + '.html', failuresToHtml(f, runLabel), 'text/html;charset=utf-8');
+  }
+
   function statePill(state, passed) {
     let cls = state;
     let label = state;
@@ -247,6 +361,49 @@
     const thresholdList = h('div', { class: 'threshold-list' });
     const dataRates = h('div', { class: 'muted mono data-rates' }, '');
 
+    // Failure & error breakdown panel: groups failures by cause and offers a
+    // browser-side CSV / HTML download of the breakdown.
+    let lastFailures = null;
+    const failGroups = {
+      by_status: h('div', { class: 'fail-group-body' }),
+      by_error_kind: h('div', { class: 'fail-group-body' }),
+      by_check: h('div', { class: 'fail-group-body' }),
+      by_exception: h('div', { class: 'fail-group-body' }),
+    };
+    const failSummary = h('span', { class: 'mono muted' }, 'no failures yet');
+    const failGroupCard = (key, title) =>
+      h('div', { class: 'fail-group' }, h('h4', null, title), failGroups[key]);
+    const dlCsvBtn = h(
+      'button',
+      { class: 'btn btn-ghost btn-sm', type: 'button', title: 'Download breakdown as CSV' },
+      '↓ CSV'
+    );
+    const dlHtmlBtn = h(
+      'button',
+      { class: 'btn btn-ghost btn-sm', type: 'button', title: 'Download breakdown as an HTML report' },
+      '↓ Report'
+    );
+    dlCsvBtn.addEventListener('click', () => downloadFailuresCsv(lastFailures));
+    dlHtmlBtn.addEventListener('click', () => downloadFailuresHtml(lastFailures));
+    const failuresCard = h(
+      'div',
+      { class: 'card fail-card' },
+      h(
+        'div',
+        { class: 'fail-head' },
+        h('h3', null, 'Failure breakdown'),
+        h('div', { class: 'fail-actions' }, failSummary, dlCsvBtn, dlHtmlBtn)
+      ),
+      h(
+        'div',
+        { class: 'fail-grid' },
+        failGroupCard('by_status', 'HTTP status'),
+        failGroupCard('by_error_kind', 'Transport / error'),
+        failGroupCard('by_check', 'Failed checks'),
+        failGroupCard('by_exception', 'Script exceptions')
+      )
+    );
+
     root.append(
       cardRow,
       chartToolbar,
@@ -293,7 +450,8 @@
           scenarioBody
         ),
         dataRates
-      )
+      ),
+      failuresCard
     );
 
     const rpsChart = new TimeChart(rpsCanvas, {
@@ -397,6 +555,55 @@
 
       dataRates.textContent =
         '↑ ' + fmt.bytes(m.data_sent_ps) + '/s    ↓ ' + fmt.bytes(m.data_received_ps) + '/s    total reqs ' + fmt.num(m.http_reqs_total, 0);
+
+      updateFailures(m.failures);
+    }
+
+    // Render the failure breakdown groups and refresh the download buttons.
+    function updateFailures(f) {
+      lastFailures = f || null;
+      const total = (f && f.total) || 0;
+      if (total > 0) {
+        failSummary.textContent =
+          fmt.num(total, 0) +
+          ' failures — ' +
+          fmt.num(f.failed_requests || 0, 0) +
+          ' req · ' +
+          fmt.num(f.failed_checks || 0, 0) +
+          ' check · ' +
+          fmt.num(f.exceptions || 0, 0) +
+          ' exc';
+        failSummary.classList.remove('muted');
+      } else {
+        failSummary.textContent = 'no failures yet';
+        failSummary.classList.add('muted');
+      }
+      dlCsvBtn.disabled = total === 0;
+      dlHtmlBtn.disabled = total === 0;
+
+      const renderGroup = (key) => {
+        const rows = (f && f[key]) || [];
+        if (!rows.length) {
+          failGroups[key].replaceChildren(h('div', { class: 'muted fail-empty' }, 'none'));
+          return;
+        }
+        failGroups[key].replaceChildren(
+          ...rows.map((r) =>
+            h(
+              'div',
+              { class: 'fail-row', title: r.key },
+              h('div', { class: 'fail-bar' }, h('div', { class: 'fail-bar-fill', style: 'width:' + Math.max(2, (r.share || 0) * 100).toFixed(1) + '%' })),
+              h('span', { class: 'fail-key mono' }, r.key),
+              h('span', { class: 'fail-count mono' }, fmt.num(r.count, 0)),
+              h('span', { class: 'fail-share mono muted' }, ((r.share || 0) * 100).toFixed(1) + '%')
+            )
+          )
+        );
+      };
+      renderGroup('by_status');
+      renderGroup('by_error_kind');
+      renderGroup('by_check');
+      renderGroup('by_exception');
     }
 
     function destroy() {

@@ -13,6 +13,7 @@ Kinds: **Counter** (sum), **Gauge** (last/min/max), **Rate** (pass fraction),
 | `vus` | Gauge | active virtual users |
 | `vus_max` | Gauge | peak VUs |
 | `checks` | Rate | check pass rate (tag `check` = name) |
+| `vu_exceptions` | Counter | uncaught JS exceptions in hooks/`exec`/`js` steps (tags `exception` = normalised message, `site`) |
 | `data_sent` / `data_received` | Counter | bytes on the wire |
 
 ## HTTP (and GraphQL)
@@ -25,7 +26,7 @@ Kinds: **Counter** (sum), **Gauge** (last/min/max), **Rate** (pass fraction),
 | `http_req_connecting` | Trend (TCP) |
 | `http_req_tls_handshaking` | Trend |
 | `http_req_sending` / `http_req_waiting` / `http_req_receiving` | Trend |
-| `http_req_failed` | Rate (transport error or status ≥ 400) |
+| `http_req_failed` | Rate (transport error or status ≥ 400; transport failures carry an `error_kind` tag) |
 
 ## Other protocols
 
@@ -41,9 +42,10 @@ Kinds: **Counter** (sum), **Gauge** (last/min/max), **Rate** (pass fraction),
 ## Standard tags
 
 `scenario`, `name` (request name), `method`, `status`, `proto`, `group`
-(`::outer::inner`), `check` (on `checks` samples), `instance` (agent name in
-distributed runs), plus everything from `defaults.tags`, scenario `tags:` and
-request `tags:`.
+(`::outer::inner`), `check` (on `checks` samples), `error_kind` (on
+`http_req_failed` transport failures), `exception` / `site` (on
+`vu_exceptions`), `instance` (agent name in distributed runs), plus everything
+from `defaults.tags`, scenario `tags:` and request `tags:`.
 
 ## Custom metrics
 

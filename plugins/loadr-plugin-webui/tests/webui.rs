@@ -313,6 +313,18 @@ async fn run_lifecycle_and_summary() {
         .await;
     assert_eq!(status, http::StatusCode::OK);
     assert!(snapshot["series"].as_array().is_some_and(|s| !s.is_empty()));
+
+    // Overview metrics carry the failure breakdown the UI panel renders.
+    let (status, overview) = server.call("GET", "/api/overview", None).await;
+    assert_eq!(status, http::StatusCode::OK);
+    let failures = &overview["metrics"]["failures"];
+    assert!(
+        failures.is_object(),
+        "failures breakdown present: {overview}"
+    );
+    assert!(failures["total"].is_number());
+    assert!(failures["by_status"].is_array());
+    assert!(failures["by_exception"].is_array());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

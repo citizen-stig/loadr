@@ -517,6 +517,7 @@ impl FlowRunner {
                             ScriptInvocation::Call(on_start.clone(), vec![setup]),
                         ) {
                             tracing::warn!(on_start, error = %e, "on_start hook failed");
+                            self.record_exception(vu, "on_start", &e.to_string());
                         }
                     }
                 }
@@ -544,6 +545,7 @@ impl FlowRunner {
                         tracing::warn!(scenario = %self.program.name, error = %e, "exec function failed");
                         let tags = vu.sample_tags(&[("scenario_fn", exec)]);
                         vu.metrics.rate(&self.builtins.http_req_failed, true, &tags);
+                        self.record_exception(vu, "exec", &e.to_string());
                     }
                 } else {
                     outcome = IterationOutcome::AbortTest(format!(
@@ -583,6 +585,7 @@ impl FlowRunner {
                     ScriptInvocation::Call(on_stop.clone(), vec![setup]),
                 ) {
                     tracing::warn!(on_stop, error = %e, "on_stop hook failed");
+                    self.record_exception(vu, "on_stop", &e.to_string());
                 }
             }
         }
@@ -631,6 +634,7 @@ impl FlowRunner {
                         };
                         if let Err(e) = run_script(self, vu, vu_script.as_mut(), invocation) {
                             tracing::warn!(error = %e, "js step failed");
+                            self.record_exception(vu, "js_step", &e.to_string());
                         }
                     }
                     CompiledStep::Group { name, steps } => {
@@ -1198,12 +1202,23 @@ impl FlowRunner {
     ) {
         let b = &self.builtins;
         let status = response.status.to_string();
-        let tags = vu.sample_tags(&[
+        // Transport errors get a coarse `error_kind` tag so the UI can group
+        // failures by cause (timeout / connection / dns / tls / ...).
+        let error_kind = response
+            .error
+            .as_deref()
+            .map(classify_transport_error)
+            .unwrap_or("");
+        let mut tag_pairs: Vec<(&str, &str)> = vec![
             ("name", &request.name),
             ("method", &request.method),
             ("status", &status),
             ("proto", &request.protocol),
-        ]);
+        ];
+        if !error_kind.is_empty() {
+            tag_pairs.push(("error_kind", error_kind));
+        }
+        let tags = vu.sample_tags(&tag_pairs);
         let m = &vu.metrics;
         let t = &response.timings;
 
@@ -1296,6 +1311,14 @@ impl FlowRunner {
             .map(|d| d.name)
             .unwrap_or_else(|| Arc::from(name));
         vu.metrics.emit_value(&metric, kind, value, tags);
+    }
+
+    /// Record a JS/script exception so the UI can group failures by cause.
+    /// `where_` names the site (e.g. `js_step`, `exec`, `on_start`).
+    fn record_exception(&self, vu: &VuContext, where_: &str, message: &str) {
+        let normalized = normalize_exception(message);
+        let tags = vu.sample_tags(&[("exception", &normalized), ("site", where_)]);
+        vu.metrics.counter(&self.builtins.vu_exceptions, 1.0, &tags);
     }
 
     /// Render a compiled request into a `PreparedRequest`.
@@ -1616,6 +1639,71 @@ pub fn with_host<R>(
         handle,
     };
     tokio::task::block_in_place(|| f(&mut host))
+}
+
+/// Bucket a free-form transport error string into a coarse, stable kind so the
+/// UI can group failures by cause without exploding on volatile detail.
+fn classify_transport_error(error: &str) -> &'static str {
+    let e = error.to_ascii_lowercase();
+    if e.contains("timed out") || e.contains("timeout") {
+        "timeout"
+    } else if e.contains("dns") || e.contains("resolve") || e.contains("name or service") {
+        "dns"
+    } else if e.contains("tls") || e.contains("certificate") || e.contains("ssl") {
+        "tls"
+    } else if e.contains("refused") {
+        "connection_refused"
+    } else if e.contains("reset") || e.contains("broken pipe") || e.contains("closed") {
+        "connection_reset"
+    } else if e.contains("connect") {
+        "connection"
+    } else {
+        "transport"
+    }
+}
+
+/// Collapse a raw exception/error message into a stable grouping key: drop
+/// volatile detail (numbers, quoted strings, hex) and cap the length so the
+/// failure breakdown groups "the same" exception together.
+fn normalize_exception(message: &str) -> String {
+    // Take the first line only — JS stack traces follow on later lines.
+    let first = message.lines().next().unwrap_or(message).trim();
+    let mut out = String::with_capacity(first.len());
+    let mut last_was_placeholder = false;
+    let mut chars = first.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' | '\'' | '`' => {
+                // Skip the quoted literal entirely.
+                for q in chars.by_ref() {
+                    if q == c {
+                        break;
+                    }
+                }
+                if !last_was_placeholder {
+                    out.push('…');
+                    last_was_placeholder = true;
+                }
+            }
+            d if d.is_ascii_digit() => {
+                if !last_was_placeholder {
+                    out.push('N');
+                    last_was_placeholder = true;
+                }
+            }
+            _ => {
+                out.push(c);
+                last_was_placeholder = false;
+            }
+        }
+    }
+    let trimmed = out.trim();
+    let capped: String = trimmed.chars().take(120).collect();
+    if capped.is_empty() {
+        "exception".to_string()
+    } else {
+        capped
+    }
 }
 
 /// Invoke the script engine for this VU via a host bridge.
@@ -2015,5 +2103,67 @@ impl ScriptHost for HostBridge<'_> {
                 .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
                 .collect(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod failure_grouping_tests {
+    use super::{classify_transport_error, normalize_exception};
+
+    #[test]
+    fn classify_transport_error_buckets() {
+        assert_eq!(
+            classify_transport_error("read timed out after 5s"),
+            "timeout"
+        );
+        assert_eq!(
+            classify_transport_error("operation timeout reached"),
+            "timeout"
+        );
+        assert_eq!(
+            classify_transport_error("failed to resolve DNS for host"),
+            "dns"
+        );
+        assert_eq!(
+            classify_transport_error("TLS certificate verification failed"),
+            "tls"
+        );
+        assert_eq!(
+            classify_transport_error("connection refused"),
+            "connection_refused"
+        );
+        assert_eq!(
+            classify_transport_error("connection reset by peer"),
+            "connection_reset"
+        );
+        assert_eq!(
+            classify_transport_error("could not connect to upstream"),
+            "connection"
+        );
+        assert_eq!(classify_transport_error("something weird"), "transport");
+    }
+
+    #[test]
+    fn normalize_exception_collapses_volatile_detail() {
+        // Numbers and quoted strings become placeholders so the same logical
+        // exception groups together regardless of runtime values.
+        let a = normalize_exception("TypeError: cannot read property 'foo' of undefined at vu 42");
+        let b = normalize_exception("TypeError: cannot read property 'bar' of undefined at vu 7");
+        assert_eq!(a, b);
+        assert!(a.starts_with("TypeError: cannot read property"));
+    }
+
+    #[test]
+    fn normalize_exception_takes_first_line_and_caps_length() {
+        let multi = normalize_exception("Error: boom\n  at foo (script.js:10)\n  at bar");
+        assert_eq!(multi, "Error: boom");
+        let long = "x".repeat(500);
+        assert!(normalize_exception(&long).chars().count() <= 120);
+    }
+
+    #[test]
+    fn normalize_exception_empty_is_stable() {
+        assert_eq!(normalize_exception("   "), "exception");
+        assert_eq!(normalize_exception("12345"), "N");
     }
 }

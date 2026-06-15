@@ -858,3 +858,85 @@ canvas.chart-short {
     grid-template-columns: 1fr;
   }
 }
+
+/* Failure & error breakdown panel ----------------------------------------- */
+.fail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.fail-head h3 {
+  margin: 0;
+}
+.fail-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.fail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+.fail-group h4 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.fail-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.fail-empty {
+  font-size: 12px;
+  padding: 2px 0;
+}
+.fail-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  overflow: hidden;
+  font-size: 12px;
+}
+.fail-bar {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+.fail-bar-fill {
+  height: 100%;
+  background: var(--accent-dim);
+}
+.fail-key,
+.fail-count,
+.fail-share {
+  position: relative;
+  z-index: 1;
+}
+.fail-key {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.fail-count {
+  font-weight: 600;
+  color: var(--accent);
+}

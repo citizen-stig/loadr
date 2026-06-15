@@ -59,6 +59,7 @@
 - [Native plugins](plugins/native.md)
 - [MongoDB plugin](plugins/mongo.md)
 - [Developing a plugin](plugins/developing.md)
+- [Publishing a plugin](plugins/publishing.md)
 
 # Migration
 

@@ -38,6 +38,7 @@ for i in $(seq 1 40); do
     && (echo > /dev/tcp/127.0.0.1/8081) 2>/dev/null \
     && docker compose -f "$COMPOSE" exec -T postgres pg_isready -U loadr -d loadr >/dev/null 2>&1 \
     && docker compose -f "$COMPOSE" exec -T mysql mysqladmin ping -h 127.0.0.1 -uloadr -ploadr --silent >/dev/null 2>&1 \
+    && docker compose -f "$COMPOSE" exec -T mongo mongosh -u loadr -p loadr --quiet --eval "db.getSiblingDB('loadr').runCommand({ping:1}).ok" loadr 2>/dev/null | grep -q 1 \
     && { echo "    services ready"; break; }
   sleep 1
 done

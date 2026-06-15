@@ -166,11 +166,15 @@ fn protocol_plugin_registers_declared_schemes() {
         mongo_dir.join("plugin.toml"),
     )
     .expect("copy manifest");
-    std::fs::copy(
-        &so,
-        mongo_dir.join(common::dylib_name("loadr_plugin_mongo")),
-    )
-    .expect("copy artifact");
+    // Copy to the filename the manifest's `entry` points at, regardless of the
+    // host's dylib extension (abi_stable loads by path, not by extension).
+    let entry = PluginRegistry::discover(&plugins_dir)
+        .expect("discover")
+        .into_iter()
+        .find(|m| m.name == "mongo")
+        .expect("mongo manifest")
+        .entry;
+    std::fs::copy(&so, &entry).expect("copy artifact");
 
     loadr_core::protocol::clear_plugin_schemes();
     let loaded =

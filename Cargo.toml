@@ -64,6 +64,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["ring", "webpki-roots", "http1", "tls12"] }
 http = "1"
 http-body-util = "0.1"
 bytes = "1"
@@ -113,6 +114,8 @@ sha1 = "0.11"
 md-5 = "0.11"
 hmac = "0.13"
 flate2 = "1"
+tar = "0.4"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 brotli = "8"
 quick-xml = { version = "0.40", features = ["serialize"] }
 sxd-document = "0.3"

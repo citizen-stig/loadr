@@ -35,7 +35,9 @@ tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
+hyper-rustls = { workspace = true }
 http-body-util = { workspace = true }
+rustls = { workspace = true }
 http = { workspace = true }
 bytes = { workspace = true }
 base64 = { workspace = true }

@@ -16,6 +16,7 @@
 
 pub mod abi;
 pub mod error;
+pub mod install;
 pub mod manifest;
 pub mod native;
 pub mod registry;
@@ -26,6 +27,10 @@ pub mod wasm;
 pub use abi_stable;
 
 pub use error::PluginError;
+pub use install::{
+    host_target, index_url, install_archive_bytes, install_resolved, remove, Fetcher,
+    IndexArtifact, IndexEntry, IndexVersion, PluginIndex, Resolved, DEFAULT_INDEX_URL, INDEX_ENV,
+};
 pub use manifest::{merge_config, PluginKind, PluginManifest, PluginType};
 pub use native::{
     FfiRequest, FfiResponse, NativeOutputAdapter, NativePlugin, NativeProtocolAdapter,

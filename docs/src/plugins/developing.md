@@ -86,6 +86,55 @@ loadr plugin info uppercase-extractor
 plugins: [ { name: uppercase-extractor, config: { left: "token=", right: ";" } } ]
 ```
 
+## 5. Publish to the index
+
+A locally-installed directory is enough for development, but to make your
+plugin installable by name (`loadr plugin install <name>`) it has to appear in
+the **plugin index** — the catalogue described in
+[Installing plugins](installing.md).
+
+For each supported host target, package the `plugin.toml` plus the built
+dynamic library into an archive (`.tar.gz` on Linux/macOS, `.zip` on Windows),
+name it `<name>-<target>.<ext>`, and add an entry to `plugins/index.json`:
+
+```json
+{
+  "schema": 1,
+  "plugins": {
+    "myproto": {
+      "kind": "protocol",
+      "description": "…",
+      "latest": "0.1.0",
+      "versions": {
+        "0.1.0": {
+          "min_loadr_abi": "1.0",
+          "artifacts": {
+            "x86_64-unknown-linux-gnu": {
+              "url": "https://…/myproto-x86_64-unknown-linux-gnu.tar.gz",
+              "sha256": "<sha256 of the archive>",
+              "entry": "libloadr_plugin_myproto.so"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+The release CI fills in the real `url`/`sha256` per target; bump
+`min_loadr_abi` to the host ABI your build requires (the
+`LOADR_PLUGIN_ABI_VERSION` you compiled against). The `entry` is the
+per-platform artifact filename (`libloadr_plugin_<name>.so` /
+`.dylib` / `loadr_plugin_<name>.dll`) and must match the `entry` inside the
+archive's `plugin.toml`.
+
+Until the index goes live you can hand a tester an archive directly:
+
+```bash
+loadr plugin install ./myproto-x86_64-unknown-linux-gnu.tar.gz --allow-untrusted
+```
+
 ## Testing tips
 
 - Drive the component directly in a Rust test with

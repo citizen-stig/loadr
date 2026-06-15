@@ -87,11 +87,29 @@ def main():
     <div class="hidden items-center gap-7 text-sm font-medium text-smoke lg:flex">
       <a class="hover:text-flare" href="/demos/">Demos</a>
       <a class="hover:text-flare" href="/#features">Features</a>
+      <a class="hover:text-flare" href="/#protocols">Protocols</a>
+      <a class="hover:text-flare" href="/#distributed">Distributed</a>
+      <a class="hover:text-flare" href="/#webui">Web UI</a>
       <a class="hover:text-flare" href="/#compare">Compare</a>
+      <a class="hover:text-flare" href="/#credits">Built on</a>
+      <a class="hover:text-flare" href="/#roadmap">Roadmap</a>
       <a class="hover:text-flare" href="/docs/">Docs</a>
-      <a href="/#install" class="glow rounded-lg bg-blood px-4 py-2 font-semibold text-white transition">Download</a>
+      <a class="hover:text-flare" href="https://github.com/levantar-ai/loadr" rel="noopener">GitHub</a>
+      <a href="/download/" class="glow rounded-lg bg-blood px-4 py-2 font-semibold text-white transition">Download</a>
     </div>
+    <button id="navToggle" class="rounded-md border border-edge p-2 text-smoke lg:hidden" aria-label="menu">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
   </nav>
+  <div id="navMenu" class="hidden border-t border-edge bg-coal px-5 py-4 lg:hidden">
+    <div class="grid gap-3 text-sm font-medium text-smoke">
+      <a href="/demos/">Demos</a><a href="/#features">Features</a><a href="/#protocols">Protocols</a>
+      <a href="/#distributed">Distributed</a><a href="/#webui">Web UI</a><a href="/#compare">Compare</a>
+      <a href="/#credits">Built on</a><a href="/#roadmap">Roadmap</a><a href="/docs/">Docs</a>
+      <a href="https://github.com/levantar-ai/loadr" rel="noopener">GitHub</a>
+      <a href="/download/">Download</a>
+    </div>
+  </div>
 </header>
 
 <section class="pt-32 pb-24">
@@ -101,7 +119,7 @@ def main():
     <p class="mt-4 max-w-2xl text-smoke">Every one is a complete, valid test you can run with <code class="text-flare">loadr run &lt;file&gt;</code>. They ship in the <code class="text-flare">examples/</code> folder of every download, or grab them here.</p>
     <div class="mt-8 flex flex-wrap gap-4">
       <a href="/examples.tar.gz" class="glow rounded-xl bg-blood px-6 py-3.5 font-bold text-white">Download all (.tar.gz)</a>
-      <a href="/#install" class="rounded-xl border border-edge-bright bg-panel px-6 py-3.5 font-semibold text-ash hover:border-ember/60 hover:text-white">Get loadr</a>
+      <a href="/download/" class="rounded-xl border border-edge-bright bg-panel px-6 py-3.5 font-semibold text-ash hover:border-ember/60 hover:text-white">Get loadr</a>
     </div>
     <div class="ex-grid">
       {cards}
@@ -112,6 +130,7 @@ def main():
 <footer class="border-t border-edge/60 py-10">
   <div class="mx-auto max-w-7xl px-5 text-xs text-smoke">© 2026 loadr. Built in Rust. <a class="hover:text-flare" href="/">← back to loadr.io</a></div>
 </footer>
+<script src="/assets/site.js" defer></script>
 </body>
 </html>
 """.format(count=count, cards="\n      ".join(cards))

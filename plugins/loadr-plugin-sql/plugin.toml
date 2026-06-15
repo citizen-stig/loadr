@@ -1,0 +1,15 @@
+[plugin]
+name = "sql"
+version = "1.0.0"
+kind = "protocol"
+type = "native"
+entry = "libloadr_plugin_sql.so"
+description = "SQL protocol: PostgreSQL and MySQL queries via sqlx with an internal per-URI pool"
+# URL scheme(s) this protocol plugin serves. The host maps a request URL
+# scheme (e.g. `postgres://host/db`) to this plugin once installed, so a test
+# can target a database without an explicit `protocol:`. `postgresql` is the
+# PostgreSQL alias; `sql` lets a plan set `protocol: sql` explicitly.
+schemes = ["postgres", "postgresql", "mysql", "sql"]
+
+# No required configuration. Connection details come from the request URL.
+[config]

@@ -38,7 +38,6 @@
 - [gRPC](protocols/grpc.md)
 - [GraphQL](protocols/graphql.md)
 - [Redis](protocols/redis.md)
-- [SQL (PostgreSQL & MySQL)](protocols/sql.md)
 - [Browser](protocols/browser.md)
 - [TCP & UDP](protocols/sockets.md)
 
@@ -59,7 +58,9 @@
 - [WASM plugins](plugins/wasm.md)
 - [Native plugins](plugins/native.md)
 - [MongoDB plugin](plugins/mongo.md)
+- [SQL plugin (PostgreSQL & MySQL)](plugins/sql.md)
 - [Developing a plugin](plugins/developing.md)
+- [Publishing a plugin](plugins/publishing.md)
 
 # Migration
 

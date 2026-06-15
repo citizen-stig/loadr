@@ -1,0 +1,30 @@
+[package]
+name = "loadr-plugin-sql"
+description = "Native protocol plugin: adds PostgreSQL (postgres://) and MySQL (mysql://) as loadr load-test targets"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "loadr_plugin_sql"
+crate-type = ["cdylib"]
+
+[dependencies]
+loadr-plugin-api = { path = "../../crates/loadr-plugin-api" }
+abi_stable = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+url = { workspace = true }
+once_cell = "1"
+tokio = { version = "1.52", features = ["rt-multi-thread"] }
+# The heavy `sqlx` driver (and its `rsa` transitive dep / RUSTSEC-2023-0071)
+# lives ONLY in this plugin crate, never in loadr core. `rustls` TLS avoids a
+# system OpenSSL dependency for portable cdylib builds.
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "mysql",
+    "tls-rustls-ring",
+] }

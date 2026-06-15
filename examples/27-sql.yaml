@@ -1,16 +1,33 @@
-# SQL load test: drive PostgreSQL and MySQL directly. Each request runs one
-# configured query as the "request"; loadr records query latency in
-# `sql_req_duration`, the number of rows returned (SELECT) or affected
-# (INSERT/UPDATE/DELETE) in `sql_rows`, and any database error fails the
-# request. Connections are pooled per virtual user (one live connection per VU
-# per database URL), so a VU connects once and reuses it for every query.
+# SQL load test, driven by the `loadr-plugin-sql` native protocol plugin.
 #
-# Positional parameters are bound safely by the driver: `$1, $2, ...` for
-# PostgreSQL and `?` for MySQL.
+# PostgreSQL/MySQL support is NOT built into loadr core — it is a runtime-loadable
+# plugin that ships the heavy `sqlx` Rust driver on its own. The plugin declares
+# the `postgres://`/`postgresql://`/`mysql://` URL schemes, so once it is
+# installed a request to one of those URLs routes straight to it; no explicit
+# `protocol:` is needed.
 #
+# Each request runs one configured query as the "request"; loadr records query
+# latency in `sql_req_duration`, the number of rows returned (SELECT) or affected
+# (INSERT/UPDATE/DELETE) in `sql_rows`, and any database error fails the request
+# (status 1 = ok, status 0 = DB/transport error). Positional parameters are
+# bound safely by the driver: `$1, $2, ...` for PostgreSQL and `?` for MySQL.
+#
+# Build + install the plugin, then run:
+#   cargo build -p loadr-plugin-sql --release
+#   mkdir -p dist && cp plugins/loadr-plugin-sql/plugin.toml dist/ \
+#     && cp target/release/libloadr_plugin_sql.so dist/
+#   loadr plugin install dist
 #   loadr run examples/27-sql.yaml
+#
+# Or point the plan's `plugins:` entry at the built artifact directly (below).
 name: sql
-description: Parameterised SELECT/INSERT against PostgreSQL and MySQL
+description: Parameterised SELECT/INSERT against PostgreSQL and MySQL via loadr-plugin-sql
+
+plugins:
+  # Resolve `sql` by name from the plugins dir (after `loadr plugin install`).
+  # To run straight from a build tree instead, set:
+  #   path: target/release/libloadr_plugin_sql.so
+  - name: sql
 
 scenarios:
   # PostgreSQL: read-mostly traffic with an occasional write.
@@ -26,7 +43,7 @@ scenarios:
             query: SELECT id, name, price FROM products WHERE price < $1 ORDER BY price
             params: ["50"]
           checks:
-            - { type: status, equals: 0 }                 # 0 = no DB error
+            - { type: status, equals: 1 }                 # 1 = ok, 0 = DB error
             - { type: duration, name: query is fast, max: 250ms }
       - request:
           name: pg lookup by id
@@ -35,7 +52,7 @@ scenarios:
             query: SELECT name FROM products WHERE id = $1
             params: ["${vu}"]
           checks:
-            - { type: status, equals: 0 }
+            - { type: status, equals: 1 }
       - request:
           name: pg insert order
           url: postgres://loadr:loadr@db.example.com:5432/loadr
@@ -43,7 +60,7 @@ scenarios:
             query: INSERT INTO products (name, price, stock) VALUES ($1, $2, $3)
             params: ["vu-${vu}-item", "1.23", "5"]
           assert:
-            - { type: status, equals: 0 }
+            - { type: status, equals: 1 }
 
   # MySQL: the same workload over the MySQL wire protocol (note `?` params).
   mysql_reads:
@@ -60,7 +77,7 @@ scenarios:
             query: SELECT COUNT(*) AS n FROM products WHERE stock > ?
             params: ["0"]
           checks:
-            - { type: status, equals: 0 }
+            - { type: status, equals: 1 }
             - { type: duration, name: query is fast, max: 250ms }
       - request:
           name: my top products
@@ -68,7 +85,7 @@ scenarios:
           sql:
             query: SELECT name, price FROM products ORDER BY price DESC LIMIT 3
           assert:
-            - { type: status, equals: 0 }
+            - { type: status, equals: 1 }
 
 thresholds:
   checks: [ "rate>0.99" ]

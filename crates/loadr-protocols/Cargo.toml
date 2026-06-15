@@ -28,8 +28,6 @@ webpki-roots = { workspace = true }
 
 tokio-tungstenite = { workspace = true }
 
-sqlx = { workspace = true }
-
 tonic = { workspace = true }
 prost = { workspace = true }
 prost-types = { workspace = true }

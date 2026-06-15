@@ -43,24 +43,33 @@ for i in $(seq 1 40); do
   sleep 1
 done
 
-# Build + install the native MongoDB protocol plugin so 28-mongo.yaml can run.
-# Plugins resolve from $LOADR_PLUGINS_DIR; point it at a temp dir for this run.
-echo "==> building + installing the mongo plugin"
+# Build + install the native protocol plugins so the plugin-backed examples can
+# run. Plugins resolve from $LOADR_PLUGINS_DIR; point it at a temp dir for this run.
 export LOADR_PLUGINS_DIR="$RUNDIR/plugins"
 mkdir -p "$LOADR_PLUGINS_DIR"
-if cargo build --manifest-path "$ROOT/Cargo.toml" -p loadr-plugin-mongo --release >/tmp/h-mongo-build.log 2>&1; then
-  # `plugin install` copies a dir holding plugin.toml + the artifact named by
-  # its `entry`. Stage them together, then install.
-  stage="$RUNDIR/mongo-stage"; mkdir -p "$stage"
-  cp "$ROOT/plugins/loadr-plugin-mongo/plugin.toml" "$stage/"
-  for art in libloadr_plugin_mongo.so libloadr_plugin_mongo.dylib loadr_plugin_mongo.dll; do
-    [ -f "$ROOT/target/release/$art" ] && cp "$ROOT/target/release/$art" "$stage/"
-  done
-  "$LOADR" plugin install "$stage" --plugins-dir "$LOADR_PLUGINS_DIR" >/dev/null 2>&1 \
-    || echo "    mongo plugin install failed; 28-mongo will ERR"
-else
-  echo "    mongo plugin build failed (see /tmp/h-mongo-build.log); 28-mongo will ERR"
-fi
+
+# $1 = cargo package, $2 = artifact stem (lib<stem>.so/.dylib/<stem>.dll),
+# $3 = directory under plugins/ holding plugin.toml, $4 = example it enables.
+build_install_plugin() {
+  local pkg="$1" stem="$2" subdir="$3" example="$4"
+  echo "==> building + installing the $pkg plugin"
+  if cargo build --manifest-path "$ROOT/Cargo.toml" -p "$pkg" --release >"/tmp/h-$pkg-build.log" 2>&1; then
+    # `plugin install` copies a dir holding plugin.toml + the artifact named by
+    # its `entry`. Stage them together, then install.
+    local stage="$RUNDIR/$pkg-stage"; mkdir -p "$stage"
+    cp "$ROOT/plugins/$subdir/plugin.toml" "$stage/"
+    for art in "lib$stem.so" "lib$stem.dylib" "$stem.dll"; do
+      [ -f "$ROOT/target/release/$art" ] && cp "$ROOT/target/release/$art" "$stage/"
+    done
+    "$LOADR" plugin install "$stage" --plugins-dir "$LOADR_PLUGINS_DIR" >/dev/null 2>&1 \
+      || echo "    $pkg plugin install failed; $example will ERR"
+  else
+    echo "    $pkg plugin build failed (see /tmp/h-$pkg-build.log); $example will ERR"
+  fi
+}
+
+build_install_plugin loadr-plugin-mongo loadr_plugin_mongo loadr-plugin-mongo 28-mongo.yaml
+build_install_plugin loadr-plugin-sql   loadr_plugin_sql   loadr-plugin-sql   27-sql.yaml
 
 # Stage the examples + their data/scripts/protos so relative paths resolve.
 cp -r "$ROOT/examples/." "$RUNDIR/"

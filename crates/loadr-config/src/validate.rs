@@ -62,10 +62,6 @@ const KNOWN_PROTOCOLS: &[&str] = &[
     "browser",
     "tcp",
     "udp",
-    "sql",
-    "postgres",
-    "postgresql",
-    "mysql",
 ];
 const HTTP_METHODS: &[&str] = &[
     "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE", "CONNECT",

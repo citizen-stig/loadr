@@ -2553,6 +2553,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "loadr-plugin-sql"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "loadr-plugin-api",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "loadr-plugin-webui"
 version = "1.0.0"
 dependencies = [
@@ -2608,7 +2622,6 @@ dependencies = [
  "rustls-pemfile",
  "serde",
  "serde_json",
- "sqlx",
  "tempfile",
  "tokio",
  "tokio-rustls",

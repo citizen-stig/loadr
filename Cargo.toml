@@ -13,6 +13,7 @@ members = [
     "crates/loadr-cli",
     "plugins/loadr-plugin-webui",
     "plugins/loadr-plugin-mongo",
+    "plugins/loadr-plugin-sql",
     "plugins/examples/native-output",
     "plugins/examples/native-protocol",
     "testsupport/loadr-testserver",
@@ -80,8 +81,6 @@ prost = "0.14"
 prost-types = "0.14"
 prost-reflect = { version = "0.16", features = ["serde"] }
 protox = "0.9"
-
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "mysql", "tls-rustls-ring"] }
 
 rquickjs = { version = "0.12", features = ["loader", "array-buffer", "futures", "macro"] }
 

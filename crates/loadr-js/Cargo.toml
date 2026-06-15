@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license-file.workspace = true
 repository.workspace = true
+description = "Embedded JavaScript engine for loadr: isolated per-VU QuickJS runtimes with a k6-compatible standard library"
 
 [dependencies]
 loadr-core = { workspace = true }

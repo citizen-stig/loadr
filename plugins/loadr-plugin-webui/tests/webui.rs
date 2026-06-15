@@ -509,6 +509,22 @@ async fn wait_is_paused(server: &TestServer, run_id: &str, expected: bool) {
     panic!("run {run_id} did not report is_paused={expected} within timeout");
 }
 
+/// Poll until the run reports the given lifecycle state (e.g. "running").
+/// `POST /api/runs` returns before the run handle is registered, so a pause
+/// issued immediately can race a not-yet-ready run and be silently dropped.
+async fn wait_run_state(server: &TestServer, run_id: &str, state: &str) {
+    for _ in 0..200 {
+        let (_, detail) = server
+            .call("GET", &format!("/api/runs/{run_id}"), None)
+            .await;
+        if detail["run"]["state"] == serde_json::Value::String(state.to_string()) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("run {run_id} did not reach state={state} within timeout");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pause_endpoint_flips_is_paused() {
     let server = TestServer::start(AuthConfig::default(), None).await;
@@ -521,6 +537,10 @@ async fn pause_endpoint_flips_is_paused() {
         .await;
     assert_eq!(status, http::StatusCode::CREATED, "{created}");
     let run_id = created["run_id"].as_str().expect("run_id").to_string();
+
+    // Wait until the run loop is actually running before pausing, so the pause
+    // can't race run-handle registration.
+    wait_run_state(&server, &run_id, "running").await;
 
     let (status, body) = server
         .call(

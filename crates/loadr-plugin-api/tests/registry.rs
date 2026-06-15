@@ -150,6 +150,47 @@ fn load_ref_by_explicit_path() {
 }
 
 #[test]
+fn protocol_plugin_registers_declared_schemes() {
+    // Build the real mongo plugin and install it with its `plugin.toml`
+    // (which declares `schemes = ["mongodb", "mongo"]`), then assert the host
+    // scheme router routes those URL schemes to the plugin handler name.
+    let root = common::workspace_root();
+    let so = common::build_native_example("loadr-plugin-mongo", "loadr_plugin_mongo");
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let plugins_dir = tmp.path().join("plugins");
+    let mongo_dir = plugins_dir.join("mongo");
+    std::fs::create_dir_all(&mongo_dir).expect("mkdir");
+    std::fs::copy(
+        root.join("plugins/loadr-plugin-mongo/plugin.toml"),
+        mongo_dir.join("plugin.toml"),
+    )
+    .expect("copy manifest");
+    std::fs::copy(
+        &so,
+        mongo_dir.join(common::dylib_name("loadr_plugin_mongo")),
+    )
+    .expect("copy artifact");
+
+    loadr_core::protocol::clear_plugin_schemes();
+    let loaded =
+        PluginRegistry::load_ref(&plugin_ref("mongo", serde_json::Value::Null), &plugins_dir)
+            .expect("load mongo");
+    assert!(matches!(loaded, LoadedPlugin::Protocol(_)), "{loaded:?}");
+
+    // The declared schemes now route to the handler whose `name()` is `mongo`.
+    assert_eq!(
+        loadr_core::ProtocolRegistry::infer(None, "mongodb://h:27017/db"),
+        "mongo"
+    );
+    assert_eq!(
+        loadr_core::ProtocolRegistry::infer(None, "mongo://h/db"),
+        "mongo"
+    );
+    loadr_core::protocol::clear_plugin_schemes();
+}
+
+#[test]
 fn install_from_dir_copies_plugin() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let staged = tmp.path().join("staged");

@@ -57,6 +57,7 @@
 - [Plugin system overview](plugins/overview.md)
 - [WASM plugins](plugins/wasm.md)
 - [Native plugins](plugins/native.md)
+- [MongoDB plugin](plugins/mongo.md)
 - [Developing a plugin](plugins/developing.md)
 
 # Migration

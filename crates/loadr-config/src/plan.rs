@@ -1057,6 +1057,12 @@ pub struct RequestStep {
     /// SQL (PostgreSQL / MySQL) query options.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sql: Option<SqlOptions>,
+    /// Free-form options for protocol *plugins* (e.g. the `mongo` plugin reads
+    /// `operation`/`collection`/`document`). Passed through verbatim to the
+    /// plugin as `options.plugin` after `${...}` interpolation of string
+    /// leaves. The host does not interpret these keys.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plugin: Option<serde_json::Value>,
 }
 
 /// Request body: a plain string, or a structured spec.

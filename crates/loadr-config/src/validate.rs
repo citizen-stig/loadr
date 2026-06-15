@@ -229,10 +229,25 @@ pub fn validate(plan: &TestPlan, source: Option<&str>, opts: &ValidateOptions) -
     }
 
     // Thresholds.
+    // Protocol plugins emit a `<name>_reqs` / `<name>_req_duration` /
+    // `<name>_docs` metric family derived from the plugin handler name, so a
+    // declared plugin makes those metric names valid threshold targets.
+    let plugin_metrics: BTreeSet<String> = plan
+        .plugins
+        .iter()
+        .flat_map(|p| {
+            [
+                format!("{}_reqs", p.name),
+                format!("{}_req_duration", p.name),
+                format!("{}_docs", p.name),
+            ]
+        })
+        .collect();
     let known_metrics: BTreeSet<&str> = BUILTIN_METRICS
         .iter()
         .copied()
         .chain(plan.metrics.keys().map(|s| s.as_str()))
+        .chain(plugin_metrics.iter().map(|s| s.as_str()))
         .collect();
     for (selector_str, list) in &plan.thresholds {
         let path = format!("thresholds.{selector_str}");
@@ -1125,6 +1140,28 @@ thresholds:
         assert_eq!(
             d.suggestion.as_deref(),
             Some("did you mean `http_req_duration`?")
+        );
+    }
+
+    #[test]
+    fn plugin_family_threshold_metric_does_not_warn() {
+        // A declared protocol plugin makes `<name>_reqs`/`_req_duration`/`_docs`
+        // valid threshold targets (no "unknown metric" warning).
+        let yaml = r#"
+plugins: [ { name: mongo } ]
+scenarios:
+  s: { executor: constant-vus, vus: 1, duration: 1s, flow: [ { request: { url: "mongodb://h/db", protocol: mongo } } ] }
+thresholds:
+  mongo_req_duration: [ "p(95)<300ms" ]
+  mongo_docs: [ "count>0" ]
+"#;
+        let plan = plan_of(yaml);
+        let diags = validate(&plan, Some(yaml), &ValidateOptions::default());
+        assert!(
+            !diags
+                .iter()
+                .any(|d| d.path.contains("mongo_req_duration") || d.path.contains("mongo_docs")),
+            "plugin-family metrics must not warn: {diags:?}"
         );
     }
 

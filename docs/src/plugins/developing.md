@@ -102,3 +102,151 @@ plugins: [ { name: uppercase-extractor, config: { left: "token=", right: ";" } }
 - Native: `abi_stable` layout checking is the contract; additionally the
   root module carries `abi_version` — bump on breaking changes and loadr
   will refuse mismatches with a clean message.
+
+## Native protocol plugins
+
+A **protocol plugin** adds a new load-test target (a database, a queue, a
+bespoke wire protocol). It must be a *native* plugin — WASM plugins can only be
+extractors/assertions. `loadr-plugin-mongo` is the reference implementation; see
+[the MongoDB plugin](mongo.md) for an end-to-end example.
+
+### The ABI
+
+A protocol plugin implements the synchronous `FfiProtocol` trait and exports it
+via `make_protocol`:
+
+```rust
+use loadr_plugin_api::abi::{FfiProtocol, FfiProtocolBox, FfiProtocol_TO, PluginMod, LOADR_PLUGIN_ABI_VERSION};
+use loadr_plugin_api::{FfiRequest, FfiResponse};
+use abi_stable::std_types::{RString, ROption::{RNone, RSome}};
+
+struct MyProto;
+
+impl FfiProtocol for MyProto {
+    fn name(&self) -> RString { RString::from("myproto") }
+    fn execute(&self, request_json: RString) -> RString {
+        // parse FfiRequest JSON, run the op, return FfiResponse JSON.
+        // MUST NOT panic — report failures via the response `error` field.
+    }
+}
+
+extern "C" fn make_protocol() -> FfiProtocolBox {
+    FfiProtocol_TO::from_value(MyProto, abi_stable::erased_types::TD_Opaque)
+}
+
+extern "C" fn plugin_info() -> RString { /* PluginInfo JSON, incl. "schemes" */ }
+
+loadr_plugin_api::export_loadr_plugin! {
+    PluginMod {
+        abi_version: LOADR_PLUGIN_ABI_VERSION,
+        info: plugin_info,
+        make_output: RNone,
+        make_protocol: RSome(make_protocol),
+        make_service: RNone,
+    }
+}
+```
+
+Key facts that shape the design:
+
+- `execute` is **synchronous**, takes `&self`, and runs on **one shared
+  instance** (`Send + Sync`) created once via `make_protocol()`. There is no
+  per-VU context across the FFI boundary.
+- A plugin that drives an async client (most do) must therefore **own its async
+  machinery**: create its own Tokio runtime inside the cdylib and `block_on`,
+  and keep an **internal connection pool** keyed by the connection target
+  (e.g. `OnceCell<Mutex<HashMap<String, Client>>>`), reused across every call
+  and VU. Do not connect per request.
+- Build the crate as `crate-type = ["cdylib"]`, `publish = false`, a member of
+  the workspace under `plugins/`.
+
+### Request / response JSON
+
+The host serializes a `loadr_plugin_api::FfiRequest` to JSON and hands it to
+`execute`; the plugin returns a `FfiResponse` as JSON:
+
+```jsonc
+// FfiRequest (host -> plugin)
+{
+  "name": "find users",          // metric `name` tag
+  "method": "POST",
+  "url": "mongodb://h:27017/db",  // the connection target / URL
+  "headers": [["k", "v"]],
+  "body_b64": "",                 // base64 request body
+  "timeout_ms": 30000,
+  "options": { ... },             // the request's `plugin:` block, ${...}-interpolated
+  "config": { ... }               // merged plugin config (manifest [config] + PluginRef.config)
+}
+
+// FfiResponse (plugin -> host)
+{
+  "status": 1,                    // your convention; non-failed by default
+  "status_text": "OK",
+  "headers": [],
+  "body_b64": "",
+  "duration_ms": 1.7,
+  "error": null,                  // Some(msg) => request is marked failed
+  "extras": { "docs": 3 }         // free-form; the host can read fields out (see below)
+}
+```
+
+The host already interpolates `${...}` in the request's `plugin:` block before
+the plugin sees it, so `options` arrives fully rendered.
+
+### Declaring the URL scheme(s) — routing contract
+
+A runtime-loaded plugin cannot edit core, so it **declares the URL scheme(s) it
+serves** and the host wires up routing automatically. Declare schemes in two
+places (the manifest wins; `info()` is the fallback when a plugin is loaded by
+bare path):
+
+```toml
+# plugin.toml
+[plugin]
+name = "myproto"
+kind = "protocol"
+type = "native"
+entry = "libmyproto.so"
+schemes = ["myproto", "myp"]      # URL schemes this plugin claims
+```
+
+```rust
+// plugin_info() JSON
+{ "name": "myproto", "kind": "protocol", "schemes": ["myproto", "myp"], ... }
+```
+
+When the host loads the plugin it registers those schemes with a process-global
+scheme router (`loadr_core::protocol::register_plugin_schemes`). After that,
+`ProtocolRegistry::infer` resolves a URL like `myproto://host/...` to the
+handler whose `name()` is `myproto`. **Built-in schemes always win** over plugin
+aliases, and an explicit `protocol: myproto` in YAML also resolves (it must
+match the plugin handler's `name()`, which the validator accepts because it is
+listed under `plugins:`).
+
+So a test can target the plugin either way:
+
+```yaml
+plugins: [ { name: myproto } ]
+flow:
+  - request: { url: "myproto://host/...", plugin: { ... } }   # routed by scheme
+  - request: { url: "host/...", protocol: myproto, plugin: { ... } }  # routed by name
+```
+
+### Metrics
+
+The host derives a metric **family** from the handler `name()` for plugin
+protocols, emitting `<name>_reqs` (counter), `<name>_req_duration` (trend), and
+— when the response includes `extras.docs` — `<name>_docs` (counter). A response
+with a non-null `error` increments `http_req_failed`. So `loadr-plugin-mongo`
+(name `mongo`) produces `mongo_reqs` / `mongo_req_duration` / `mongo_docs`
+without any core changes per plugin.
+
+### Testing
+
+- Unit-test the `execute`/`handle` logic by building `FfiRequest` JSON and
+  asserting on the `FfiResponse` — no host needed.
+- Integration-test against a real backend behind an env-var gate (e.g.
+  `LOADR_TEST_MONGO_URL`) so CI skips it when the service is absent; bring the
+  service up via `examples/harness/docker-compose.yml`.
+- End-to-end, load the built artifact with
+  `loadr_plugin_api::NativePlugin::load("target/debug/libmyproto.so")`.

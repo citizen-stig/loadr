@@ -44,4 +44,9 @@ pub struct PluginInfo {
     /// One of `extractor`, `assertion`, `output`, `protocol`, `service`.
     pub kind: String,
     pub description: String,
+    /// URL scheme(s) a protocol plugin serves, used when the plugin is loaded
+    /// directly by path (no adjacent `plugin.toml`). When a manifest is
+    /// present, the manifest's `[plugin].schemes` takes precedence.
+    #[serde(default)]
+    pub schemes: Vec<String>,
 }

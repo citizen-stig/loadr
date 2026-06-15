@@ -19,11 +19,22 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use loadr_core::ProtocolHandler;
+
 use crate::error::PluginError;
 use crate::manifest::{PluginKind, PluginManifest, PluginType};
 use crate::native::NativePlugin;
 use crate::traits::{PluginAssertion, PluginExtractor, ServicePlugin};
 use crate::wasm::{WasmAssertion, WasmExtractor};
+
+/// Register the URL scheme(s) a loaded protocol plugin serves with the
+/// host-global scheme router, so `infer` can route e.g. `mongodb://` to the
+/// plugin. A no-op when the plugin declares no schemes.
+fn register_protocol_schemes(protocol: &str, schemes: &[String]) {
+    if !schemes.is_empty() {
+        loadr_core::protocol::register_plugin_schemes(protocol, schemes);
+    }
+}
 
 /// Marker file that disables a plugin without uninstalling it.
 pub const DISABLED_MARKER: &str = "disabled";
@@ -127,9 +138,18 @@ impl PluginRegistry {
                     PluginKind::Output => {
                         Ok(LoadedPlugin::Output(Box::new(plugin.make_output(config)?)))
                     }
-                    PluginKind::Protocol => Ok(LoadedPlugin::Protocol(Arc::new(
-                        plugin.make_protocol(config)?,
-                    ))),
+                    PluginKind::Protocol => {
+                        // Manifest `[plugin].schemes` win; fall back to the
+                        // plugin's own `info().schemes` when none are declared.
+                        let schemes = if manifest.schemes.is_empty() {
+                            plugin.info().schemes.clone()
+                        } else {
+                            manifest.schemes.clone()
+                        };
+                        let handler = plugin.make_protocol(config)?;
+                        register_protocol_schemes(handler.name(), &schemes);
+                        Ok(LoadedPlugin::Protocol(Arc::new(handler)))
+                    }
                     PluginKind::Service => {
                         Ok(LoadedPlugin::Service(Box::new(plugin.make_service()?)))
                     }
@@ -210,9 +230,12 @@ impl PluginRegistry {
                 Some(PluginKind::Output) => {
                     Ok(LoadedPlugin::Output(Box::new(plugin.make_output(config)?)))
                 }
-                Some(PluginKind::Protocol) => Ok(LoadedPlugin::Protocol(Arc::new(
-                    plugin.make_protocol(config)?,
-                ))),
+                Some(PluginKind::Protocol) => {
+                    let schemes = plugin.info().schemes.clone();
+                    let handler = plugin.make_protocol(config)?;
+                    register_protocol_schemes(handler.name(), &schemes);
+                    Ok(LoadedPlugin::Protocol(Arc::new(handler)))
+                }
                 Some(PluginKind::Service) => {
                     Ok(LoadedPlugin::Service(Box::new(plugin.make_service()?)))
                 }

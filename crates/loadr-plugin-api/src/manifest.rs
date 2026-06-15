@@ -88,6 +88,11 @@ struct ManifestPlugin {
     entry: String,
     #[serde(default)]
     description: String,
+    /// URL scheme(s) this protocol plugin serves (e.g. `["mongodb", "mongo"]`).
+    /// Only meaningful for `kind = "protocol"`; the host maps a request URL
+    /// scheme to this plugin once installed.
+    #[serde(default)]
+    schemes: Vec<String>,
 }
 
 /// A parsed, resolved plugin manifest.
@@ -102,6 +107,10 @@ pub struct PluginManifest {
     pub description: String,
     /// Default configuration from `[config]` (JSON object, or null).
     pub default_config: serde_json::Value,
+    /// URL scheme(s) a protocol plugin serves (from `[plugin].schemes`).
+    /// Empty for non-protocol plugins or protocol plugins routed only by an
+    /// explicit `protocol:` matching the plugin name.
+    pub schemes: Vec<String>,
     /// The plugin's installation directory.
     pub dir: PathBuf,
     /// False when a `disabled` marker file is present in `dir`.
@@ -130,6 +139,7 @@ impl PluginManifest {
             plugin_type: p.plugin_type,
             entry: dir.join(&p.entry),
             description: p.description,
+            schemes: p.schemes,
             default_config,
             dir: dir.to_path_buf(),
             enabled: !dir.join(crate::registry::DISABLED_MARKER).exists(),
@@ -202,6 +212,31 @@ depth = 3
         assert_eq!(m.description, "Boundary extractor");
         assert_eq!(m.default_config["left"], "<<");
         assert_eq!(m.default_config["depth"], 3);
+    }
+
+    #[test]
+    fn parses_protocol_schemes() {
+        let m = PluginManifest::parse(
+            r#"
+[plugin]
+name = "mongo"
+version = "1.0.0"
+kind = "protocol"
+type = "native"
+entry = "libmongo.so"
+schemes = ["mongodb", "mongo"]
+"#,
+            Path::new("/p/mongo"),
+        )
+        .expect("manifest parses");
+        assert_eq!(m.kind, PluginKind::Protocol);
+        assert_eq!(m.schemes, vec!["mongodb".to_string(), "mongo".to_string()]);
+    }
+
+    #[test]
+    fn schemes_default_empty() {
+        let m = PluginManifest::parse(MANIFEST, Path::new("/p/x")).expect("parses");
+        assert!(m.schemes.is_empty());
     }
 
     #[test]

@@ -112,6 +112,7 @@ pub fn probe_info(path: &Path) -> Result<PluginInfo, PluginError> {
         version: info.version,
         kind: info.kind,
         description: info.description,
+        schemes: Vec::new(),
     })
 }
 
@@ -157,6 +158,7 @@ impl WasmExtractor {
             version: raw.version,
             kind: raw.kind,
             description: raw.description,
+            schemes: Vec::new(),
         };
         if info.kind != "extractor" {
             return Err(PluginError::KindMismatch {
@@ -247,6 +249,7 @@ impl WasmAssertion {
             version: raw.version,
             kind: raw.kind,
             description: raw.description,
+            schemes: Vec::new(),
         };
         if info.kind != "assertion" {
             return Err(PluginError::KindMismatch {

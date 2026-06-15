@@ -12,6 +12,7 @@ members = [
     "crates/loadr-browser",
     "crates/loadr-cli",
     "plugins/loadr-plugin-webui",
+    "plugins/loadr-plugin-mongo",
     "plugins/examples/native-output",
     "plugins/examples/native-protocol",
     "testsupport/loadr-testserver",

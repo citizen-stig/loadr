@@ -39,6 +39,23 @@ services:
       timeout: 5s
       retries: 30
 
+  mongo:                        # real MongoDB — mongodb:// (loadr-plugin-mongo) examples
+    image: mongo:7
+    environment:
+      # Root creds enable auth; the init script then creates a `loadr` user on
+      # the `loadr` db so `mongodb://loadr:loadr@host/loadr` authenticates.
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: root
+      MONGO_INITDB_DATABASE: loadr
+    ports: ["27017:27017"]
+    volumes:
+      - ./mongo/init.js:/docker-entrypoint-initdb.d/init.js:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "-u", "root", "-p", "root", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
   httpbin:                      # real HTTP service (go-httpbin) — httpbin-style examples
     image: mccutchen/go-httpbin
     ports: ["8080:8080"]

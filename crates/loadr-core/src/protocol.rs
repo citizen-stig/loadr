@@ -2,7 +2,7 @@
 //! return responses with detailed phase timings.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -160,6 +160,52 @@ pub trait ProtocolHandler: Send + Sync {
     ) -> Result<ProtocolResponse, ProtocolError>;
 }
 
+/// Process-global map of URL scheme -> protocol-name, populated by the host
+/// when it loads protocol *plugins* that declare the scheme(s) they serve
+/// (via `plugin.toml`'s `[plugin].schemes` or the plugin's `info().schemes`).
+///
+/// Built-in scheme inference always wins; this map only extends `infer` so a
+/// runtime-loaded protocol plugin — which cannot edit core — can claim a URL
+/// scheme like `mongodb://`. The map is keyed by lowercase scheme and maps to
+/// the registered protocol handler name (the plugin's `name()`), which the
+/// `ProtocolRegistry` then resolves to a handler.
+fn plugin_scheme_aliases() -> &'static RwLock<HashMap<String, String>> {
+    static ALIASES: OnceLock<RwLock<HashMap<String, String>>> = OnceLock::new();
+    ALIASES.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+/// Register URL scheme(s) that route to a loaded protocol plugin named
+/// `protocol`. Idempotent; later registrations for the same scheme win.
+///
+/// Built-in schemes are never overridden by this map (see [`ProtocolRegistry::infer`]).
+pub fn register_plugin_schemes(protocol: &str, schemes: &[String]) {
+    if schemes.is_empty() {
+        return;
+    }
+    let mut map = plugin_scheme_aliases().write().expect("scheme alias lock");
+    for scheme in schemes {
+        map.insert(scheme.to_ascii_lowercase(), protocol.to_string());
+    }
+}
+
+/// Look up a plugin-declared scheme alias. Returns the protocol-handler name.
+pub fn plugin_scheme(scheme: &str) -> Option<String> {
+    plugin_scheme_aliases()
+        .read()
+        .expect("scheme alias lock")
+        .get(&scheme.to_ascii_lowercase())
+        .cloned()
+}
+
+/// Clear all registered plugin scheme aliases (test support).
+#[doc(hidden)]
+pub fn clear_plugin_schemes() {
+    plugin_scheme_aliases()
+        .write()
+        .expect("scheme alias lock")
+        .clear();
+}
+
 /// Registry of protocol handlers, keyed by name with scheme aliases.
 #[derive(Default, Clone)]
 pub struct ProtocolRegistry {
@@ -192,6 +238,12 @@ impl ProtocolRegistry {
     }
 
     /// Infer the protocol from an explicit setting or the URL scheme.
+    ///
+    /// Built-in schemes are matched first; an unknown scheme is then looked up
+    /// against plugin-declared scheme aliases ([`register_plugin_schemes`])
+    /// before falling back to `http`. An explicit `protocol:` that is neither a
+    /// built-in alias nor a plugin scheme is passed through verbatim (so it can
+    /// match a loaded plugin handler by name).
     pub fn infer(explicit: Option<&str>, url: &str) -> String {
         if let Some(p) = explicit {
             return match p {
@@ -199,22 +251,21 @@ impl ProtocolRegistry {
                 "websocket" | "wss" => "ws".to_string(),
                 "sses" => "sse".to_string(),
                 "postgres" | "postgresql" | "mysql" => "sql".to_string(),
-                other => other.to_string(),
+                other => plugin_scheme(other).unwrap_or_else(|| other.to_string()),
             };
         }
         let scheme = url.split("://").next().unwrap_or("");
         match scheme {
-            "http" | "https" => "http",
-            "ws" | "wss" => "ws",
-            "grpc" | "grpcs" => "grpc",
-            "sse" | "sses" => "sse",
-            "redis" | "rediss" => "redis",
-            "tcp" => "tcp",
-            "udp" => "udp",
-            "postgres" | "postgresql" | "mysql" | "sql" => "sql",
-            _ => "http",
+            "http" | "https" => "http".to_string(),
+            "ws" | "wss" => "ws".to_string(),
+            "grpc" | "grpcs" => "grpc".to_string(),
+            "sse" | "sses" => "sse".to_string(),
+            "redis" | "rediss" => "redis".to_string(),
+            "tcp" => "tcp".to_string(),
+            "udp" => "udp".to_string(),
+            "postgres" | "postgresql" | "mysql" | "sql" => "sql".to_string(),
+            other => plugin_scheme(other).unwrap_or_else(|| "http".to_string()),
         }
-        .to_string()
     }
 }
 
@@ -254,6 +305,23 @@ mod tests {
             ProtocolRegistry::infer(Some("browser"), "https://x/"),
             "browser"
         );
+    }
+
+    #[test]
+    fn plugin_scheme_routing() {
+        clear_plugin_schemes();
+        // Unknown scheme falls back to http until a plugin claims it.
+        assert_eq!(ProtocolRegistry::infer(None, "mongodb://h/db"), "http");
+        register_plugin_schemes("mongo", &["mongodb".to_string(), "mongo".to_string()]);
+        // Now the URL scheme routes to the plugin handler name.
+        assert_eq!(ProtocolRegistry::infer(None, "mongodb://h/db"), "mongo");
+        assert_eq!(ProtocolRegistry::infer(None, "MONGO://h/db"), "mongo");
+        // Explicit `protocol:` matching a plugin scheme also resolves.
+        assert_eq!(ProtocolRegistry::infer(Some("mongodb"), "x"), "mongo");
+        // Built-in schemes always win over plugin aliases.
+        register_plugin_schemes("rogue", &["https".to_string()]);
+        assert_eq!(ProtocolRegistry::infer(None, "https://h/"), "http");
+        clear_plugin_schemes();
     }
 
     #[test]

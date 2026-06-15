@@ -189,6 +189,9 @@ pub struct CompiledRequest {
     pub socket: Option<loadr_config::SocketOptions>,
     pub sse: Option<loadr_config::SseOptions>,
     pub sql: Option<loadr_config::SqlOptions>,
+    /// Free-form protocol-plugin options, interpolated and forwarded as
+    /// `options.plugin`.
+    pub plugin: Option<serde_json::Value>,
 }
 
 pub enum CompiledBody {
@@ -488,6 +491,7 @@ fn compile_request(
         socket: req.socket.clone(),
         sse: req.sse.clone(),
         sql: req.sql.clone(),
+        plugin: req.plugin.clone(),
     })
 }
 
@@ -1288,11 +1292,14 @@ impl FlowRunner {
                 m.rate(&b.http_req_failed, response.failed(), &tags);
             }
             other => {
-                // grpc, tcp, udp, plugin protocols.
+                // grpc/tcp/udp built-ins keep their family name. Protocol
+                // plugins get a family derived from their own protocol name
+                // (so the `mongo` plugin emits `mongo_reqs`/`mongo_req_duration`
+                // /`mongo_docs`), with a sanitized fallback to `plugin`.
                 let family = if matches!(other, "grpc" | "tcp" | "udp") {
                     other.to_string()
                 } else {
-                    "plugin".to_string()
+                    metric_family(other)
                 };
                 self.emit_named(
                     vu,
@@ -1308,6 +1315,18 @@ impl FlowRunner {
                     t.duration_ms,
                     &tags,
                 );
+                // Plugin protocols may report a count of affected/returned
+                // records in `extras.docs` (e.g. Mongo docs, generic rows),
+                // surfaced as `<family>_docs`.
+                if let Some(docs) = response.extras.get("docs").and_then(|v| v.as_f64()) {
+                    self.emit_named(
+                        vu,
+                        &format!("{family}_docs"),
+                        MetricKind::Counter,
+                        docs,
+                        &tags,
+                    );
+                }
                 m.rate(&b.http_req_failed, response.failed(), &tags);
             }
         }
@@ -1617,6 +1636,17 @@ impl FlowRunner {
             options.plugin = Some(serde_json::Value::Object(obj));
         }
 
+        // Free-form protocol-plugin options. String leaves are interpolated
+        // (`${...}`) before the plugin sees them, matching the `sql:`/`sse:`
+        // channels. A request uses `plugin:` OR a typed block, not both; if
+        // both are set the typed block above already populated the channel and
+        // this would overwrite it, so only apply when not already set.
+        if let Some(plugin_opts) = &req.plugin {
+            if options.plugin.is_none() {
+                options.plugin = Some(render_json(self, plugin_opts, vu, script)?);
+            }
+        }
+
         let name = match &req.name {
             Some(tpl) => render_template(self, tpl, vu, script)?,
             None => req.display_name.clone(),
@@ -1677,6 +1707,31 @@ pub fn with_host<R>(
 
 /// Bucket a free-form transport error string into a coarse, stable kind so the
 /// UI can group failures by cause without exploding on volatile detail.
+/// Derive a metric-family prefix from a plugin protocol name. The protocol
+/// name is the plugin handler's `name()` (e.g. `mongo`), used to build metric
+/// names like `mongo_reqs`. We keep `[a-z0-9_]` and lowercase the rest so a
+/// malformed name can never inject odd characters into a metric key; an empty
+/// result falls back to `plugin`.
+fn metric_family(protocol: &str) -> String {
+    let cleaned: String = protocol
+        .chars()
+        .map(|c| {
+            let c = c.to_ascii_lowercase();
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim_matches('_');
+    if trimmed.is_empty() {
+        "plugin".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 fn classify_transport_error(error: &str) -> &'static str {
     let e = error.to_ascii_lowercase();
     if e.contains("timed out") || e.contains("timeout") {

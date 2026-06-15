@@ -11,7 +11,7 @@ use loadr_config::{
 
 use crate::conditions::{CompiledCondition, ConditionResult};
 use crate::error::EngineError;
-use crate::extract::CompiledExtractor;
+use crate::extract::{CompiledExtractor, ExtractError};
 use crate::metrics::{BuiltinMetrics, MetricKind, Tags};
 use crate::pacing::sample_think_time;
 use crate::protocol::{
@@ -1044,18 +1044,52 @@ impl FlowRunner {
         // 4. Metrics.
         self.emit_request_metrics(vu, &prepared, &response);
 
-        // 5. Extraction.
+        // 5. Extraction (classic extractors and fused chains).
+        let mut chain_flow = RequestFlow::Continue;
+        let mut extraction_failed = false;
         for extractor in &req.extract {
             match extractor.extract(&response, &mut vu.rng) {
                 Ok(value) => {
+                    // A chain with a `check:` records a sample to the `checks`
+                    // metric on success, mirroring the standalone `checks:`.
+                    if extractor.is_chain_with_check() {
+                        let tags = vu.sample_tags(&[("check", extractor.name())]);
+                        vu.metrics.rate(&self.builtins.checks, true, &tags);
+                    }
                     vu.vars.insert(extractor.name().to_string(), value);
+                }
+                Err(ExtractError::CheckFailed {
+                    name,
+                    detail,
+                    on_failure,
+                }) => {
+                    // Inline chain validation failed: record a failed check,
+                    // mark the request failed and honour `on_failure`.
+                    tracing::debug!(request = %prepared.name, chain = %name, %detail, "chain check failed");
+                    let check_tags = vu.sample_tags(&[("check", name.as_str())]);
+                    vu.metrics.rate(&self.builtins.checks, false, &check_tags);
+                    extraction_failed = true;
+                    match on_failure {
+                        FailureAction::Continue => {}
+                        FailureAction::AbortIteration => chain_flow = RequestFlow::AbortIteration,
+                        FailureAction::AbortScenario => chain_flow = RequestFlow::AbortScenario,
+                        FailureAction::AbortTest => {
+                            chain_flow = RequestFlow::AbortTest(format!(
+                                "chain `{name}` check failed on `{}`",
+                                prepared.name
+                            ));
+                        }
+                    }
                 }
                 Err(e) => {
                     tracing::debug!(request = %prepared.name, error = %e, "extraction failed");
-                    let tags = vu.sample_tags(&[("name", &prepared.name)]);
-                    vu.metrics.rate(&self.builtins.http_req_failed, true, &tags);
+                    extraction_failed = true;
                 }
             }
+        }
+        if extraction_failed {
+            let tags = vu.sample_tags(&[("name", &prepared.name)]);
+            vu.metrics.rate(&self.builtins.http_req_failed, true, &tags);
         }
 
         // 6. afterRequest hook.
@@ -1072,7 +1106,8 @@ impl FlowRunner {
         }
 
         // 7. Assertions (mark failed + flow control) and checks (record only).
-        let mut flow = RequestFlow::Continue;
+        // A failed chain check may already have requested abort; start there.
+        let mut flow = chain_flow;
         let mut assert_failed = false;
         for condition in &req.assert {
             let result = self.eval_condition(condition, &response, vu, script);
@@ -1111,7 +1146,7 @@ impl FlowRunner {
             vu.metrics.rate(&self.builtins.checks, result.pass, &tags);
         }
         // Record whether this request failed, so `retry` can react to it.
-        vu.last_request_failed = response.failed() || assert_failed;
+        vu.last_request_failed = response.failed() || assert_failed || extraction_failed;
         flow
     }
 

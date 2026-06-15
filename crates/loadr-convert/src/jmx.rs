@@ -9,8 +9,9 @@ use std::collections::BTreeSet;
 
 use indexmap::IndexMap;
 use loadr_config::{
-    Body, BodySpec, Condition, DataMode, DataSource, Dur, ExecutorKind, Extractor, GroupStep,
-    MatchIndex, OnEof, PacingSpec, RequestStep, Scenario, Stage, Step, TestPlan, ThinkTimeSpec,
+    Body, BodySpec, ClassicExtractor, Condition, DataMode, DataSource, Dur, ExecutorKind,
+    Extractor, GroupStep, MatchIndex, OnEof, PacingSpec, RequestStep, Scenario, Stage, Step,
+    TestPlan, ThinkTimeSpec,
 };
 use quick_xml::events::Event;
 use quick_xml::Reader;
@@ -865,14 +866,15 @@ impl JmxConverter {
                         if name.is_empty() || expr.is_empty() {
                             self.warn(child.label(), "XPath extractor incomplete; skipped");
                         } else {
-                            req.extract.push(Extractor::Xpath {
-                                name: name.to_string(),
-                                expression: expr.to_string(),
-                                default: non_empty(
-                                    child.prop("XPathExtractor.default").unwrap_or(""),
-                                )
-                                .map(str::to_string),
-                            });
+                            req.extract
+                                .push(Extractor::Classic(ClassicExtractor::Xpath {
+                                    name: name.to_string(),
+                                    expression: expr.to_string(),
+                                    default: non_empty(
+                                        child.prop("XPathExtractor.default").unwrap_or(""),
+                                    )
+                                    .map(str::to_string),
+                                }));
                         }
                     }
                     "BoundaryExtractor" => self.convert_boundary_extractor(child, &mut req),
@@ -1123,14 +1125,15 @@ impl JmxConverter {
             );
         }
         let index = self.match_number_index(&label, node.prop("RegexExtractor.match_number"));
-        req.extract.push(Extractor::Regex {
-            name,
-            expression: expr,
-            group,
-            default: non_empty(node.prop("RegexExtractor.default").unwrap_or(""))
-                .map(str::to_string),
-            index,
-        });
+        req.extract
+            .push(Extractor::Classic(ClassicExtractor::Regex {
+                name,
+                expression: expr,
+                group,
+                default: non_empty(node.prop("RegexExtractor.default").unwrap_or(""))
+                    .map(str::to_string),
+                index,
+            }));
     }
 
     fn convert_json_extractor(&mut self, node: &Node, req: &mut RequestStep) {
@@ -1164,16 +1167,17 @@ impl JmxConverter {
         }
         let index = self.match_number_index(&label, node.prop("JSONPostProcessor.match_numbers"));
         for (i, (name, expr)) in names.iter().zip(exprs.iter()).enumerate() {
-            req.extract.push(Extractor::Jsonpath {
-                name: (*name).to_string(),
-                expression: (*expr).to_string(),
-                default: defaults
-                    .get(i)
-                    .copied()
-                    .filter(|d| !d.is_empty())
-                    .map(str::to_string),
-                index,
-            });
+            req.extract
+                .push(Extractor::Classic(ClassicExtractor::Jsonpath {
+                    name: (*name).to_string(),
+                    expression: (*expr).to_string(),
+                    default: defaults
+                        .get(i)
+                        .copied()
+                        .filter(|d| !d.is_empty())
+                        .map(str::to_string),
+                    index,
+                }));
         }
     }
 
@@ -1197,14 +1201,15 @@ impl JmxConverter {
             return;
         }
         let index = self.match_number_index(&label, node.prop("BoundaryExtractor.match_number"));
-        req.extract.push(Extractor::Boundary {
-            name,
-            left,
-            right,
-            default: non_empty(node.prop("BoundaryExtractor.default").unwrap_or(""))
-                .map(str::to_string),
-            index,
-        });
+        req.extract
+            .push(Extractor::Classic(ClassicExtractor::Boundary {
+                name,
+                left,
+                right,
+                default: non_empty(node.prop("BoundaryExtractor.default").unwrap_or(""))
+                    .map(str::to_string),
+                index,
+            }));
     }
 
     /// JMeter match numbers: 0 = random, 1 = first, -1 = all, N>1 = unsupported.

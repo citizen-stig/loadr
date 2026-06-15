@@ -1,8 +1,8 @@
 //! Integration tests for the JMeter `.jmx` converter.
 
 use loadr_config::{
-    Body, Condition, DataSource, ExecutorKind, Extractor, MatchIndex, Severity, Step, TestPlan,
-    ThinkTimeSpec,
+    Body, ClassicExtractor, Condition, DataSource, ExecutorKind, Extractor, MatchIndex, Severity,
+    Step, TestPlan, ThinkTimeSpec,
 };
 use loadr_convert::{convert_jmx, ConvertError};
 
@@ -181,12 +181,12 @@ fn complex_plan_converts() {
     assert_eq!(cart.headers.get("X-Cart").map(String::as_str), Some("1"));
     assert_eq!(cart.extract.len(), 4);
     match &cart.extract[0] {
-        Extractor::Regex {
+        Extractor::Classic(ClassicExtractor::Regex {
             name,
             group,
             default,
             ..
-        } => {
+        }) => {
             assert_eq!(name, "csrf");
             assert_eq!(*group, Some(1));
             assert_eq!(default.as_deref(), Some("NONE"));
@@ -194,12 +194,12 @@ fn complex_plan_converts() {
         other => panic!("expected regex extractor, got {other:?}"),
     }
     match &cart.extract[1] {
-        Extractor::Jsonpath {
+        Extractor::Classic(ClassicExtractor::Jsonpath {
             name,
             expression,
             index,
             ..
-        } => {
+        }) => {
             assert_eq!(name, "item_id");
             assert_eq!(expression, "$.items[0].id");
             assert_eq!(*index, Some(MatchIndex::Random));
@@ -207,9 +207,9 @@ fn complex_plan_converts() {
         other => panic!("expected jsonpath extractor, got {other:?}"),
     }
     match &cart.extract[2] {
-        Extractor::Boundary {
+        Extractor::Classic(ClassicExtractor::Boundary {
             name, left, right, ..
-        } => {
+        }) => {
             assert_eq!(name, "session");
             assert_eq!(left, "session=");
             assert_eq!(right, ";");
@@ -217,9 +217,9 @@ fn complex_plan_converts() {
         other => panic!("expected boundary extractor, got {other:?}"),
     }
     match &cart.extract[3] {
-        Extractor::Xpath {
+        Extractor::Classic(ClassicExtractor::Xpath {
             name, expression, ..
-        } => {
+        }) => {
             assert_eq!(name, "page_title");
             assert_eq!(expression, "//title/text()");
         }

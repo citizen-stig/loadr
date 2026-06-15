@@ -624,9 +624,9 @@ impl Ctx<'_> {
         for (ei, ex) in req.extract.iter().enumerate() {
             let epath = format!("{rpath}.extract[{ei}]");
             match ex {
-                Extractor::Regex {
+                Extractor::Classic(ClassicExtractor::Regex {
                     expression, group, ..
-                } => match regex::Regex::new(expression) {
+                }) => match regex::Regex::new(expression) {
                     Err(e) => self.error(epath, format!("invalid regex: {e}")),
                     Ok(re) => {
                         let g = group.unwrap_or(1);
@@ -641,11 +641,12 @@ impl Ctx<'_> {
                         }
                     }
                 },
-                Extractor::Jsonpath { expression, .. }
+                Extractor::Classic(ClassicExtractor::Jsonpath { expression, .. })
                     if serde_json_path::JsonPath::parse(expression).is_err() =>
                 {
                     self.error(epath, format!("invalid JSONPath `{expression}`"));
                 }
+                Extractor::Chain(c) => self.check_chain(&epath, c),
                 _ => {}
             }
             declared.insert(ex.name().to_string());
@@ -699,6 +700,128 @@ impl Ctx<'_> {
                         "header condition needs `equals`, `contains` or `exists`",
                     );
                 }
+                _ => {}
+            }
+        }
+    }
+
+    /// Validate a fused extraction chain: exactly one source, valid
+    /// expressions and a sane check block.
+    fn check_chain(&mut self, path: &str, c: &ChainSpec) {
+        // Exactly one source must be set.
+        let mut sources = Vec::new();
+        if c.jmespath.is_some() {
+            sources.push("jmespath");
+        }
+        if c.jsonpath.is_some() {
+            sources.push("jsonpath");
+        }
+        if c.regex.is_some() {
+            sources.push("regex");
+        }
+        if c.header.is_some() {
+            sources.push("header");
+        }
+        if c.css.is_some() {
+            sources.push("css");
+        }
+        if c.xpath.is_some() {
+            sources.push("xpath");
+        }
+        if c.left.is_some() || c.right.is_some() {
+            sources.push("boundary");
+        }
+        match sources.len() {
+            0 => self.error(
+                path.to_string(),
+                "chain has no source; set one of `jmespath`, `jsonpath`, `regex`, \
+                 `header`, `css`, `xpath` or `left`/`right`",
+            ),
+            1 => {}
+            _ => self.error(
+                path.to_string(),
+                format!(
+                    "chain has multiple sources ({}); pick one",
+                    sources.join(", ")
+                ),
+            ),
+        }
+        if (c.left.is_some()) != (c.right.is_some()) {
+            self.error(
+                path.to_string(),
+                "boundary chain needs both `left` and `right`",
+            );
+        }
+        // Validate source expressions.
+        if let Some(expr) = &c.jmespath {
+            if jmespath::compile(expr).is_err() {
+                self.error(path.to_string(), format!("invalid JMESPath `{expr}`"));
+            }
+        }
+        if let Some(expr) = &c.jsonpath {
+            if serde_json_path::JsonPath::parse(expr).is_err() {
+                self.error(path.to_string(), format!("invalid JSONPath `{expr}`"));
+            }
+        }
+        if let Some(expr) = &c.regex {
+            match regex::Regex::new(expr) {
+                Err(e) => self.error(path.to_string(), format!("invalid regex: {e}")),
+                Ok(re) => {
+                    let g = c.group.unwrap_or(1);
+                    if g > re.captures_len().saturating_sub(1) {
+                        self.error(
+                            path.to_string(),
+                            format!(
+                                "regex has {} capture group(s) but `group` is {g}",
+                                re.captures_len() - 1
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+        // Validate the check block's regex/bounds.
+        if let Some(check) = &c.check {
+            if let Some(m) = &check.matches {
+                if let Err(e) = regex::Regex::new(m) {
+                    self.error(
+                        path.to_string(),
+                        format!("invalid regex in `check.matches`: {e}"),
+                    );
+                }
+            }
+            if let (Some(min), Some(max)) = (check.min, check.max) {
+                if min > max {
+                    self.error(
+                        path.to_string(),
+                        format!("`check.min` ({min}) is greater than `check.max` ({max})"),
+                    );
+                }
+            }
+            let empty = check.equals.is_none()
+                && check.matches.is_none()
+                && check.one_of.is_none()
+                && check.min.is_none()
+                && check.max.is_none()
+                && check.not_empty.is_none();
+            if empty {
+                self.warning(
+                    path.to_string(),
+                    "chain `check` is empty; remove it or add a constraint",
+                );
+            }
+        }
+        // Transform argument arity.
+        for t in &c.transform {
+            match t {
+                Transform::Replace(args) if args.len() != 2 => self.error(
+                    path.to_string(),
+                    "transform `replace` needs exactly [from, to]",
+                ),
+                Transform::Substring(args) if args.is_empty() || args.len() > 2 => self.error(
+                    path.to_string(),
+                    "transform `substring` needs [start] or [start, len]",
+                ),
                 _ => {}
             }
         }
@@ -866,6 +989,94 @@ scenarios:
             diags.iter().all(|d| !d.message.contains("token")),
             "{diags:?}"
         );
+    }
+
+    #[test]
+    fn chain_extractor_validates_and_declares() {
+        let yaml = r#"
+scenarios:
+  s:
+    executor: constant-vus
+    vus: 1
+    duration: 1s
+    flow:
+      - request:
+          url: https://example.com/
+          extract:
+            - chain: cheapest
+              jmespath: "items[?price > `10`] | [0].name"
+              as: string
+              transform: [trim, lowercase]
+              check: { not_empty: true }
+      - request:
+          url: "https://example.com/use?n=${cheapest}"
+"#;
+        let plan = plan_of(yaml);
+        let diags = validate(&plan, Some(yaml), &ValidateOptions::default());
+        let errs: Vec<_> = diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(errs.is_empty(), "unexpected errors: {errs:?}");
+        // The chain's `name` must count as a declared variable.
+        assert!(
+            diags.iter().all(|d| !d.message.contains("cheapest")),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn chain_without_source_is_rejected() {
+        let yaml = r#"
+scenarios:
+  s:
+    executor: constant-vus
+    vus: 1
+    duration: 1s
+    flow:
+      - request:
+          url: https://example.com/
+          extract:
+            - { chain: oops, as: int }
+"#;
+        let diags = errors(yaml);
+        assert!(diags.iter().any(|d| d.message.contains("no source")));
+    }
+
+    #[test]
+    fn chain_multiple_sources_is_rejected() {
+        let yaml = r#"
+scenarios:
+  s:
+    executor: constant-vus
+    vus: 1
+    duration: 1s
+    flow:
+      - request:
+          url: https://example.com/
+          extract:
+            - { chain: oops, jmespath: "a", jsonpath: "$.a" }
+"#;
+        let diags = errors(yaml);
+        assert!(diags.iter().any(|d| d.message.contains("multiple sources")));
+    }
+
+    #[test]
+    fn chain_bad_jmespath_is_rejected() {
+        let yaml = r#"
+scenarios:
+  s:
+    executor: constant-vus
+    vus: 1
+    duration: 1s
+    flow:
+      - request:
+          url: https://example.com/
+          extract:
+            - { chain: oops, jmespath: "items[?" }
+"#;
+        let diags = errors(yaml);
+        assert!(diags.iter().any(|d| d.message.contains("invalid JMESPath")));
     }
 
     #[test]

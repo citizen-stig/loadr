@@ -1292,14 +1292,17 @@ impl FlowRunner {
                 m.rate(&b.http_req_failed, response.failed(), &tags);
             }
             other => {
-                // grpc/tcp/udp built-ins keep their family name. Protocol
-                // plugins get a family derived from their own protocol name
-                // (so the `mongo` plugin emits `mongo_reqs`/`mongo_req_duration`
-                // /`mongo_docs`), with a sanitized fallback to `plugin`.
-                let family = if matches!(other, "grpc" | "tcp" | "udp") {
-                    other.to_string()
-                } else {
-                    metric_family(other)
+                // grpc/tcp/udp built-ins keep their own family name. The
+                // `sse`/`redis`/`browser` built-ins historically share the
+                // generic `plugin` family — preserve that so existing dashboards
+                // and thresholds keep working. Everything else is a loaded
+                // protocol *plugin*, which gets a family derived from its own
+                // protocol name (so the `mongo` plugin emits `mongo_reqs` /
+                // `mongo_req_duration` / `mongo_docs`).
+                let family = match other {
+                    "grpc" | "tcp" | "udp" => other.to_string(),
+                    "sse" | "redis" | "browser" => "plugin".to_string(),
+                    name => metric_family(name),
                 };
                 self.emit_named(
                     vu,

@@ -1243,9 +1243,29 @@ pub enum MatchIndex {
 
 /// Extract a value from a response into a variable usable in later steps
 /// (`${name}`) and in JS (`session.vars.name`).
+///
+/// Two forms, distinguished by their keys:
+/// - the classic **typed** extractor (`{ type: jsonpath, name: ..., ... }`);
+/// - the fused **chain** (`{ chain: name, jmespath: ..., as: ..., check: ... }`).
+///
+/// Both are accepted anywhere `extract:` appears; mix them freely.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum Extractor {
+    /// Fused extract → coerce → transform → validate → save chain.
+    ///
+    /// Disambiguated from the classic form by its `chain:` key. See [`ChainSpec`].
+    /// Boxed because the chain spec is much larger than the classic variant.
+    Chain(Box<ChainSpec>),
+    /// Classic single-purpose extractor (`type:` discriminator).
+    Classic(ClassicExtractor),
+}
+
+/// Extract a value from a response into a variable usable in later steps
+/// (`${name}`) and in JS (`session.vars.name`).
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum Extractor {
+pub enum ClassicExtractor {
     /// JSONPath over a JSON body, e.g. `$.items[0].id`.
     Jsonpath {
         /// Variable name to store the result under.
@@ -1311,17 +1331,187 @@ pub enum Extractor {
     },
 }
 
+impl ClassicExtractor {
+    pub fn name(&self) -> &str {
+        match self {
+            ClassicExtractor::Jsonpath { name, .. }
+            | ClassicExtractor::Regex { name, .. }
+            | ClassicExtractor::Xpath { name, .. }
+            | ClassicExtractor::Css { name, .. }
+            | ClassicExtractor::Boundary { name, .. }
+            | ClassicExtractor::Header { name, .. } => name,
+        }
+    }
+}
+
 impl Extractor {
     pub fn name(&self) -> &str {
         match self {
-            Extractor::Jsonpath { name, .. }
-            | Extractor::Regex { name, .. }
-            | Extractor::Xpath { name, .. }
-            | Extractor::Css { name, .. }
-            | Extractor::Boundary { name, .. }
-            | Extractor::Header { name, .. } => name,
+            Extractor::Classic(c) => c.name(),
+            Extractor::Chain(c) => &c.name,
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Fused check chains (extract → coerce → transform → validate → save)
+// ---------------------------------------------------------------------------
+
+/// A fused, declarative extraction chain (Gatling-style).
+///
+/// ```yaml
+/// extract:
+///   - chain: cheapest_in_stock          # variable name to save
+///     jmespath: "items[?stock > `0`] | sort_by(@, &price)[0].name"
+///     as: string                        # optional: int | float | bool | string
+///     transform: [trim, lowercase]      # optional: ordered pipeline
+///     default: "none"                   # optional: used when nothing matches
+///     check:                            # optional: validate before saving
+///       not_empty: true
+///       matches: "^[a-z-]+$"
+/// ```
+///
+/// Exactly one source field must be set (`jmespath`, `jsonpath`, `regex`,
+/// `header`, `css`, `xpath` or `boundary`). The `chain` key is the variable
+/// name; everything else is optional.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct ChainSpec {
+    /// Variable name to save the final value under (`chain:` key).
+    #[serde(rename = "chain")]
+    pub name: String,
+
+    // --- source (exactly one) ---
+    /// JMESPath query over a JSON body, e.g. `items[?price > \`10\`] | [0].id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jmespath: Option<String>,
+    /// JSONPath over a JSON body, e.g. `$.items[0].id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jsonpath: Option<String>,
+    /// Regular expression over the body (uses capture `group`, default 1).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regex: Option<String>,
+    /// Response header name (case-insensitive).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header: Option<String>,
+    /// CSS selector over an HTML body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub css: Option<String>,
+    /// XPath 1.0 over an XML body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub xpath: Option<String>,
+    /// Boundary-extractor `left` marker (requires `right`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left: Option<String>,
+    /// Boundary-extractor `right` marker (requires `left`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub right: Option<String>,
+
+    // --- source modifiers ---
+    /// Regex capture group to take (default 1; 0 = whole match). Only for `regex`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<usize>,
+    /// CSS attribute to read (omit for element text). Only for `css`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attribute: Option<String>,
+    /// Which of several matches to take (jmespath/jsonpath/regex/css/boundary).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index: Option<MatchIndex>,
+
+    // --- coerce / transform / validate / save ---
+    /// Coerce the extracted value to this type before transform/validate.
+    #[serde(rename = "as", default, skip_serializing_if = "Option::is_none")]
+    pub as_type: Option<CoerceType>,
+    /// Ordered transform pipeline applied after coercion.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transform: Vec<Transform>,
+    /// Value used when the source matches nothing (otherwise the chain fails,
+    /// counting the request as failed — same as the classic extractors).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<serde_json::Value>,
+    /// Inline validation: the value must satisfy every check or the chain fails.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<ChainCheck>,
+}
+
+impl ChainSpec {
+    /// `as_type` is serialized as `as` (a Rust keyword) — handled via the
+    /// `#[serde(rename)]` below; this helper just reads it back.
+    pub fn coerce(&self) -> Option<CoerceType> {
+        self.as_type
+    }
+}
+
+/// Type to coerce an extracted value into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CoerceType {
+    /// Parse as a 64-bit signed integer.
+    Int,
+    /// Parse as a 64-bit float.
+    Float,
+    /// Parse as a boolean (`true`/`false`, `1`/`0`, `yes`/`no`, `on`/`off`).
+    Bool,
+    /// Render as a string.
+    String,
+}
+
+/// One transform applied to an extracted value (in pipeline order).
+///
+/// String forms (`trim`, `lowercase`, …) need no arguments; the object forms
+/// (`{ replace: [from, to] }`, `{ prepend: "Bearer " }`, …) carry one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Transform {
+    /// Trim leading/trailing whitespace.
+    Trim,
+    /// Lowercase (ASCII + Unicode).
+    Lowercase,
+    /// Uppercase (ASCII + Unicode).
+    Uppercase,
+    /// URL-encode (percent-encoding for query/path components).
+    UrlEncode,
+    /// URL-decode percent-encoding.
+    UrlDecode,
+    /// Base64-encode (standard alphabet).
+    Base64Encode,
+    /// Base64-decode (standard alphabet) into UTF-8 text.
+    Base64Decode,
+    /// Append a literal suffix.
+    Append(String),
+    /// Prepend a literal prefix, e.g. `Bearer `.
+    Prepend(String),
+    /// Replace all occurrences of `[from, to]`.
+    Replace(Vec<String>),
+    /// Take a substring `[start, len]` (character offsets).
+    Substring(Vec<usize>),
+}
+
+/// Inline validation for a [`ChainSpec`]: every set field must hold.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct ChainCheck {
+    /// Value must equal this (compared after coercion/transform).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equals: Option<serde_json::Value>,
+    /// Value (as text) must match this regular expression.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matches: Option<String>,
+    /// Value (as text) must be one of these.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub one_of: Option<Vec<serde_json::Value>>,
+    /// Numeric lower bound (inclusive).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<f64>,
+    /// Numeric upper bound (inclusive).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+    /// Value (as text) must be non-empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_empty: Option<bool>,
+    /// What to do if validation fails (default: mark the request failed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_failure: Option<FailureAction>,
 }
 
 // ---------------------------------------------------------------------------

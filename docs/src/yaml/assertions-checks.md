@@ -54,3 +54,10 @@ checks:
 
 The `response` object has `status`, `body`, `headers` (lower-cased),
 `duration_ms`, `url`, `error`, `protocol`.
+
+## Validating an extracted value inline
+
+To extract a value **and** validate it in one step (rather than a separate
+`extract:` and `checks:`), use a fused [check-chain](extraction.md#fused-check-chains):
+its `check:` block records to the `checks` metric and respects `on_failure` just
+like the conditions above.

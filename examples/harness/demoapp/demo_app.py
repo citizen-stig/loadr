@@ -78,6 +78,8 @@ class App(BaseHTTPRequestHandler):
         body = self._body()
         if "checkout/submit" in p:
             return self._json(200, {"order": {"id": "ord-1"}})
+        if p == "/orders" or p.endswith("/orders"):
+            return self._json(201, {"order": {"id": "ord-1"}, "status": "PENDING"})
         if p == "/cart" or p.endswith("/cart"):
             return self._json(201, {"id": "cart-1", "sku": "W-1"})
         if "login" in p:

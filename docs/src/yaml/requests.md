@@ -55,6 +55,7 @@ Non-HTTP requests use the same step with an extra options block — see the
 - request: { url: grpc://x:50051, grpc: { service: pkg.Svc, method: M, reflection: true, message: {...} } }
 - request: { url: /graphql, protocol: graphql, graphql: { query: "...", variables: {...} } }
 - request: { url: tcp://x:7000, socket: { send_text: "PING\n", read_bytes: 64 } }
+- request: { url: postgres://u:p@db/app, sql: { query: "SELECT * FROM t WHERE id=$1", params: ["1"] } }
 ```
 
 ## Cookies

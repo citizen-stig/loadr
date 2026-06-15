@@ -1,0 +1,11 @@
+# cargo-audit configuration. Mirrors the advisory ignores in deny.toml so the
+# `cargo audit` CI step and `cargo deny check` agree.
+[advisories]
+ignore = [
+    # rsa (transitive via sqlx-mysql) — Marvin timing side-channel. No safe
+    # upgrade exists upstream yet. Only reachable for MySQL caching_sha2/sha256
+    # password auth on a non-TLS connection; load-test targets are
+    # operator-controlled. Revisit when RustCrypto/RSA ships a constant-time
+    # release. See deny.toml for the matching ignore.
+    "RUSTSEC-2023-0071",
+]

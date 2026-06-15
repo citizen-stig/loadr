@@ -90,6 +90,9 @@ pub const BUILTIN_METRIC_DEFS: &[(&str, MetricKind, bool)] = &[
     ("udp_req_duration", MetricKind::Trend, true),
     ("graphql_reqs", MetricKind::Counter, false),
     ("graphql_req_duration", MetricKind::Trend, true),
+    ("sql_reqs", MetricKind::Counter, false),
+    ("sql_req_duration", MetricKind::Trend, true),
+    ("sql_rows", MetricKind::Counter, false),
 ];
 
 /// Registry of known metrics: built-ins, YAML custom metrics, and metrics

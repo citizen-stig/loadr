@@ -198,6 +198,7 @@ impl ProtocolRegistry {
                 "https" => "http".to_string(),
                 "websocket" | "wss" => "ws".to_string(),
                 "sses" => "sse".to_string(),
+                "postgres" | "postgresql" | "mysql" => "sql".to_string(),
                 other => other.to_string(),
             };
         }
@@ -210,6 +211,7 @@ impl ProtocolRegistry {
             "redis" | "rediss" => "redis",
             "tcp" => "tcp",
             "udp" => "udp",
+            "postgres" | "postgresql" | "mysql" | "sql" => "sql",
             _ => "http",
         }
         .to_string()

@@ -1054,6 +1054,9 @@ pub struct RequestStep {
     /// Server-Sent Events stream options.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sse: Option<SseOptions>,
+    /// SQL (PostgreSQL / MySQL) query options.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sql: Option<SqlOptions>,
 }
 
 /// Request body: a plain string, or a structured spec.
@@ -1224,6 +1227,23 @@ pub struct SseOptions {
     /// Stop after this wall-clock duration (capped by the request timeout).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration: Option<Dur>,
+}
+
+/// SQL request options for the `postgres://` and `mysql://` protocols.
+///
+/// The query is executed as the "request"; latency, the number of rows
+/// returned (SELECT) or affected (INSERT/UPDATE/DELETE), and any database
+/// error are recorded as metrics. Parameters are bound positionally using the
+/// driver's placeholder syntax (`$1, $2, ...` for postgres, `?` for mysql).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct SqlOptions {
+    /// The SQL statement to execute (supports `${...}` templating).
+    pub query: String,
+    /// Positional bind parameters (string leaves support `${...}`). Each value
+    /// is bound as text; the database coerces it to the column type.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub params: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------

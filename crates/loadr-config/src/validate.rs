@@ -43,6 +43,9 @@ pub const BUILTIN_METRICS: &[&str] = &[
     "tcp_req_duration",
     "udp_req_duration",
     "graphql_req_duration",
+    "sql_reqs",
+    "sql_req_duration",
+    "sql_rows",
 ];
 
 const KNOWN_PROTOCOLS: &[&str] = &[
@@ -59,6 +62,10 @@ const KNOWN_PROTOCOLS: &[&str] = &[
     "browser",
     "tcp",
     "udp",
+    "sql",
+    "postgres",
+    "postgresql",
+    "mysql",
 ];
 const HTTP_METHODS: &[&str] = &[
     "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE", "CONNECT",
@@ -618,6 +625,14 @@ impl Ctx<'_> {
                         "invalid hex payload (use pairs of hex digits, whitespace allowed)",
                     );
                 }
+            }
+        }
+        if let Some(sql) = &req.sql {
+            if sql.query.trim().is_empty() {
+                self.error(
+                    format!("{rpath}.sql.query"),
+                    "SQL `query` must not be empty",
+                );
             }
         }
         // Extractors: regexes must compile; names become available afterwards.

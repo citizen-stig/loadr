@@ -38,6 +38,7 @@
 - [gRPC](protocols/grpc.md)
 - [GraphQL](protocols/graphql.md)
 - [Redis](protocols/redis.md)
+- [SQL (PostgreSQL & MySQL)](protocols/sql.md)
 - [Browser](protocols/browser.md)
 - [TCP & UDP](protocols/sockets.md)
 

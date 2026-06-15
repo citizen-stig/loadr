@@ -36,6 +36,8 @@ for i in $(seq 1 40); do
     && curl -fsS -o /dev/null http://127.0.0.1:8085/ 2>/dev/null \
     && (echo > /dev/tcp/127.0.0.1/50051) 2>/dev/null \
     && (echo > /dev/tcp/127.0.0.1/8081) 2>/dev/null \
+    && docker compose -f "$COMPOSE" exec -T postgres pg_isready -U loadr -d loadr >/dev/null 2>&1 \
+    && docker compose -f "$COMPOSE" exec -T mysql mysqladmin ping -h 127.0.0.1 -uloadr -ploadr --silent >/dev/null 2>&1 \
     && { echo "    services ready"; break; }
   sleep 1
 done
@@ -55,6 +57,8 @@ repoint() {  # stdin -> stdout: point hosts at local services, shorten durations
     s{tcp://[^/\s"'\'']+}{tcp://127.0.0.1:7000}g;
     s{udp://[^/\s"'\'']+}{udp://127.0.0.1:8125}g;
     s{rediss?://[^/\s"'\'']+}{redis://127.0.0.1:6379}g;
+    s{postgres(?:ql)?://([^@/\s"'\'']+)@[^/\s"'\'']+/}{postgres://${1}\@127.0.0.1:5432/}g;
+    s{mysql://([^@/\s"'\'']+)@[^/\s"'\'']+/}{mysql://${1}\@127.0.0.1:3306/}g;
     s{^(\s*)duration:\s*\d+(?:ms|s|m|h)\b}{${1}duration: 6s};
     s{(\{\s*)duration:\s*\d+(?:ms|s|m|h)(\s*,\s*target:)}{${1}duration: 3s${2}}g;
     s{\bsession_duration:\s*\d+(?:ms|s|m|h)\b}{session_duration: 1s}g;
@@ -67,7 +71,7 @@ run_one() {  # $1 = example file (in RUNDIR), $2.. = extra loadr args
   local base; base="$(basename "$f")"
   repoint < "$f" > "$f.local" && mv "$f.local" "$f"
   local out; out="$("$LOADR" run "$@" "$f" 2>&1)"; local code=$?
-  local reqs; reqs="$(echo "$out" | grep -oE '(http_reqs|plugin_reqs|grpc_reqs|ws_msgs_received)\.+: [0-9]+' | grep -oE '[0-9]+' | head -1)"
+  local reqs; reqs="$(echo "$out" | grep -oE '(http_reqs|plugin_reqs|grpc_reqs|sql_reqs|ws_msgs_received)\.+: [0-9]+' | grep -oE '[0-9]+' | head -1)"
   NAMES+=("$base"); EXITS+=("$code"); NOTE+=("${reqs:-0} reqs")
 }
 

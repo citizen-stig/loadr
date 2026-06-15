@@ -8,6 +8,37 @@ services:
     image: redis:7-alpine
     ports: ["6379:6379"]
 
+  postgres:                     # real PostgreSQL — sql:// (postgres) examples
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: loadr
+      POSTGRES_PASSWORD: loadr
+      POSTGRES_DB: loadr
+    ports: ["5432:5432"]
+    volumes:
+      - ./sql/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U loadr -d loadr"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  mysql:                        # real MySQL — sql:// (mysql) examples
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: loadr
+      MYSQL_DATABASE: loadr
+      MYSQL_USER: loadr
+      MYSQL_PASSWORD: loadr
+    ports: ["3306:3306"]
+    volumes:
+      - ./sql/mysql-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uloadr -ploadr --silent"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
   httpbin:                      # real HTTP service (go-httpbin) — httpbin-style examples
     image: mccutchen/go-httpbin
     ports: ["8080:8080"]

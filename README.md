@@ -9,7 +9,7 @@
 [![Docs](https://img.shields.io/badge/docs-loadr.io-dc2626)](https://loadr.io/docs/)
 [![License](https://img.shields.io/badge/license-Elastic--2.0-07070a)](LICENSE)
 
-*Declarative YAML tests · embedded JavaScript · 6 protocols · WASM & native plugins · distributed agents · live web UI*
+*Declarative YAML tests · embedded JavaScript · HTTP, gRPC, Redis, SQL & more · WASM & native plugins · distributed agents · live web UI*
 
 </div>
 
@@ -61,7 +61,7 @@ $ loadr run test.yaml
 |---|---|---|---|
 | Test format | JavaScript | XML (GUI) | **YAML + JS, JSON-Schema-validated** |
 | Open & closed load models | ✅ | partial | ✅ all 7 k6 executors |
-| Protocols built in | HTTP, WS, gRPC | many | **HTTP/1.1+2, WS, gRPC (+reflection), GraphQL, TCP, UDP** |
+| Protocols built in | HTTP, WS, gRPC | many | **HTTP/1.1+2, WS, SSE, gRPC (+reflection), GraphQL, Redis, SQL (PostgreSQL/MySQL), TCP, UDP** |
 | JMeter-style assertions/extractors/timers | ❌ | ✅ | ✅ JSONPath, XPath, CSS, regex, boundary; constant/uniform/gaussian/throughput timers |
 | Plugins | Go/xk6 rebuild | jars | **WASM (sandboxed) + native, no rebuild** |
 | Distributed | paid cloud | manual | **built-in controller/agents, correct HDR percentile merging** |
@@ -168,7 +168,7 @@ decisions: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 crates/loadr-core        engine: executors, VUs, metrics (HDR), thresholds
 crates/loadr-config      YAML schema, validation, ${...} interpolation
 crates/loadr-js          embedded QuickJS runtime + k6-style stdlib
-crates/loadr-protocols   HTTP/1.1+2, WebSocket, gRPC, GraphQL, TCP, UDP
+crates/loadr-protocols   HTTP/1.1+2, WebSocket, SSE, gRPC, GraphQL, Redis, SQL, TCP, UDP
 crates/loadr-outputs     JSONL, CSV, Prometheus, InfluxDB, OTLP, StatsD
 crates/loadr-plugin-api  WASM (WIT) + native (abi_stable) plugin SDK
 crates/loadr-agent       distributed controller/agent coordination (gRPC)

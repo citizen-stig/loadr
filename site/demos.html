@@ -356,6 +356,29 @@
       <p class="mt-3 text-sm text-smoke">Docs: <a class="font-semibold text-flare hover:underline" href="/docs/webui.html">The management UI</a></p>
     </article>
 
+    <!-- 14 -->
+    <article id="sql" class="scroll-mt-24">
+      <div class="mb-4 flex items-baseline gap-4">
+        <span class="text-3xl font-black text-ember">14</span>
+        <div>
+          <h2 class="text-2xl font-extrabold text-white">Load-test SQL databases <span class="ml-2 align-middle rounded-full border border-ember/40 bg-ember/10 px-2.5 py-0.5 text-xs font-bold text-flare">0:20</span></h2>
+          <p class="mt-1 text-sm text-smoke">Drive PostgreSQL and MySQL directly — the query is the request, against real databases.</p>
+        </div>
+      </div>
+      <div class="overflow-hidden rounded-2xl border border-edge bg-panel">
+        <video controls preload="none" poster="/videos/14-sql-poster.jpg" class="aspect-video w-full bg-ink">
+          <source src="/videos/14-sql.mp4" type="video/mp4">
+        </video>
+      </div>
+      <ul class="mt-4 grid gap-1.5 text-sm text-smoke sm:grid-cols-2">
+        <li class="flex gap-2"><span class="text-ember">▸</span> <code class="text-flare">postgres://</code> and <code class="text-flare">mysql://</code> targets, one query per request</li>
+        <li class="flex gap-2"><span class="text-ember">▸</span> parameterised <code class="text-flare">SELECT</code>/<code class="text-flare">INSERT</code>, bound safely by the driver</li>
+        <li class="flex gap-2"><span class="text-ember">▸</span> per-VU connection pooling via <code class="text-flare">sqlx</code></li>
+        <li class="flex gap-2"><span class="text-ember">▸</span> <code class="text-flare">sql_req_duration</code>, <code class="text-flare">sql_rows</code> metrics + thresholds</li>
+      </ul>
+      <p class="mt-3 text-sm text-smoke">Docs: <a class="font-semibold text-flare hover:underline" href="/docs/protocols/sql.html">SQL (PostgreSQL &amp; MySQL)</a></p>
+    </article>
+
     <div class="rounded-2xl border border-edge bg-panel p-8 text-center">
       <h2 class="text-2xl font-extrabold text-white">Ready to run it yourself?</h2>
       <p class="mx-auto mt-2 max-w-xl text-sm text-smoke">Everything in these demos ships in the binary, and the repo includes 15 runnable examples covering every feature shown here — and the ones we didn't fit in.</p>

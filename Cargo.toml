@@ -80,6 +80,8 @@ prost-types = "0.14"
 prost-reflect = { version = "0.16", features = ["serde"] }
 protox = "0.9"
 
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "mysql", "tls-rustls-ring"] }
+
 rquickjs = { version = "0.12", features = ["loader", "array-buffer", "futures", "macro"] }
 
 wasmtime = { version = "45", default-features = false, features = ["runtime", "component-model", "cranelift", "parallel-compilation"] }

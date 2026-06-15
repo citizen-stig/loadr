@@ -188,6 +188,7 @@ pub struct CompiledRequest {
     pub graphql: Option<loadr_config::GraphqlOptions>,
     pub socket: Option<loadr_config::SocketOptions>,
     pub sse: Option<loadr_config::SseOptions>,
+    pub sql: Option<loadr_config::SqlOptions>,
 }
 
 pub enum CompiledBody {
@@ -486,6 +487,7 @@ fn compile_request(
         graphql: req.graphql.clone(),
         socket: req.socket.clone(),
         sse: req.sse.clone(),
+        sql: req.sql.clone(),
     })
 }
 
@@ -1270,6 +1272,21 @@ impl FlowRunner {
                 self.emit_named(vu, "ws_msgs_received", MetricKind::Counter, received, &tags);
                 m.rate(&b.http_req_failed, response.error.is_some(), &tags);
             }
+            "sql" => {
+                self.emit_named(vu, "sql_reqs", MetricKind::Counter, 1.0, &tags);
+                self.emit_named(
+                    vu,
+                    "sql_req_duration",
+                    MetricKind::Trend,
+                    t.duration_ms,
+                    &tags,
+                );
+                // `rows` carries rows returned (SELECT) or affected (DML).
+                if let Some(rows) = response.extras.get("rows").and_then(|v| v.as_f64()) {
+                    self.emit_named(vu, "sql_rows", MetricKind::Counter, rows, &tags);
+                }
+                m.rate(&b.http_req_failed, response.failed(), &tags);
+            }
             other => {
                 // grpc, tcp, udp, plugin protocols.
                 let family = if matches!(other, "grpc" | "tcp" | "udp") {
@@ -1581,6 +1598,23 @@ impl FlowRunner {
             if !obj.is_empty() {
                 options.plugin = Some(serde_json::Value::Object(obj));
             }
+        }
+
+        // SQL query + params travel through the generic plugin options channel
+        // (the shape the SQL handler's `SqlQuery::from_plugin` expects).
+        if let Some(sql) = &req.sql {
+            let mut obj = serde_json::Map::new();
+            obj.insert(
+                "query".to_string(),
+                serde_json::Value::String(render_str(self, &sql.query, vu, script)?),
+            );
+            let params = sql
+                .params
+                .iter()
+                .map(|p| Ok(serde_json::Value::String(render_str(self, p, vu, script)?)))
+                .collect::<Result<Vec<_>, PrepareError>>()?;
+            obj.insert("params".to_string(), serde_json::Value::Array(params));
+            options.plugin = Some(serde_json::Value::Object(obj));
         }
 
         let name = match &req.name {

@@ -11,6 +11,8 @@
 //! - [`GrpcHandler`] — dynamic gRPC from `.proto` files (compiled in-process)
 //!   or server reflection; all four call shapes.
 //! - [`RedisHandler`] — Redis (RESP) commands over a per-VU pooled connection.
+//! - [`SqlHandler`] — PostgreSQL/MySQL queries via `sqlx` with per-VU pooling
+//!   (`postgres://` / `mysql://`).
 //! - [`TcpHandler`] / [`UdpHandler`] — raw socket round trips.
 //!
 //! Use [`builtin_registry`] to build a [`ProtocolRegistry`] with everything
@@ -22,6 +24,7 @@ mod http;
 mod net;
 mod redis;
 mod socket;
+mod sql;
 mod sse;
 mod tls;
 mod ws;
@@ -33,6 +36,7 @@ pub use grpc::GrpcHandler;
 pub use http::{HttpHandler, DEFAULT_USER_AGENT};
 pub use redis::RedisHandler;
 pub use socket::{TcpHandler, UdpHandler};
+pub use sql::SqlHandler;
 pub use sse::SseHandler;
 pub use ws::WsHandler;
 
@@ -66,6 +70,11 @@ pub fn builtin_registry(
 
     registry.register(Arc::new(RedisHandler::new()));
 
+    // SQL handler answers to `sql`, with `postgres`/`mysql` scheme aliases.
+    registry.register(Arc::new(SqlHandler::new()));
+    registry.register_alias("postgres", "sql");
+    registry.register_alias("mysql", "sql");
+
     registry.register(Arc::new(TcpHandler::new()));
     registry.register(Arc::new(UdpHandler::new()));
 
@@ -90,11 +99,22 @@ mod tests {
             "sses",
             "grpc",
             "redis",
+            "sql",
+            "postgres",
+            "mysql",
             "tcp",
             "udp",
         ] {
             assert!(registry.get(name).is_some(), "missing handler `{name}`");
         }
+        assert_eq!(
+            registry.get("postgres").map(|h| h.name().to_string()),
+            Some("sql".into())
+        );
+        assert_eq!(
+            registry.get("mysql").map(|h| h.name().to_string()),
+            Some("sql".into())
+        );
         assert_eq!(
             registry.get("https").map(|h| h.name().to_string()),
             Some("http".into())

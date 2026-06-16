@@ -20,7 +20,7 @@
     <p class="kicker">Demos &amp; training</p>
     <h1 class="mt-3 text-4xl font-black tracking-tight text-white sm:text-5xl">Watch loadr work.</h1>
     <p class="mx-auto mt-5 max-w-2xl text-lg text-smoke">
-      Twenty-one short sessions, from your first test to flow control, feeders, distributed fleets, SQL load testing, runtime protocol plugins, the time-series report and the live UI. Every clip is a real
+      Twenty-two short sessions, from your first test to flow control, feeders, distributed fleets, SQL load testing, runtime protocol plugins (including one written in Go), the time-series report and the live UI. Every clip is a real
       recording of the actual binary against a live server — what you see is what you get.
       Follow them in order as a getting-started course, or jump to the feature you need.
     </p>
@@ -512,6 +512,28 @@
         <li class="flex gap-2"><span class="text-ember">▸</span> <code class="text-flare">elasticsearch_reqs</code>, <code class="text-flare">elasticsearch_req_duration</code>, <code class="text-flare">elasticsearch_docs</code></li>
       </ul>
       <p class="mt-3 text-sm text-smoke">Docs: <a class="font-semibold text-flare hover:underline" href="/docs/plugins/elasticsearch.html">Elasticsearch plugin</a> · <a class="font-semibold text-flare hover:underline" href="/plugins/elasticsearch/">Plugins</a></p>
+    </article>
+
+    <article id="go-plugin" class="scroll-mt-24">
+      <div class="mb-4 flex items-baseline gap-4">
+        <span class="text-3xl font-black text-ember">22</span>
+        <div>
+          <h2 class="text-2xl font-extrabold text-white">Write a plugin in Go <span class="ml-2 align-middle rounded-full border border-ember/40 bg-ember/10 px-2.5 py-0.5 text-xs font-bold text-flare">0:34</span></h2>
+          <p class="mt-1 text-sm text-smoke">loadr plugins aren't Rust-only. Build a protocol plugin in Go with <code class="text-flare">go build -buildmode=c-shared</code>, install it, and drive it with the real binary — loaded over loadr's frozen C ABI.</p>
+        </div>
+      </div>
+      <div class="overflow-hidden rounded-2xl border border-edge bg-panel">
+        <video controls preload="none" poster="/videos/22-go-plugin-poster.jpg" class="aspect-video w-full bg-ink">
+          <source src="/videos/22-go-plugin.mp4" type="video/mp4">
+        </video>
+      </div>
+      <ul class="mt-4 grid gap-1.5 text-sm text-smoke sm:grid-cols-2">
+        <li class="flex gap-2"><span class="text-ember">▸</span> a Go shared library, <em>not</em> Rust — built with <code class="text-flare">go build -buildmode=c-shared</code></li>
+        <li class="flex gap-2"><span class="text-ember">▸</span> exports four <code class="text-flare">extern "C"</code> symbols over loadr's frozen C ABI</li>
+        <li class="flex gap-2"><span class="text-ember">▸</span> serves the <code class="text-flare">goecho://</code> scheme; the host auto-detects the C ABI at load</li>
+        <li class="flex gap-2"><span class="text-ember">▸</span> <code class="text-flare">goecho_reqs</code> — status 200 + body assertions pass, 0% failed</li>
+      </ul>
+      <p class="mt-3 text-sm text-smoke">Docs: <a class="font-semibold text-flare hover:underline" href="/docs/plugins/c-abi.html">Plugins in other languages (C ABI)</a> · source: <a class="font-semibold text-flare hover:underline" href="/examples/plugins/go-echo/goecho.go">go-echo</a></p>
     </article>
 
     <div class="rounded-2xl border border-edge bg-panel p-8 text-center">

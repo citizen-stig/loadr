@@ -1,5 +1,79 @@
 {
   "plugins": {
+    "elasticsearch": {
+      "description": "Elasticsearch protocol: index/get/search/bulk over the HTTP/JSON REST API",
+      "kind": "protocol",
+      "latest": "1.0.0",
+      "versions": {
+        "1.0.0": {
+          "artifacts": {
+            "aarch64-apple-darwin": {
+              "entry": "libloadr_plugin_elasticsearch.dylib",
+              "sha256": "f4e2b065e89d79bd6d341ccbd0d7149e3bf331f0973543228c856f9fe4288138",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/elasticsearch-aarch64-apple-darwin.tar.gz"
+            },
+            "aarch64-unknown-linux-gnu": {
+              "entry": "libloadr_plugin_elasticsearch.so",
+              "sha256": "85330da56d397b65f0166c4f07a9c40426e9d8b9cc4b30dbd996a79c1859252b",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/elasticsearch-aarch64-unknown-linux-gnu.tar.gz"
+            },
+            "x86_64-apple-darwin": {
+              "entry": "libloadr_plugin_elasticsearch.dylib",
+              "sha256": "ba1a7879f7134e3f75e77f85503529b9975125302896665fbb2a745425f57375",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/elasticsearch-x86_64-apple-darwin.tar.gz"
+            },
+            "x86_64-pc-windows-msvc": {
+              "entry": "loadr_plugin_elasticsearch.dll",
+              "sha256": "e1d30da50c805ad9549cb525888569cdea44978fd912dc4d5880754753783687",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/elasticsearch-x86_64-pc-windows-msvc.tar.gz"
+            },
+            "x86_64-unknown-linux-gnu": {
+              "entry": "libloadr_plugin_elasticsearch.so",
+              "sha256": "31e4508205670bb4681982f528b9392c8c58d19978d27ea7c74d4101e0b6faf7",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/elasticsearch-x86_64-unknown-linux-gnu.tar.gz"
+            }
+          },
+          "min_loadr_abi": "1.0"
+        }
+      }
+    },
+    "kafka": {
+      "description": "Apache Kafka protocol: produce/fetch via the pure-Rust rskafka client",
+      "kind": "protocol",
+      "latest": "1.0.0",
+      "versions": {
+        "1.0.0": {
+          "artifacts": {
+            "aarch64-apple-darwin": {
+              "entry": "libloadr_plugin_kafka.dylib",
+              "sha256": "9682fd859d81ea57484e3d5a6f157361fabd1187d6611992c281db4f38ddd0a0",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/kafka-aarch64-apple-darwin.tar.gz"
+            },
+            "aarch64-unknown-linux-gnu": {
+              "entry": "libloadr_plugin_kafka.so",
+              "sha256": "c2bc641c3b2c949d2cda6b3e8cec02f1d8fe573d993847595076d9c1fe2cc3a1",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/kafka-aarch64-unknown-linux-gnu.tar.gz"
+            },
+            "x86_64-apple-darwin": {
+              "entry": "libloadr_plugin_kafka.dylib",
+              "sha256": "cca0c357636115fbb4b39bd4964a164502a6038e9dffdddce86b2814d79e9f05",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/kafka-x86_64-apple-darwin.tar.gz"
+            },
+            "x86_64-pc-windows-msvc": {
+              "entry": "loadr_plugin_kafka.dll",
+              "sha256": "50b5ec56b4b120a06bcafa8a713c529f63f2e7e40e5351a6d22ffafcfda15af3",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/kafka-x86_64-pc-windows-msvc.tar.gz"
+            },
+            "x86_64-unknown-linux-gnu": {
+              "entry": "libloadr_plugin_kafka.so",
+              "sha256": "4e65a4cadeb51c738ddb704612f8cfe4b175a5d895ffc500d5c7828c5cebd8f7",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/kafka-x86_64-unknown-linux-gnu.tar.gz"
+            }
+          },
+          "min_loadr_abi": "1.0"
+        }
+      }
+    },
     "mongo": {
       "description": "MongoDB protocol: insert/find/update/delete/aggregate/command",
       "kind": "protocol",
@@ -9,28 +83,28 @@
           "artifacts": {
             "aarch64-apple-darwin": {
               "entry": "libloadr_plugin_mongo.dylib",
-              "sha256": "3622121459484df220d5a56ebcad1c6928f4c60690314c0e7fbcb067e7e9819f",
-              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.1.0/mongo-aarch64-apple-darwin.tar.gz"
+              "sha256": "a7be32149af1a11c1a6d93f52e4dd30bfa8f4ce0f9ba4943b990e1930ec5acd2",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/mongo-aarch64-apple-darwin.tar.gz"
             },
             "aarch64-unknown-linux-gnu": {
               "entry": "libloadr_plugin_mongo.so",
-              "sha256": "65fad2771ec4920763a451384d5f3d1ed4c9db831821f17cac2a8c98f52f9daf",
-              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.1.0/mongo-aarch64-unknown-linux-gnu.tar.gz"
+              "sha256": "828b70b6e9bc5313fa546a39723589ede88fd8b8525ac0398b95a5f2ca5047c7",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/mongo-aarch64-unknown-linux-gnu.tar.gz"
             },
             "x86_64-apple-darwin": {
               "entry": "libloadr_plugin_mongo.dylib",
-              "sha256": "c1a2bb00376b7de0760917b039ae8d8a6a629a735d138e97258c92c6bca84c9d",
-              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.1.0/mongo-x86_64-apple-darwin.tar.gz"
+              "sha256": "a2e396ec37c0129f4a97f494b85f0ed679b7825b06d2b8bf0659b854bda9649b",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/mongo-x86_64-apple-darwin.tar.gz"
             },
             "x86_64-pc-windows-msvc": {
               "entry": "loadr_plugin_mongo.dll",
-              "sha256": "8d412b8f2a0ed0097f26b626cb1d8ea0343266d7bea5cd3a48407b0d1514e10e",
-              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.1.0/mongo-x86_64-pc-windows-msvc.tar.gz"
+              "sha256": "18c57cf0dc5ab0a13a6cc1fa9b628978478f6b5be0a5daeb4f863379ef290d90",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/mongo-x86_64-pc-windows-msvc.tar.gz"
             },
             "x86_64-unknown-linux-gnu": {
               "entry": "libloadr_plugin_mongo.so",
-              "sha256": "d034dbd1104b36a7c41c0dbdc68322c7af47ba6cf63199261f8484b164751f8f",
-              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.1.0/mongo-x86_64-unknown-linux-gnu.tar.gz"
+              "sha256": "fdebd83bd773082eec9956bb1c2193fee08b0cf72132bde2d742ffb4ed116176",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/mongo-x86_64-unknown-linux-gnu.tar.gz"
             }
           },
           "min_loadr_abi": "1.0"
@@ -46,28 +120,28 @@
           "artifacts": {
             "aarch64-apple-darwin": {
               "entry": "libloadr_plugin_mysql.dylib",
-              "sha256": "3be6e54c1aa9da41ab52ea3e14902706eb7da53d053b17517ff16beebeb825bc",
-              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.1.0/mysql-aarch64-apple-darwin.tar.gz"
+              "sha256": "bf21da55834b164f9f4b2f18d8b96eefd8466340a49bd554ad1451e33ceef898",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/mysql-aarch64-apple-darwin.tar.gz"
             },
             "aarch64-unknown-linux-gnu": {
               "entry": "libloadr_plugin_mysql.so",
-              "sha256": "e7a465a738714363742e6c9a146dc8153df968c0eac2b6c1429a434cdd9d8226",
-              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.1.0/mysql-aarch64-unknown-linux-gnu.tar.gz"
+              "sha256": "e842cb613fa2281368661d444d991c24c9ea26f58fcd96e4e27cd798608188ac",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/mysql-aarch64-unknown-linux-gnu.tar.gz"
             },
             "x86_64-apple-darwin": {
               "entry": "libloadr_plugin_mysql.dylib",
-              "sha256": "318a9710652e7467f120367badd34def9fdbbb316fce9705e8b080b424c38d09",
-              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.1.0/mysql-x86_64-apple-darwin.tar.gz"
+              "sha256": "f8f4ccdf67c66fcdf125be41c7c2933cc7e56fd113bd3a678322cd24bb167372",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/mysql-x86_64-apple-darwin.tar.gz"
             },
             "x86_64-pc-windows-msvc": {
               "entry": "loadr_plugin_mysql.dll",
-              "sha256": "8d0d9e7bafea74e13183dafb09ad3e4cb931d52ac134146d17eac47358472051",
-              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.1.0/mysql-x86_64-pc-windows-msvc.tar.gz"
+              "sha256": "875e7210dab1d59d184ab61c3d1cccdfb2e8a57fc97e4016815aac7e8c3e7877",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/mysql-x86_64-pc-windows-msvc.tar.gz"
             },
             "x86_64-unknown-linux-gnu": {
               "entry": "libloadr_plugin_mysql.so",
-              "sha256": "1215772982d134758527fb75945620f6a8ceb705c4a12d42234e9219c67dd19c",
-              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.1.0/mysql-x86_64-unknown-linux-gnu.tar.gz"
+              "sha256": "ab54cb99a5d73225760c793cfd3f5effc6353db9dc4069e972a683922d409c6a",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/mysql-x86_64-unknown-linux-gnu.tar.gz"
             }
           },
           "min_loadr_abi": "1.0"
@@ -83,28 +157,102 @@
           "artifacts": {
             "aarch64-apple-darwin": {
               "entry": "libloadr_plugin_postgres.dylib",
-              "sha256": "c1cbb685a8106bd9c4a6376dd74bb289451b5c24f7ac6b8fdaf7ff64fd82c994",
-              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.1.0/postgres-aarch64-apple-darwin.tar.gz"
+              "sha256": "4fe65bf8f733d428969dc6ae18815d79be0e55dfb751f439d76693ec803a8a56",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/postgres-aarch64-apple-darwin.tar.gz"
             },
             "aarch64-unknown-linux-gnu": {
               "entry": "libloadr_plugin_postgres.so",
-              "sha256": "732b205aa8ba5eaf16f557538671865fc1766a08843f10fdfff56e5d07744584",
-              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.1.0/postgres-aarch64-unknown-linux-gnu.tar.gz"
+              "sha256": "27c930dcb3a7d24729438fae57cdb5913fb11e4ebc08e76e96b445d34e886018",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/postgres-aarch64-unknown-linux-gnu.tar.gz"
             },
             "x86_64-apple-darwin": {
               "entry": "libloadr_plugin_postgres.dylib",
-              "sha256": "413bbb0084a04fc2515581cfa42145ce3a176d6f7b56ca8d0b35107c9796ece3",
-              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.1.0/postgres-x86_64-apple-darwin.tar.gz"
+              "sha256": "6b9d04601761b84e6fd510145793efd2c9683b2ac123381c31d1be6be9761d2a",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/postgres-x86_64-apple-darwin.tar.gz"
             },
             "x86_64-pc-windows-msvc": {
               "entry": "loadr_plugin_postgres.dll",
-              "sha256": "9855106a5183c3e3802f1cd5ea5dec0fb4437e0147e08e8f4f29d6802e0d93a8",
-              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.1.0/postgres-x86_64-pc-windows-msvc.tar.gz"
+              "sha256": "5c5c44ccbbcab5ce3f27ecb6e9cd0e7c107683d13d2b9d4c0b7d6f9f9f39e401",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/postgres-x86_64-pc-windows-msvc.tar.gz"
             },
             "x86_64-unknown-linux-gnu": {
               "entry": "libloadr_plugin_postgres.so",
-              "sha256": "934a9c50e86ab3c665e309a7e815ad1b0ba8bb383d938adbd89cab6e387d1256",
-              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.1.0/postgres-x86_64-unknown-linux-gnu.tar.gz"
+              "sha256": "e6936c754a4cf237896edffabee46b12ca474ddafb7813fdae4da81cb2a30a4f",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/postgres-x86_64-unknown-linux-gnu.tar.gz"
+            }
+          },
+          "min_loadr_abi": "1.0"
+        }
+      }
+    },
+    "rabbitmq": {
+      "description": "RabbitMQ (AMQP 0.9.1) protocol: publish/get messages",
+      "kind": "protocol",
+      "latest": "1.0.0",
+      "versions": {
+        "1.0.0": {
+          "artifacts": {
+            "aarch64-apple-darwin": {
+              "entry": "libloadr_plugin_rabbitmq.dylib",
+              "sha256": "3750d76f9ba39f5495cb2b263dea7fdceb042d743a962345be5c39c9ce09abe9",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/rabbitmq-aarch64-apple-darwin.tar.gz"
+            },
+            "aarch64-unknown-linux-gnu": {
+              "entry": "libloadr_plugin_rabbitmq.so",
+              "sha256": "a3bb9cf5750cd2979c14290b560aa6fe7f295951d6f30d485a84b9e7fc75c3aa",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/rabbitmq-aarch64-unknown-linux-gnu.tar.gz"
+            },
+            "x86_64-apple-darwin": {
+              "entry": "libloadr_plugin_rabbitmq.dylib",
+              "sha256": "aac4ea3f67b15e458a400e9ae5fb65161cfd9ad21da18da52fa99bf746371c76",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/rabbitmq-x86_64-apple-darwin.tar.gz"
+            },
+            "x86_64-pc-windows-msvc": {
+              "entry": "loadr_plugin_rabbitmq.dll",
+              "sha256": "cd53b4bd3676b4387bb0b251089fe152d73e5b664d6e527c0bf04f20a0dfc41d",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/rabbitmq-x86_64-pc-windows-msvc.tar.gz"
+            },
+            "x86_64-unknown-linux-gnu": {
+              "entry": "libloadr_plugin_rabbitmq.so",
+              "sha256": "0982e6d0814e6d5ec4730876191e3b3c807a01ec06ca2927784d19558fb22091",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/rabbitmq-x86_64-unknown-linux-gnu.tar.gz"
+            }
+          },
+          "min_loadr_abi": "1.0"
+        }
+      }
+    },
+    "redis": {
+      "description": "Redis (RESP) protocol: commands over an internal per-URI connection pool",
+      "kind": "protocol",
+      "latest": "1.0.0",
+      "versions": {
+        "1.0.0": {
+          "artifacts": {
+            "aarch64-apple-darwin": {
+              "entry": "libloadr_plugin_redis.dylib",
+              "sha256": "bd1b297b785973984f287249d0981d9db94d37572f22acbb1391bd27691d084e",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/redis-aarch64-apple-darwin.tar.gz"
+            },
+            "aarch64-unknown-linux-gnu": {
+              "entry": "libloadr_plugin_redis.so",
+              "sha256": "3652f11f8685c1778a2fd9799d189503603c0b6548bd4476cc8e9bb112679b36",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/redis-aarch64-unknown-linux-gnu.tar.gz"
+            },
+            "x86_64-apple-darwin": {
+              "entry": "libloadr_plugin_redis.dylib",
+              "sha256": "5ce28f940838c54a854d193da55149639383ce33e6c5ddb09979c9c01e72e051",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/redis-x86_64-apple-darwin.tar.gz"
+            },
+            "x86_64-pc-windows-msvc": {
+              "entry": "loadr_plugin_redis.dll",
+              "sha256": "e0a05772f4ad56a9830e085c7b46ef2782fbabd143d788b7679af168bdc059a9",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/redis-x86_64-pc-windows-msvc.tar.gz"
+            },
+            "x86_64-unknown-linux-gnu": {
+              "entry": "libloadr_plugin_redis.so",
+              "sha256": "ac733ed2773b3a9bdc52cbe4033f0cad319701f697edfa76a9b8fc9ecaacadad",
+              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.2.0/redis-x86_64-unknown-linux-gnu.tar.gz"
             }
           },
           "min_loadr_abi": "1.0"

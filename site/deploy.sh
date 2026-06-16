@@ -9,6 +9,9 @@ BUCKET="loadr.io"
 DISTRIBUTION_ID="${DISTRIBUTION_ID:-E1O86EYW71WS3}"
 AWS_PROFILE="${AWS_PROFILE:-personal}"
 
+echo "==> generating plugin pages"
+python3 "$ROOT/site/build-plugins.py"
+
 echo "==> building CSS"
 (cd "$ROOT/site" && npx @tailwindcss/cli -i src/input.css -o assets/site.css --minify)
 
@@ -24,7 +27,7 @@ cp "$ROOT/site/demos.html" "$DIST/demos/index.html"
 mkdir -p "$DIST/download"
 cp "$ROOT/site/downloads.html" "$DIST/download/index.html"
 mkdir -p "$DIST/plugins"
-cp "$ROOT/site/plugins.html" "$DIST/plugins/index.html"
+cp -r "$ROOT/site/plugins/." "$DIST/plugins/"
 cp "$ROOT/site/assets/site.css" "$ROOT/site/assets/site.js" "$ROOT/site/assets/consent.js" "$ROOT/site/assets/favicon.svg" "$DIST/assets/"
 cp -r "$ROOT/docs/book/." "$DIST/docs/"
 

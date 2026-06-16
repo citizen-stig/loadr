@@ -54,8 +54,6 @@ const KNOWN_PROTOCOLS: &[&str] = &[
     "graphql",
     "sse",
     "sses",
-    "redis",
-    "rediss",
     "browser",
     "tcp",
     "udp",

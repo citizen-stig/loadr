@@ -37,7 +37,6 @@
 - [Server-Sent Events](protocols/sse.md)
 - [gRPC](protocols/grpc.md)
 - [GraphQL](protocols/graphql.md)
-- [Redis](protocols/redis.md)
 - [Browser](protocols/browser.md)
 - [TCP & UDP](protocols/sockets.md)
 
@@ -60,6 +59,7 @@
 - [MongoDB plugin](plugins/mongo.md)
 - [PostgreSQL plugin](plugins/postgres.md)
 - [MySQL plugin](plugins/mysql.md)
+- [Redis plugin](plugins/redis.md)
 - [Developing a plugin](plugins/developing.md)
 - [Publishing a plugin](plugins/publishing.md)
 

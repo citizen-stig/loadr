@@ -259,7 +259,6 @@ impl ProtocolRegistry {
             "ws" | "wss" => "ws".to_string(),
             "grpc" | "grpcs" => "grpc".to_string(),
             "sse" | "sses" => "sse".to_string(),
-            "redis" | "rediss" => "redis".to_string(),
             "tcp" => "tcp".to_string(),
             "udp" => "udp".to_string(),
             other => plugin_scheme(other).unwrap_or_else(|| "http".to_string()),
@@ -287,8 +286,9 @@ mod tests {
         assert_eq!(ProtocolRegistry::infer(None, "tcp://x:9"), "tcp");
         assert_eq!(ProtocolRegistry::infer(None, "sse://x/"), "sse");
         assert_eq!(ProtocolRegistry::infer(None, "sses://x/"), "sse");
-        assert_eq!(ProtocolRegistry::infer(None, "redis://x:6379"), "redis");
-        assert_eq!(ProtocolRegistry::infer(None, "rediss://x:6379"), "redis");
+        // Redis is a plugin now: its scheme falls back to http until the plugin
+        // claims `redis`/`rediss` via register_plugin_schemes.
+        assert_eq!(ProtocolRegistry::infer(None, "redis://x:6379"), "http");
         assert_eq!(ProtocolRegistry::infer(None, "/relative"), "http");
         assert_eq!(
             ProtocolRegistry::infer(Some("graphql"), "https://x/"),

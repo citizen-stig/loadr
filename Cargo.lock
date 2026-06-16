@@ -2627,6 +2627,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "loadr-plugin-redis"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "loadr-plugin-api",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "loadr-plugin-webui"
 version = "1.0.0"
 dependencies = [

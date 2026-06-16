@@ -1278,16 +1278,17 @@ impl FlowRunner {
             }
             other => {
                 // grpc/tcp/udp built-ins keep their own family name. The
-                // `sse`/`redis`/`browser` built-ins historically share the
-                // generic `plugin` family — preserve that so existing dashboards
-                // and thresholds keep working. Everything else is a loaded
-                // protocol *plugin*, which gets a family derived from its own
-                // protocol name (so the `mongo` plugin emits `mongo_reqs` /
-                // `mongo_req_duration` / `mongo_docs`, and the `postgres` /
-                // `mysql` plugins emit `postgres_reqs` / `mysql_reqs` etc.).
+                // `sse`/`browser` built-ins historically share the generic
+                // `plugin` family — preserve that so existing dashboards and
+                // thresholds keep working. Everything else is a loaded protocol
+                // *plugin*, which gets a family derived from its own protocol
+                // name (so the `mongo` plugin emits `mongo_reqs` /
+                // `mongo_req_duration` / `mongo_docs`, the `postgres` / `mysql`
+                // plugins emit `postgres_reqs` / `mysql_reqs`, and the `redis`
+                // plugin emits `redis_reqs` / `redis_req_duration`).
                 let family = match other {
                     "grpc" | "tcp" | "udp" => other.to_string(),
-                    "sse" | "redis" | "browser" => "plugin".to_string(),
+                    "sse" | "browser" => "plugin".to_string(),
                     name => metric_family(name),
                 };
                 self.emit_named(

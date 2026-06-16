@@ -13,13 +13,15 @@
 //! - [`SseTestServer`] — Server-Sent Events streaming server (`/events`).
 //! - [`GrpcEchoServer`] — tonic gRPC echo service (unary, server-stream,
 //!   client-stream, bidi) with v1 server reflection.
-//! - [`RedisTestServer`] — minimal RESP server (PING/SET/GET/SELECT).
 //! - [`TcpEchoServer`] / [`UdpEchoServer`] — raw byte echo.
+//!
+//! Redis moved to the `loadr-plugin-redis` crate, whose integration tests run
+//! against a real Redis (`LOADR_TEST_REDIS_URL`), so no in-process RESP server
+//! is kept here.
 
 mod error;
 mod grpc;
 mod http_server;
-mod redis;
 mod sse;
 mod tcp;
 mod udp;
@@ -28,7 +30,6 @@ mod ws;
 pub use error::TestServerError;
 pub use grpc::{pb, GrpcEchoServer, FILE_DESCRIPTOR_SET};
 pub use http_server::HttpTestServer;
-pub use redis::RedisTestServer;
 pub use sse::SseTestServer;
 pub use tcp::TcpEchoServer;
 pub use udp::UdpEchoServer;

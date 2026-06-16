@@ -16,7 +16,7 @@ real protocol stacks otherwise:
 
 | Service | Image / build | Protocols | Used by |
 |---------|---------------|-----------|---------|
-| `redis`   | `redis:7-alpine` (real Redis) | RESP | 19-redis |
+| `redis`   | `redis:7-alpine` (real Redis) | RESP | 30-redis (via loadr-plugin-redis) |
 | `httpbin` | `mccutchen/go-httpbin` (real HTTP) | HTTP/1.1+2 | most HTTP examples |
 | `greeter` | `./greeter` — real `grpcio` + reflection | gRPC | 10-grpc |
 | `echo`    | `./echo` — real `websockets` + asyncio sockets + HTTP SSE | WS / SSE / TCP / UDP | 09, 12, 18 |

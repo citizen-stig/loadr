@@ -15,6 +15,7 @@ members = [
     "plugins/loadr-plugin-mongo",
     "plugins/loadr-plugin-postgres",
     "plugins/loadr-plugin-mysql",
+    "plugins/loadr-plugin-redis",
     "plugins/examples/native-output",
     "plugins/examples/native-protocol",
     "testsupport/loadr-testserver",

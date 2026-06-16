@@ -10,14 +10,13 @@
 //! - [`SseHandler`] — Server-Sent Events streams (`sse://`/`sses://`).
 //! - [`GrpcHandler`] — dynamic gRPC from `.proto` files (compiled in-process)
 //!   or server reflection; all four call shapes.
-//! - [`RedisHandler`] — Redis (RESP) commands over a per-VU pooled connection.
 //! - [`TcpHandler`] / [`UdpHandler`] — raw socket round trips.
 //!
-//! PostgreSQL/MySQL are no longer built in: each is its own runtime-loadable
-//! native protocol plugin (`loadr plugin install postgres` /
-//! `loadr plugin install mysql`) so the heavy `sqlx` driver stays out of the
+//! Redis, PostgreSQL and MySQL are no longer built in: each is its own
+//! runtime-loadable native protocol plugin (`loadr plugin install redis` /
+//! `postgres` / `mysql`) so heavy or transport-specific drivers stay out of the
 //! core binary. The MySQL plugin alone carries `sqlx-mysql`'s transitive `rsa`
-//! dependency; the PostgreSQL plugin is advisory-clean.
+//! dependency; the PostgreSQL and Redis plugins are advisory-clean.
 //!
 //! Use [`builtin_registry`] to build a [`ProtocolRegistry`] with everything
 //! registered under its YAML name plus scheme aliases.
@@ -26,7 +25,6 @@ mod graphql;
 mod grpc;
 mod http;
 mod net;
-mod redis;
 mod socket;
 mod sse;
 mod tls;
@@ -37,7 +35,6 @@ use std::sync::Arc;
 pub use graphql::GraphqlHandler;
 pub use grpc::GrpcHandler;
 pub use http::{HttpHandler, DEFAULT_USER_AGENT};
-pub use redis::RedisHandler;
 pub use socket::{TcpHandler, UdpHandler};
 pub use sse::SseHandler;
 pub use ws::WsHandler;
@@ -47,9 +44,9 @@ use loadr_core::{ProtocolError, ProtocolRegistry};
 /// Build the registry of built-in protocol handlers.
 ///
 /// Registers `http` (alias `https`), `graphql` (sharing the HTTP handler's
-/// transport), `ws` (alias `websocket`), `sse` (alias `sses`), `grpc`,
-/// `redis`, `tcp` and `udp`. TLS client configuration is built once, here,
-/// from `http_defaults.tls`; `base_dir` resolves relative TLS/proto file paths.
+/// transport), `ws` (alias `websocket`), `sse` (alias `sses`), `grpc`, `tcp`
+/// and `udp`. TLS client configuration is built once, here, from
+/// `http_defaults.tls`; `base_dir` resolves relative TLS/proto file paths.
 pub fn builtin_registry(
     http_defaults: &loadr_config::HttpDefaults,
     base_dir: &std::path::Path,
@@ -69,8 +66,6 @@ pub fn builtin_registry(
     registry.register_alias("sses", "sse");
 
     registry.register(Arc::new(GrpcHandler::new(http_defaults, base_dir)?));
-
-    registry.register(Arc::new(RedisHandler::new()));
 
     registry.register(Arc::new(TcpHandler::new()));
     registry.register(Arc::new(UdpHandler::new()));
@@ -95,7 +90,6 @@ mod tests {
             "sse",
             "sses",
             "grpc",
-            "redis",
             "tcp",
             "udp",
         ] {

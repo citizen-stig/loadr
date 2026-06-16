@@ -20,7 +20,13 @@ rebuilding the binary and without a JVM.
 - **Native libraries** ([`abi_stable`](native.md)) — for protocols, outputs
   and services where raw performance or arbitrary system access matters.
   Layout-checked at load time: an ABI-incompatible plugin fails loudly with a
-  useful error, not undefined behaviour.
+  useful error, not undefined behaviour. Native plugins are normally written
+  in Rust.
+
+Native plugins do **not** have to be Rust. A small, frozen
+[plain C ABI](c-abi.md) lets you write a `protocol` plugin in C, Go, Zig, or
+any language that emits a C shared library — loadr auto-detects which ABI a
+library exports at load time, so both kinds coexist transparently.
 
 ## Installing & using
 

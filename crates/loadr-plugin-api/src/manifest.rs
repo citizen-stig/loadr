@@ -71,6 +71,21 @@ pub enum PluginType {
     Native,
 }
 
+/// The ABI a `type = "native"` dynamic library exposes.
+///
+/// Optional in `plugin.toml` (`abi = "native"` | `abi = "c"`); when absent the
+/// loader auto-detects by probing for the C-ABI entry symbol, so this is only
+/// a hint/override. Ignored for `type = "wasm"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginAbi {
+    /// The `abi_stable` Rust-to-Rust ABI ([`crate::native`]). The default.
+    #[default]
+    Native,
+    /// The plain C ABI ([`crate::cabi`]) for non-Rust plugins.
+    C,
+}
+
 #[derive(Debug, Deserialize)]
 struct ManifestFile {
     plugin: ManifestPlugin,
@@ -86,6 +101,10 @@ struct ManifestPlugin {
     #[serde(rename = "type")]
     plugin_type: PluginType,
     entry: String,
+    /// Optional ABI hint for `type = "native"` libraries (`native` | `c`).
+    /// When omitted the loader auto-detects.
+    #[serde(default)]
+    abi: Option<PluginAbi>,
     #[serde(default)]
     description: String,
     /// URL scheme(s) this protocol plugin serves (e.g. `["mongodb", "mongo"]`).
@@ -102,6 +121,8 @@ pub struct PluginManifest {
     pub version: String,
     pub kind: PluginKind,
     pub plugin_type: PluginType,
+    /// Optional ABI hint for native libraries. `None` means "auto-detect".
+    pub abi: Option<PluginAbi>,
     /// Absolute path to the plugin artifact.
     pub entry: PathBuf,
     pub description: String,
@@ -137,6 +158,7 @@ impl PluginManifest {
             version: p.version,
             kind: p.kind,
             plugin_type: p.plugin_type,
+            abi: p.abi,
             entry: dir.join(&p.entry),
             description: p.description,
             schemes: p.schemes,
@@ -237,6 +259,67 @@ schemes = ["mongodb", "mongo"]
     fn schemes_default_empty() {
         let m = PluginManifest::parse(MANIFEST, Path::new("/p/x")).expect("parses");
         assert!(m.schemes.is_empty());
+    }
+
+    #[test]
+    fn abi_defaults_to_none_when_absent() {
+        // Backward compatibility: existing manifests have no `abi` key.
+        let m = PluginManifest::parse(MANIFEST, Path::new("/p/x")).expect("parses");
+        assert_eq!(m.abi, None, "absent abi key means auto-detect");
+    }
+
+    #[test]
+    fn parses_explicit_c_abi() {
+        let m = PluginManifest::parse(
+            r#"
+[plugin]
+name = "cecho"
+version = "0.1.0"
+kind = "protocol"
+type = "native"
+abi = "c"
+entry = "libcecho.so"
+"#,
+            Path::new("/p/cecho"),
+        )
+        .expect("manifest parses");
+        assert_eq!(m.abi, Some(PluginAbi::C));
+    }
+
+    #[test]
+    fn parses_explicit_native_abi() {
+        let m = PluginManifest::parse(
+            r#"
+[plugin]
+name = "x"
+version = "0.1.0"
+kind = "protocol"
+type = "native"
+abi = "native"
+entry = "libx.so"
+"#,
+            Path::new("/p/x"),
+        )
+        .expect("manifest parses");
+        assert_eq!(m.abi, Some(PluginAbi::Native));
+    }
+
+    #[test]
+    fn rejects_bad_abi() {
+        let err = PluginManifest::parse(
+            r#"
+[plugin]
+name = "x"
+version = "0.1.0"
+kind = "protocol"
+type = "native"
+abi = "wasm32"
+entry = "libx.so"
+"#,
+            Path::new("/p/x"),
+        )
+        .expect_err("invalid abi");
+        assert!(matches!(err, PluginError::Manifest { .. }), "{err}");
     }
 
     #[test]

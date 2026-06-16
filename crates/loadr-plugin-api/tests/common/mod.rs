@@ -70,6 +70,43 @@ pub fn dylib_name(stem: &str) -> String {
     }
 }
 
+/// Build the C-ABI `c-echo` example plugin with the system C compiler from its
+/// committed `examples/plugins/c-echo/cecho.c` source. To stay safe under
+/// `cargo test`'s parallelism (multiple tests build it at once), each call
+/// compiles into a unique file under the target dir rather than in-place.
+/// Returns the artifact path. Mirrors how a plugin author would run `make`.
+pub fn build_c_echo_example() -> PathBuf {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static N: AtomicU32 = AtomicU32::new(0);
+
+    let src = workspace_root().join("examples/plugins/c-echo/cecho.c");
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| workspace_root().join("target"));
+    let out_dir = target.join("c-echo-test");
+    std::fs::create_dir_all(&out_dir).expect("mkdir c-echo-test");
+
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    // Distinct name + pid so parallel test binaries never clobber one another.
+    let lib = out_dir.join(dylib_name(&format!(
+        "loadr_plugin_cecho_{}_{}",
+        std::process::id(),
+        n
+    )));
+    let cc = std::env::var_os("CC").unwrap_or_else(|| "cc".into());
+    let mut cmd = Command::new(&cc);
+    cmd.args(["-O2", "-fPIC", "-shared", "-o"])
+        .arg(&lib)
+        .arg(&src);
+    run_build(cmd, "c-echo");
+    assert!(
+        lib.is_file(),
+        "missing c-echo artifact at {}",
+        lib.display()
+    );
+    lib
+}
+
 /// Build a native example plugin (workspace member) and return the path to its
 /// dynamic-library artifact. `lib_stem` is the crate's `[lib] name`; the file
 /// extension is resolved per platform.

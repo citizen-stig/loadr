@@ -85,6 +85,25 @@ build_install_plugin loadr-plugin-mysql         loadr_plugin_mysql         loadr
 build_install_plugin loadr-plugin-elasticsearch loadr_plugin_elasticsearch loadr-plugin-elasticsearch 33-elasticsearch.yaml
 build_install_plugin loadr-plugin-rabbitmq loadr_plugin_rabbitmq loadr-plugin-rabbitmq 32-rabbitmq.yaml
 
+# The C-ABI example plugin (`c-echo`) is built with the system C compiler, not
+# cargo — it proves a non-Rust protocol plugin loads over the frozen C ABI.
+build_install_c_echo() {
+  echo "==> building + installing the c-echo (C-ABI) plugin"
+  local src="$ROOT/examples/plugins/c-echo"
+  if make -C "$src" >/tmp/h-c-echo-build.log 2>&1; then
+    local stage="$RUNDIR/c-echo-stage"; mkdir -p "$stage"
+    cp "$src/plugin.toml" "$stage/"
+    for art in libloadr_plugin_cecho.so libloadr_plugin_cecho.dylib loadr_plugin_cecho.dll; do
+      [ -f "$src/$art" ] && cp "$src/$art" "$stage/"
+    done
+    "$LOADR" plugin install "$stage" --plugins-dir "$LOADR_PLUGINS_DIR" >/dev/null 2>&1 \
+      || echo "    c-echo plugin install failed; 34-c-echo.yaml will ERR"
+  else
+    echo "    c-echo plugin build failed (see /tmp/h-c-echo-build.log); 34-c-echo.yaml will ERR"
+  fi
+}
+build_install_c_echo
+
 # Stage the examples + their data/scripts/protos so relative paths resolve.
 cp -r "$ROOT/examples/." "$RUNDIR/"
 

@@ -56,6 +56,7 @@
 - [Installing plugins](plugins/installing.md)
 - [WASM plugins](plugins/wasm.md)
 - [Native plugins](plugins/native.md)
+- [Writing a plugin in another language (C ABI)](plugins/c-abi.md)
 - [MongoDB plugin](plugins/mongo.md)
 - [PostgreSQL plugin](plugins/postgres.md)
 - [MySQL plugin](plugins/mysql.md)

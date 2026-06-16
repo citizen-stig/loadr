@@ -21,8 +21,9 @@ use std::sync::Arc;
 
 use loadr_core::ProtocolHandler;
 
+use crate::cabi::{is_c_abi_plugin, CAbiPlugin};
 use crate::error::PluginError;
-use crate::manifest::{PluginKind, PluginManifest, PluginType};
+use crate::manifest::{PluginAbi, PluginKind, PluginManifest, PluginType};
 use crate::native::NativePlugin;
 use crate::traits::{PluginAssertion, PluginExtractor, ServicePlugin};
 use crate::wasm::{WasmAssertion, WasmExtractor};
@@ -33,6 +34,52 @@ use crate::wasm::{WasmAssertion, WasmExtractor};
 fn register_protocol_schemes(protocol: &str, schemes: &[String]) {
     if !schemes.is_empty() {
         loadr_core::protocol::register_plugin_schemes(protocol, schemes);
+    }
+}
+
+/// Decide whether a `type = "native"` artifact should be loaded via the plain
+/// C ABI ([`CAbiPlugin`]) or the `abi_stable` ABI ([`NativePlugin`]).
+///
+/// An explicit `abi` hint in the manifest wins; otherwise we probe the library
+/// for the C-ABI entry symbol and fall back to abi_stable. This keeps existing
+/// plugins (no `abi` key) loading exactly as before.
+fn use_c_abi(abi: Option<PluginAbi>, path: &Path) -> bool {
+    match abi {
+        Some(PluginAbi::C) => true,
+        Some(PluginAbi::Native) => false,
+        None => is_c_abi_plugin(path),
+    }
+}
+
+/// Load a native protocol plugin (C-ABI or abi_stable), register its schemes,
+/// and return it as an engine `ProtocolHandler`. `schemes_override` wins over
+/// the plugin's own `info().schemes` when non-empty.
+fn load_native_protocol(
+    path: &Path,
+    abi: Option<PluginAbi>,
+    schemes_override: &[String],
+    config: serde_json::Value,
+) -> Result<Arc<dyn ProtocolHandler>, PluginError> {
+    if use_c_abi(abi, path) {
+        let plugin = CAbiPlugin::load(path)?;
+        let schemes = if schemes_override.is_empty() {
+            plugin.info().schemes.clone()
+        } else {
+            schemes_override.to_vec()
+        };
+        let handler = plugin.make_protocol(config)?;
+        register_protocol_schemes(ProtocolHandler::name(&handler), &schemes);
+        Ok(Arc::new(handler))
+    } else {
+        let plugin = NativePlugin::load(path)?;
+        let schemes = if schemes_override.is_empty() {
+            plugin.info().schemes.clone()
+        } else {
+            schemes_override.to_vec()
+        };
+        let handler = plugin.make_protocol(config)?;
+        register_protocol_schemes(handler.name(), &schemes);
+        Ok(Arc::new(handler))
     }
 }
 
@@ -132,23 +179,21 @@ impl PluginRegistry {
                  use a native plugin for `{}`",
                 manifest.name
             ))),
+            // Protocol plugins may use either the abi_stable or the plain C
+            // ABI; the helper picks based on the manifest `abi` hint or symbol
+            // probing. Output/service remain abi_stable-only.
+            (PluginType::Native, PluginKind::Protocol) => {
+                // Manifest `[plugin].schemes` win; the helper falls back to the
+                // plugin's own `info().schemes` when none are declared.
+                let handler =
+                    load_native_protocol(&manifest.entry, manifest.abi, &manifest.schemes, config)?;
+                Ok(LoadedPlugin::Protocol(handler))
+            }
             (PluginType::Native, kind) => {
                 let plugin = NativePlugin::load(&manifest.entry)?;
                 match kind {
                     PluginKind::Output => {
                         Ok(LoadedPlugin::Output(Box::new(plugin.make_output(config)?)))
-                    }
-                    PluginKind::Protocol => {
-                        // Manifest `[plugin].schemes` win; fall back to the
-                        // plugin's own `info().schemes` when none are declared.
-                        let schemes = if manifest.schemes.is_empty() {
-                            plugin.info().schemes.clone()
-                        } else {
-                            manifest.schemes.clone()
-                        };
-                        let handler = plugin.make_protocol(config)?;
-                        register_protocol_schemes(handler.name(), &schemes);
-                        Ok(LoadedPlugin::Protocol(Arc::new(handler)))
                     }
                     PluginKind::Service => {
                         Ok(LoadedPlugin::Service(Box::new(plugin.make_service()?)))
@@ -219,6 +264,25 @@ impl PluginRegistry {
                 ))),
                 _ => Err(PluginError::Other(format!(
                     "wasm plugin `{}` reports unsupported kind `{kind}`",
+                    plugin_ref.name
+                ))),
+            }
+        } else if is_c_abi_plugin(path) {
+            // C-ABI plugin loaded directly by path (no manifest): the C ABI
+            // only supports protocol plugins, so we route accordingly.
+            let plugin = CAbiPlugin::load(path)?;
+            let kind = plugin.info().kind.clone();
+            let config = plugin_ref.config.clone();
+            match PluginKind::parse(&kind) {
+                Some(PluginKind::Protocol) => {
+                    let schemes = plugin.info().schemes.clone();
+                    let handler = plugin.make_protocol(config)?;
+                    register_protocol_schemes(ProtocolHandler::name(&handler), &schemes);
+                    Ok(LoadedPlugin::Protocol(Arc::new(handler)))
+                }
+                _ => Err(PluginError::Other(format!(
+                    "C-ABI plugin `{}` reports kind `{kind}`; the C ABI only \
+                     supports `protocol` plugins",
                     plugin_ref.name
                 ))),
             }

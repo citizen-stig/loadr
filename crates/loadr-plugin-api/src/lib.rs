@@ -8,13 +8,18 @@
 //! - **Native dynamic-library plugins** (`abi_stable`, [`abi`]/[`native`])
 //!   for *outputs*, *protocols*, and *services* — things that need real I/O.
 //!   Payloads cross the FFI boundary as JSON, keeping the ABI small and
-//!   stable.
+//!   stable. This path is Rust-to-Rust.
+//! - **C-ABI protocol plugins** ([`cabi`]) for *protocols* authored in
+//!   **non-Rust** languages (C, Go, Zig, ...): a frozen, minimal plain-C
+//!   surface (pointers + lengths + a plugin-owned allocator). The loader
+//!   auto-detects which native ABI a library exports, so the two coexist.
 //!
 //! Discovery and lifecycle live in [`registry`]: a plugins directory holds
 //! one subdirectory per plugin with a `plugin.toml` manifest ([`manifest`])
 //! next to the artifact.
 
 pub mod abi;
+pub mod cabi;
 pub mod error;
 pub mod install;
 pub mod manifest;
@@ -26,12 +31,13 @@ pub mod wasm;
 // Re-exported for the `export_loadr_plugin!` macro and for plugin authors.
 pub use abi_stable;
 
+pub use cabi::{is_c_abi_plugin, CAbiPlugin, CAbiProtocolAdapter, LOADR_C_ABI_VERSION};
 pub use error::PluginError;
 pub use install::{
     host_target, index_url, install_archive_bytes, install_resolved, remove, Fetcher,
     IndexArtifact, IndexEntry, IndexVersion, PluginIndex, Resolved, DEFAULT_INDEX_URL, INDEX_ENV,
 };
-pub use manifest::{merge_config, PluginKind, PluginManifest, PluginType};
+pub use manifest::{merge_config, PluginAbi, PluginKind, PluginManifest, PluginType};
 pub use native::{
     FfiRequest, FfiResponse, NativeOutputAdapter, NativePlugin, NativeProtocolAdapter,
     NativeServiceAdapter,

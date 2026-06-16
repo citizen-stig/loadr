@@ -216,13 +216,82 @@ uint8_t *loadr_plugin_execute(const uint8_t *req, size_t req_len, size_t *out_le
 `c-echo` does minimal hand-rolled JSON scanning to stay dependency-free; a real
 plugin would link a JSON library (e.g. cJSON, or use Go's `encoding/json`).
 
-## Other languages
+## Example: a plugin in Go
 
-Any toolchain that produces a C shared library exporting the four symbols
-works. For example, a **Go** plugin built with `go build -buildmode=c-shared`
-uses `//export` directives and `C.malloc`/`C.free` for the returned buffers
-(so the host's `loadr_plugin_free` matches Go's C allocator), keeping the
-allocator contract intact.
+Any toolchain that emits a C shared library exporting the four symbols works.
+The repo ships a complete Go example at `examples/plugins/go-echo/` — a sibling
+to `c-echo` that serves the `goecho://` scheme. Go builds a C shared library
+with `go build -buildmode=c-shared`, exposes functions to C with `//export`
+directives, and — crucially — allocates returned buffers with the **C**
+allocator (`C.malloc`) so the host's `loadr_plugin_free` (which calls `C.free`)
+matches. Because Go has `encoding/json`, parsing the request and emitting the
+response is just struct (un)marshalling — no hand-rolled JSON like the C example.
+
+```go
+package main
+
+/*
+#include <stdint.h>
+#include <stdlib.h>
+*/
+import "C"
+
+import (
+	"encoding/json"
+	"unsafe"
+)
+
+const loadrCABIVersion = 1
+
+func main() {} // required by -buildmode=c-shared
+
+//export loadr_plugin_abi_version
+func loadr_plugin_abi_version() C.uint32_t { return C.uint32_t(loadrCABIVersion) }
+
+//export loadr_plugin_free
+func loadr_plugin_free(ptr *C.uint8_t, length C.size_t) { C.free(unsafe.Pointer(ptr)) }
+
+//export loadr_plugin_execute
+func loadr_plugin_execute(req *C.uint8_t, reqLen C.size_t, outLen *C.size_t) *C.uint8_t {
+	in := C.GoBytes(unsafe.Pointer(req), C.int(reqLen))
+	var r struct {
+		Method  string `json:"method"`
+		BodyB64 string `json:"body_b64"`
+	}
+	_ = json.Unmarshal(in, &r)
+	resp, _ := json.Marshal(map[string]any{
+		"status": 200, "status_text": "OK",
+		"body_b64": r.BodyB64, "extras": map[string]any{"echoed_by": "go-echo"},
+	})
+	return cBytes(resp, outLen)
+}
+
+// cBytes copies into a C-allocated buffer so loadr_plugin_free (C.free) matches.
+func cBytes(b []byte, outLen *C.size_t) *C.uint8_t {
+	if len(b) == 0 {
+		*outLen = 0
+		return nil
+	}
+	p := C.malloc(C.size_t(len(b)))
+	copy(unsafe.Slice((*byte)(p), len(b)), b)
+	*outLen = C.size_t(len(b))
+	return (*C.uint8_t)(p)
+}
+```
+
+(`loadr_plugin_info` is elided here for brevity — see the full source.) Build,
+install and run it exactly like the C example:
+
+```bash
+make -C examples/plugins/go-echo            # -> libloadr_plugin_goecho.so
+mkdir -p dist && cp examples/plugins/go-echo/plugin.toml dist/ \
+  && cp examples/plugins/go-echo/libloadr_plugin_goecho.so dist/
+loadr plugin install dist                   # ✓ installed `goecho` v0.1.0 (protocol, native)
+loadr run examples/35-go-echo.yaml          # goecho_reqs: …  http_req_failed: 0.00%
+```
+
+The same recipe applies to Zig, Swift, Rust (a `cdylib` exporting the plain C
+symbols instead of the `abi_stable` ones), or any language with a C FFI.
 
 ## Safety
 

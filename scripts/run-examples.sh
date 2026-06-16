@@ -104,6 +104,30 @@ build_install_c_echo() {
 }
 build_install_c_echo
 
+# The `go-echo` example plugin is built with the Go toolchain (cgo c-shared),
+# not cargo — it proves a non-Rust protocol plugin authored in Go loads over
+# the same frozen C ABI.
+build_install_go_echo() {
+  if ! command -v go >/dev/null 2>&1; then
+    echo "==> skipping go-echo plugin (no Go toolchain); 35-go-echo.yaml will ERR"
+    return
+  fi
+  echo "==> building + installing the go-echo (C-ABI) plugin"
+  local src="$ROOT/examples/plugins/go-echo"
+  if make -C "$src" >/tmp/h-go-echo-build.log 2>&1; then
+    local stage="$RUNDIR/go-echo-stage"; mkdir -p "$stage"
+    cp "$src/plugin.toml" "$stage/"
+    for art in libloadr_plugin_goecho.so libloadr_plugin_goecho.dylib loadr_plugin_goecho.dll; do
+      [ -f "$src/$art" ] && cp "$src/$art" "$stage/"
+    done
+    "$LOADR" plugin install "$stage" --plugins-dir "$LOADR_PLUGINS_DIR" >/dev/null 2>&1 \
+      || echo "    go-echo plugin install failed; 35-go-echo.yaml will ERR"
+  else
+    echo "    go-echo plugin build failed (see /tmp/h-go-echo-build.log); 35-go-echo.yaml will ERR"
+  fi
+}
+build_install_go_echo
+
 # Stage the examples + their data/scripts/protos so relative paths resolve.
 cp -r "$ROOT/examples/." "$RUNDIR/"
 

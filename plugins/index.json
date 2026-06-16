@@ -110,43 +110,6 @@
           "min_loadr_abi": "1.0"
         }
       }
-    },
-    "sql": {
-      "description": "SQL protocol: PostgreSQL and MySQL queries via sqlx with an internal per-URI pool",
-      "kind": "protocol",
-      "latest": "1.0.0",
-      "versions": {
-        "1.0.0": {
-          "artifacts": {
-            "aarch64-apple-darwin": {
-              "entry": "libloadr_plugin_sql.dylib",
-              "sha256": "afbd2fb1913baae28447d7bd36d6b631ee40f0b219e5b88a60ea3a834bb29eb6",
-              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.0.0/sql-aarch64-apple-darwin.tar.gz"
-            },
-            "aarch64-unknown-linux-gnu": {
-              "entry": "libloadr_plugin_sql.so",
-              "sha256": "efef734a107cb84d672de7ac6e8d9fccf9a9bb2bed8c55961493054e90df6779",
-              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.0.0/sql-aarch64-unknown-linux-gnu.tar.gz"
-            },
-            "x86_64-apple-darwin": {
-              "entry": "libloadr_plugin_sql.dylib",
-              "sha256": "13ca36e91a398c793df11382f254dd22c6fa7c20fd4ebd8962b98139bd6e6ecf",
-              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.0.0/sql-x86_64-apple-darwin.tar.gz"
-            },
-            "x86_64-pc-windows-msvc": {
-              "entry": "loadr_plugin_sql.dll",
-              "sha256": "30893a6f760573df5f85731a8820bf254d58cbb6a6adc69a7fdbdd16108177dc",
-              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.0.0/sql-x86_64-pc-windows-msvc.tar.gz"
-            },
-            "x86_64-unknown-linux-gnu": {
-              "entry": "libloadr_plugin_sql.so",
-              "sha256": "3efe0bd670b007bb6deb56dc3c0aa206fcdb24fd6ad8dbe911390e62988ddb7c",
-              "url": "https://github.com/levantar-ai/loadr/releases/download/plugin-v1.0.0/sql-x86_64-unknown-linux-gnu.tar.gz"
-            }
-          },
-          "min_loadr_abi": "1.0"
-        }
-      }
     }
   },
   "schema": 1

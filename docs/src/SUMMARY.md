@@ -62,6 +62,7 @@
 - [Redis plugin](plugins/redis.md)
 - [Apache Kafka plugin](plugins/kafka.md)
 - [Elasticsearch plugin](plugins/elasticsearch.md)
+- [RabbitMQ plugin](plugins/rabbitmq.md)
 - [Developing a plugin](plugins/developing.md)
 - [Publishing a plugin](plugins/publishing.md)
 

@@ -18,6 +18,7 @@ members = [
     "plugins/loadr-plugin-redis",
     "plugins/loadr-plugin-kafka",
     "plugins/loadr-plugin-elasticsearch",
+    "plugins/loadr-plugin-rabbitmq",
     "plugins/examples/native-output",
     "plugins/examples/native-protocol",
     "testsupport/loadr-testserver",

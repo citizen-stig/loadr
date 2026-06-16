@@ -115,6 +115,23 @@ services:
       timeout: 5s
       retries: 40
       start_period: 30s
+  rabbitmq:                     # real RabbitMQ broker — amqp:// (loadr-plugin-rabbitmq) examples
+    # The `loadr` user (loadr/loadr), the `/` vhost and the `loadr.work` queue
+    # are all created from definitions.json on boot, so the examples connect as
+    # amqp://loadr:loadr@host:5672/%2f against a ready-made destination.
+    image: rabbitmq:3.13-management
+    ports:
+      - "5672:5672"     # AMQP
+      - "15672:15672"   # management UI
+    volumes:
+      # Pre-declare the `loadr.work` queue so the example has a destination.
+      - ./rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
 
   httpbin:                      # real HTTP service (go-httpbin) — httpbin-style examples
     image: mccutchen/go-httpbin

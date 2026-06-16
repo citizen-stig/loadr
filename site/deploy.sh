@@ -40,6 +40,11 @@ if [ -d "$ROOT/site/videos/out" ]; then
   cp "$ROOT/site/videos/out/"*.mp4 "$ROOT/site/videos/out/"*.jpg "$DIST/videos/" 2>/dev/null || true
 fi
 
+# Inject the shared nav partial into every page carrying the marker. Single
+# source of truth (site/partials/nav.html) — fails loudly if no marker is hit.
+echo "==> injecting shared nav"
+python3 "$ROOT/site/build-nav.py" "$ROOT/site/partials/nav.html" "$DIST"
+
 # Cache-bust CSS/JS: site.css and site.js carry a 24h cache and stable names,
 # so browsers keep serving stale copies after a deploy. Append a content hash
 # to their references in the HTML — a new hash = a new URL = guaranteed refetch.

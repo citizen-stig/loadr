@@ -77,42 +77,8 @@ def main():
   .ex-blurb{{margin-top:.5rem;font-size:.82rem;line-height:1.5;color:var(--color-smoke)}}
 </style>
 </head>
-<body class="antialiased">
-<header class="fixed top-0 inset-x-0 z-50 border-b border-edge/70 bg-ink/85 backdrop-blur">
-  <nav class="mx-auto flex h-16 max-w-7xl items-center justify-between px-5">
-    <a href="/" class="flex items-center gap-2">
-      <svg width="22" height="22" viewBox="0 0 32 32"><path d="M18 2 L8 18 L15 18 L13 30 L24 13 L17 13 Z" fill="#ef4444"/></svg>
-      <span class="text-lg font-extrabold tracking-tight text-white">loadr<span class="text-ember">.io</span></span>
-    </a>
-    <div class="hidden items-center gap-7 text-sm font-medium text-smoke lg:flex">
-      <a class="hover:text-flare" href="/demos/">Demos</a>
-      <a class="hover:text-flare" href="/#features">Features</a>
-      <a class="hover:text-flare" href="/#protocols">Protocols</a>
-      <a class="hover:text-flare" href="/#distributed">Distributed</a>
-      <a class="hover:text-flare" href="/#webui">Web UI</a>
-      <a class="hover:text-flare" href="/#compare">Compare</a>
-      <a class="hover:text-flare" href="/#credits">Built on</a>
-      <a class="hover:text-flare" href="/#roadmap">Roadmap</a>
-      <a class="hover:text-flare" href="/plugins/">Plugins</a>
-      <a class="hover:text-flare" href="/docs/">Docs</a>
-      <a class="hover:text-flare" href="https://github.com/levantar-ai/loadr" rel="noopener">GitHub</a>
-      <a href="/download/" class="glow rounded-lg bg-blood px-4 py-2 font-semibold text-white transition">Download</a>
-    </div>
-    <button id="navToggle" class="rounded-md border border-edge p-2 text-smoke lg:hidden" aria-label="menu">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
-    </button>
-  </nav>
-  <div id="navMenu" class="hidden border-t border-edge bg-coal px-5 py-4 lg:hidden">
-    <div class="grid gap-3 text-sm font-medium text-smoke">
-      <a href="/demos/">Demos</a><a href="/#features">Features</a><a href="/#protocols">Protocols</a>
-      <a href="/#distributed">Distributed</a><a href="/#webui">Web UI</a><a href="/#compare">Compare</a>
-      <a href="/#credits">Built on</a><a href="/#roadmap">Roadmap</a>
-      <a href="/plugins/">Plugins</a><a href="/docs/">Docs</a>
-      <a href="https://github.com/levantar-ai/loadr" rel="noopener">GitHub</a>
-      <a href="/download/">Download</a>
-    </div>
-  </div>
-</header>
+<body class="antialiased overflow-x-clip">
+<!-- INCLUDE:NAV -->
 
 <section class="pt-32 pb-24">
   <div class="mx-auto max-w-7xl px-5">

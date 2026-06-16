@@ -115,6 +115,24 @@
   }
 
   // -------------------------------------------------------------------------
+  // Active nav highlight — the nav is one shared partial, so the active item
+  // is marked at runtime from the current path (data-nav on each top link).
+  // -------------------------------------------------------------------------
+  (function () {
+    var p = location.pathname;
+    var key = p.indexOf("/demos") === 0 ? "demos"
+            : p.indexOf("/plugins") === 0 ? "plugins"
+            : p.indexOf("/docs") === 0 ? "docs"
+            : p.indexOf("/download") === 0 ? "download"
+            : "";
+    if (!key) return;
+    document.querySelectorAll('[data-nav="' + key + '"]').forEach(function (a) {
+      a.classList.add("text-flare", "font-semibold");
+      a.classList.remove("text-smoke");
+    });
+  })();
+
+  // -------------------------------------------------------------------------
   // Animated fake live chart in the web UI mockup
   // -------------------------------------------------------------------------
   var chart = document.getElementById("uiChart");

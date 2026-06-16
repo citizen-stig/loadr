@@ -116,14 +116,29 @@ fn canonical_uri(raw: &str) -> String {
     }
 }
 
+/// Build the lapin connection properties, driving it on our tokio runtime.
+///
+/// The tokio *executor* is cross-platform, so we always install it. The tokio
+/// *reactor* (`tokio-reactor-trait`) is implemented only on Unix — it wraps
+/// `tokio::io::unix::AsyncFd`, so it does not exist on Windows. On Windows we
+/// therefore leave lapin's bundled (async-io) reactor in place; it is fully
+/// cross-platform and runs the socket I/O while our tokio runtime drives the
+/// futures. This keeps the single `cdylib` building on all five release
+/// targets without an OpenSSL or platform-specific dependency.
+fn connection_properties() -> ConnectionProperties {
+    let props =
+        ConnectionProperties::default().with_executor(tokio_executor_trait::Tokio::current());
+    #[cfg(unix)]
+    let props = props.with_reactor(tokio_reactor_trait::Tokio);
+    props
+}
+
 /// Get (or lazily create + cache) the connection/channel for `uri`.
 async fn conn_for(uri: &str) -> Result<ConnHandle, String> {
     if let Some(c) = conns().lock().expect("conns lock").get(uri).cloned() {
         return Ok(c);
     }
-    let props = ConnectionProperties::default()
-        .with_executor(tokio_executor_trait::Tokio::current())
-        .with_reactor(tokio_reactor_trait::Tokio);
+    let props = connection_properties();
     let conn = Connection::connect(&canonical_uri(uri), props)
         .await
         .map_err(|e| format!("connect failed: {e}"))?;

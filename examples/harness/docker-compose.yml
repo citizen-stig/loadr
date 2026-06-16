@@ -56,6 +56,24 @@ services:
       timeout: 5s
       retries: 30
 
+  elasticsearch:                # real Elasticsearch — elasticsearch:// (loadr-plugin-elasticsearch) examples
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    environment:
+      # Single-node dev mode with security off so the plugin can talk plain
+      # http://host:9200 with no certs/auth. Cap the heap so CI doesn't OOM —
+      # ES otherwise grabs a large fraction of host memory.
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports: ["9200:9200"]
+    healthcheck:
+      # ES is slow to start; poll the cluster health endpoint until it answers.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 30s
+
   httpbin:                      # real HTTP service (go-httpbin) — httpbin-style examples
     image: mccutchen/go-httpbin
     ports: ["8080:8080"]

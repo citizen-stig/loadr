@@ -2564,6 +2564,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "loadr-plugin-elasticsearch"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "base64 0.22.1",
+ "bytes",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "loadr-plugin-api",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "loadr-plugin-example-native-output"
 version = "1.0.0"
 dependencies = [

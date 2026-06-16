@@ -60,6 +60,7 @@
 - [MongoDB plugin](plugins/mongo.md)
 - [PostgreSQL plugin](plugins/postgres.md)
 - [MySQL plugin](plugins/mysql.md)
+- [Apache Kafka plugin](plugins/kafka.md)
 - [Developing a plugin](plugins/developing.md)
 - [Publishing a plugin](plugins/publishing.md)
 

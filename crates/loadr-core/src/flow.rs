@@ -1306,8 +1306,9 @@ impl FlowRunner {
                 );
                 // Plugin protocols may report a count of affected/returned
                 // records: `extras.docs` (e.g. Mongo documents) is surfaced as
-                // `<family>_docs`, and `extras.rows` (e.g. SQL rows returned or
-                // affected) as `<family>_rows`.
+                // `<family>_docs`, `extras.rows` (e.g. SQL rows returned or
+                // affected) as `<family>_rows`, and `extras.msgs` (e.g. Kafka
+                // messages produced or fetched) as `<family>_msgs`.
                 if let Some(docs) = response.extras.get("docs").and_then(|v| v.as_f64()) {
                     self.emit_named(
                         vu,
@@ -1323,6 +1324,15 @@ impl FlowRunner {
                         &format!("{family}_rows"),
                         MetricKind::Counter,
                         rows,
+                        &tags,
+                    );
+                }
+                if let Some(msgs) = response.extras.get("msgs").and_then(|v| v.as_f64()) {
+                    self.emit_named(
+                        vu,
+                        &format!("{family}_msgs"),
+                        MetricKind::Counter,
+                        msgs,
                         &tags,
                     );
                 }

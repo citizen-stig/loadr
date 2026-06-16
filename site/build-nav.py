@@ -28,11 +28,11 @@ def main() -> int:
         print(f"error: nav partial not found: {partial_path}", file=sys.stderr)
         return 1
 
-    # Drop the partial's own leading HTML comment so it doesn't ship to clients.
-    partial = partial_path.read_text(encoding="utf-8")
-    if partial.lstrip().startswith("<!--"):
-        end = partial.index("-->") + 3
-        partial = partial[end:].lstrip("\n")
+    # Inject the partial verbatim. Its leading HTML comment is a valid,
+    # non-rendering comment and ships harmlessly — we deliberately do NOT try to
+    # strip it, because cutting at the first "-->" mis-parses any "-->" that
+    # appears inside the comment text and leaks the tail as visible page text.
+    partial = partial_path.read_text(encoding="utf-8").lstrip("\n")
 
     total = 0
     pages = 0

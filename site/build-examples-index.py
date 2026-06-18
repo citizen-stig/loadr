@@ -95,8 +95,10 @@ def main():
   </div>
 </section>
 
+</main>
+
 <footer class="border-t border-edge/60 py-10">
-  <div class="mx-auto max-w-7xl px-5 text-xs text-smoke">© 2026 loadr. Built in Rust. <a class="hover:text-flare" href="/">← back to loadr.io</a></div>
+  <div class="mx-auto max-w-7xl px-5 text-xs text-smoke">© 2026 loadr. Built in Rust. · <a class="hover:text-flare" href="/privacy/">Privacy</a> · <a class="hover:text-flare" href="/cookies/">Cookies</a> · <a class="hover:text-flare" href="/">← back to loadr.io</a></div>
 </footer>
 <script src="/assets/site.js" defer></script>
 </body>

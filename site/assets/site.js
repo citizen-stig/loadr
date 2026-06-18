@@ -136,7 +136,9 @@
   // Animated fake live chart in the web UI mockup
   // -------------------------------------------------------------------------
   var chart = document.getElementById("uiChart");
-  if (chart) {
+  var reduceMotion = window.matchMedia
+    && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (chart && !reduceMotion) {
     var bars = chart.querySelectorAll(".chartbar");
     setInterval(function () {
       bars.forEach(function (b) {

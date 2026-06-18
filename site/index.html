@@ -119,7 +119,7 @@
         <p class="mt-2.5 text-sm leading-relaxed text-smoke">
           Open-model arrival-rate executors keep the <em>offered</em> load constant even when your
           system slows down — saturation shows up as <code class="text-flare">dropped_iterations</code>,
-          not silently lower RPS. Every latency is an HDR histogram: <code class="text-flare">p(99.9)</code> is exact, never estimated, never averaged.
+          not silently lower throughput (requests per second, RPS). Every latency is an HDR histogram: <code class="text-flare">p(99.9)</code> is exact, never estimated, never averaged.
         </p>
       </div>
       <div class="rounded-2xl border border-edge bg-panel p-7">
@@ -164,7 +164,7 @@
 
     <div class="mt-10 grid gap-6 lg:grid-cols-3">
       <div class="overflow-hidden rounded-2xl border border-edge bg-panel lg:col-span-2">
-        <video controls preload="none" poster="/videos/07-webui-poster.jpg" class="aspect-video w-full bg-ink">
+        <video controls preload="none" aria-label="Demo: the loadr live web UI during a run" poster="/videos/07-webui-poster.jpg" class="aspect-video w-full bg-ink">
           <source src="/videos/07-webui.mp4" type="video/mp4">
         </video>
         <div class="flex items-center justify-between gap-3 border-t border-edge px-6 py-4">
@@ -177,7 +177,7 @@
       </div>
       <div class="flex flex-col gap-6">
         <div class="overflow-hidden rounded-2xl border border-edge bg-panel">
-          <video controls preload="none" poster="/videos/01-quickstart-poster.jpg" class="aspect-video w-full bg-ink">
+          <video controls preload="none" aria-label="Demo: writing and running your first loadr test" poster="/videos/01-quickstart-poster.jpg" class="aspect-video w-full bg-ink">
             <source src="/videos/01-quickstart.mp4" type="video/mp4">
           </video>
           <div class="px-5 py-3">
@@ -185,7 +185,7 @@
           </div>
         </div>
         <div class="overflow-hidden rounded-2xl border border-edge bg-panel">
-          <video controls preload="none" poster="/videos/06-distributed-poster.jpg" class="aspect-video w-full bg-ink">
+          <video controls preload="none" aria-label="Demo: a distributed loadr run across an agent fleet" poster="/videos/06-distributed-poster.jpg" class="aspect-video w-full bg-ink">
             <source src="/videos/06-distributed.mp4" type="video/mp4">
           </video>
           <div class="px-5 py-3">
@@ -228,7 +228,7 @@
       </a>
       <a href="/docs/yaml/data.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">Data-driven testing</h3>
-        <p class="mt-2 text-sm text-smoke">CSV &amp; JSON feeders with sequential, <strong class="text-ash">random</strong> or <strong class="text-ash">shuffle</strong> strategies (shared or per-VU, recycle or stop-at-EOF), inline rows, and secrets that never reach logs.</p>
+        <p class="mt-2 text-sm text-smoke">CSV &amp; JSON feeders with sequential, <strong class="text-ash">random</strong> or <strong class="text-ash">shuffle</strong> strategies (shared or per virtual user (VU), recycle or stop-at-EOF), inline rows, and secrets that never reach logs.</p>
       </a>
       <a href="/docs/yaml/flow-control.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">Flow control &amp; weighted tasks</h3>
@@ -796,6 +796,8 @@ $ loadr report results.json -o report.html     # self-contained HTML report</cod
 </section>
 
 <!-- ======================================================= FOOTER -->
+</main>
+
 <footer class="border-t border-edge bg-ink py-14">
   <div class="mx-auto max-w-7xl px-5">
     <div class="grid gap-10 md:grid-cols-4">
@@ -842,7 +844,7 @@ $ loadr report results.json -o report.html     # self-contained HTML report</cod
       </div>
     </div>
     <div class="mt-12 border-t border-edge/60 pt-6 text-xs text-smoke">
-      © 2026 loadr. Built in Rust. The loadr tool ships zero telemetry — it never phones home. This site uses privacy-first, consent-based analytics only.
+      © 2026 loadr. Built in Rust. The loadr tool ships zero telemetry — it never phones home. This site uses privacy-first, consent-based analytics only. · <a class="hover:text-flare" href="/privacy/">Privacy</a> · <a class="hover:text-flare" href="/cookies/">Cookies</a>
     </div>
   </div>
 </footer>

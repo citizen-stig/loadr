@@ -92,7 +92,7 @@
       '<p class="loadr-cookie-text">loadr.io uses a couple of cookies for anonymous ' +
       '<strong>Google Analytics</strong> — only to see which pages help. Nothing else, ' +
       'and the loadr tool itself ships <strong>zero telemetry</strong>. ' +
-      '<a class="loadr-cookie-link" href="/docs/">Learn more</a></p>' +
+      '<a class="loadr-cookie-link" href="/cookies/">Learn more</a></p>' +
       '<div class="loadr-cookie-actions">' +
       '<button type="button" class="loadr-cookie-btn loadr-cookie-decline">Decline</button>' +
       '<button type="button" class="loadr-cookie-btn loadr-cookie-accept">Accept</button>' +

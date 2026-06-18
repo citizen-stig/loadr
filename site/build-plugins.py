@@ -335,6 +335,8 @@ def head(title, desc, canonical):
 """
 
 FOOTER = """
+</main>
+
 <footer class="border-t border-edge/60 bg-coal/40 py-14">
   <div class="mx-auto max-w-7xl px-5">
     <div class="grid gap-10 md:grid-cols-4">
@@ -379,7 +381,7 @@ FOOTER = """
       </div>
     </div>
     <div class="mt-12 border-t border-edge/60 pt-6 text-xs text-smoke">
-      © 2026 loadr. Built in Rust. The loadr tool ships zero telemetry — it never phones home. This site uses privacy-first, consent-based analytics only.
+      © 2026 loadr. Built in Rust. The loadr tool ships zero telemetry — it never phones home. This site uses privacy-first, consent-based analytics only. · <a class="hover:text-flare" href="/privacy/">Privacy</a> · <a class="hover:text-flare" href="/cookies/">Cookies</a>
     </div>
   </div>
 </footer>
@@ -596,7 +598,7 @@ def render_detail(p, prev, nxt):
     </div>
     <div>
       <div class="overflow-hidden rounded-xl border border-edge bg-ink">
-        <video controls preload="none" poster="/videos/{p["video"]}-poster.jpg" class="aspect-video w-full bg-ink">
+        <video controls preload="none" aria-label="Demo: installing and running the {p["name"]} plugin" poster="/videos/{p["video"]}-poster.jpg" class="aspect-video w-full bg-ink">
           <source src="/videos/{p["video"]}.mp4" type="video/mp4">
         </video>
       </div>

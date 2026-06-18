@@ -155,3 +155,70 @@ body {
   background: linear-gradient(180deg, rgb(239 68 68 / 0.85), rgb(220 38 38 / 0.25));
   border-radius: 2px 2px 0 0;
 }
+
+/* ---- Accessibility ---------------------------------------------------- */
+
+/* Visible keyboard focus everywhere (WCAG 2.4.7). Mouse clicks don't trigger
+   :focus-visible, so this only shows for keyboard/AT users. */
+:focus-visible {
+  outline: 2px solid var(--color-flare);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Visually-hidden, but available to screen readers. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Skip link (WCAG 2.4.1): hidden until focused, then pinned top-left. */
+.skip-link {
+  position: absolute;
+  left: 1rem;
+  top: -3rem;
+  z-index: 2147483001;
+  padding: 0.6rem 1rem;
+  border-radius: 0.5rem;
+  background: var(--color-blood);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.875rem;
+  transition: top 0.15s ease;
+}
+.skip-link:focus {
+  top: 1rem;
+}
+
+/* Main landmark must accept programmatic focus from the skip link without an
+   outline of its own. */
+main:focus {
+  outline: none;
+}
+
+/* Honour reduced-motion (WCAG 2.3.3 / 2.2.2): freeze the live-dot pulse, the
+   smooth scroll and all decorative transitions/animations. The JS-driven chart
+   is gated separately in site.js. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .livedot {
+    animation: none;
+  }
+}

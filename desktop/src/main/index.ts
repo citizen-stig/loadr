@@ -7,7 +7,8 @@ import { join } from 'node:path';
 
 import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron';
 
-import { convert, schema, validate, version } from './loadr';
+import { convert, runPlan, schema, validate, version } from './loadr';
+import { addRun, type RunRecord } from '../shared/history';
 
 const isDev = !app.isPackaged;
 
@@ -37,6 +38,27 @@ function createWindow(): void {
 ipcMain.handle('loadr:version', () => version());
 ipcMain.handle('loadr:schema', () => schema());
 ipcMain.handle('loadr:validate', (_e: IpcMainInvokeEvent, yamlText: string) => validate(yamlText));
+
+// ---- IPC: run -------------------------------------------------------------
+ipcMain.handle('plan:run', (event: IpcMainInvokeEvent, arg: { yaml: string; runId: string }) =>
+  runPlan(arg.yaml, (line) => event.sender.send('loadr:run:line', { runId: arg.runId, line })),
+);
+
+// ---- IPC: run history (persisted in userData) ------------------------------
+const historyFile = () => join(app.getPath('userData'), 'run-history.json');
+async function readHistory(): Promise<RunRecord[]> {
+  try {
+    return JSON.parse(await readFile(historyFile(), 'utf8'));
+  } catch {
+    return [];
+  }
+}
+ipcMain.handle('history:list', () => readHistory());
+ipcMain.handle('history:append', async (_e: IpcMainInvokeEvent, rec: RunRecord) => {
+  const next = addRun(await readHistory(), rec);
+  await writeFile(historyFile(), JSON.stringify(next), 'utf8');
+  return next;
+});
 
 // ---- IPC: files -----------------------------------------------------------
 ipcMain.handle('plan:open', async () => {

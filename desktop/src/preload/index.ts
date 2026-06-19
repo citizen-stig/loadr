@@ -3,6 +3,9 @@
 
 import { contextBridge, ipcRenderer } from 'electron';
 
+import type { Summary } from '../shared/results';
+import type { RunRecord } from '../shared/history';
+
 export interface OpenedPlan {
   path: string;
   content: string;
@@ -28,6 +31,9 @@ export interface LoadrApi {
   importPlan(): Promise<OpenedPlan | null>;
   readPlan(path: string): Promise<string>;
   savePlan(path: string | null, content: string): Promise<string | null>;
+  run(yamlText: string, onLine: (line: string) => void): Promise<Summary>;
+  historyList(): Promise<RunRecord[]>;
+  historyAppend(rec: RunRecord): Promise<RunRecord[]>;
 }
 
 const api: LoadrApi = {
@@ -38,6 +44,18 @@ const api: LoadrApi = {
   importPlan: () => ipcRenderer.invoke('plan:import'),
   readPlan: (path) => ipcRenderer.invoke('plan:read', path),
   savePlan: (path, content) => ipcRenderer.invoke('plan:save', path, content),
+  run: (yamlText, onLine) => {
+    const runId = `run-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+    const listener = (_e: unknown, payload: { runId: string; line: string }) => {
+      if (payload.runId === runId) onLine(payload.line);
+    };
+    ipcRenderer.on('loadr:run:line', listener);
+    return ipcRenderer
+      .invoke('plan:run', { yaml: yamlText, runId })
+      .finally(() => ipcRenderer.removeListener('loadr:run:line', listener));
+  },
+  historyList: () => ipcRenderer.invoke('history:list'),
+  historyAppend: (rec) => ipcRenderer.invoke('history:append', rec),
 };
 
 contextBridge.exposeInMainWorld('loadr', api);

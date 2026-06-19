@@ -3,11 +3,13 @@
 // invoke it with ARRAY args only — never a shell string — so plan content can
 // never be interpreted by a shell.
 
-import { execFile } from 'node:child_process';
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { execFile, spawn } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+
+import { parseSummary, type Summary } from '../shared/results';
 
 const execFileP = promisify(execFile);
 
@@ -95,6 +97,39 @@ export async function convert(file: string): Promise<string> {
     maxBuffer: 32 * 1024 * 1024,
   });
   return stdout;
+}
+
+/**
+ * Run a plan: spawn `loadr run <plan> --summary-export <json>`, stream each
+ * progress/log line to `onLine` (loadr uses \r for the live line, so we split
+ * on either), and resolve with the parsed end-of-run summary. Array args only.
+ */
+export function runPlan(yamlText: string, onLine: (line: string) => void): Promise<Summary> {
+  const dir = mkdtempSync(join(tmpdir(), 'loadr-run-'));
+  const planPath = join(dir, 'plan.yaml');
+  const summaryPath = join(dir, 'summary.json');
+  writeFileSync(planPath, yamlText);
+
+  return new Promise<Summary>((resolve, reject) => {
+    const child = spawn(resolveLoadr(), ['run', planPath, '--summary-export', summaryPath], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const pump = (buf: Buffer) => {
+      for (const line of buf.toString().split(/[\r\n]+/)) {
+        if (line.trim()) onLine(line);
+      }
+    };
+    child.stdout.on('data', pump);
+    child.stderr.on('data', pump);
+    child.on('error', reject);
+    child.on('close', (code) => {
+      try {
+        resolve(parseSummary(JSON.parse(readFileSync(summaryPath, 'utf8'))));
+      } catch (e) {
+        reject(new Error(`run exited (code ${code}) without a summary: ${(e as Error).message}`));
+      }
+    });
+  });
 }
 
 function parseValidate(raw: string): ValidateResult {

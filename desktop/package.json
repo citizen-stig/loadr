@@ -14,8 +14,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "playwright test",
-    "package": "electron-vite build && electron-builder",
-    "package:dir": "electron-vite build && electron-builder --dir"
+    "package": "electron-vite build && node scripts/stage-loadr.mjs && electron-builder",
+    "package:dir": "electron-vite build && node scripts/stage-loadr.mjs && electron-builder --dir"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -27,7 +27,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.16.0",
-    "@playwright/test": "^1.49.0",
+    "@playwright/test": "^1.61.0",
     "@tailwindcss/vite": "^4.0.0",
     "@testing-library/react": "^16.1.0",
     "@types/js-yaml": "^4.0.9",

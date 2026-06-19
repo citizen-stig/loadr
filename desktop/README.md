@@ -10,11 +10,12 @@ Stack: Electron + TypeScript, React 19 + Vite 6 + Tailwind 4 (renderer), Vitest
 
 ## Status — built in milestones (see `goals/desktop-gui/`)
 - [x] **M1** — scaffold, secure IPC, bundled-loadr bridge, open-YAML→render, round-trip tests
-- [ ] M2 — schema-driven form editor + Monaco two-way sync
-- [ ] M3 — drag-and-drop composition + tabs + manage/import
-- [ ] M4 — run + live results + history/compare
-- [ ] M5 — plugins panel
-- [ ] M6 — electron-builder packaging + CI matrix + Playwright e2e
+- [x] **M2** — schema-shaped form editor + Monaco two-way sync
+- [x] **M3** — drag-and-drop composition + tabs + manage/import
+- [x] **M4** — run + live metrics + results + history/compare
+- [x] **M5** — plugins panel
+- [~] **M6** — electron-builder packaging + CI matrix + Playwright-for-Electron
+  acceptance suite (authored; runs in CI under xvfb — see note below)
 - [ ] M7 — semantic-release + signed multi-platform artifacts
 
 ## Develop
@@ -40,8 +41,17 @@ binary is found (the structural round-trip still runs).
 parse→serialize→parse preserves the plan's data **and** that the serialized YAML
 is accepted by `loadr validate`. A GUI edit that produces invalid YAML is a bug.
 
+## Acceptance suite (`e2e/`)
+Playwright-for-Electron specs that launch the built app and drive the real DOM
+(`goals/desktop-gui/acceptance-suite.md`). They run in **CI** on the Linux
+matrix leg under `xvfb` (Node 22) — the `e2e` job in `desktop.yml`. Locally:
+`npm run e2e` (needs a display, e.g. `xvfb-run -a npm run e2e`).
+
 ## Known blockers (environment-dependent)
-- **Running the Electron window / Playwright-for-Electron e2e** needs a display
-  (use `xvfb-run` in headless CI). The Vitest round-trip suite is fully headless.
-- **Code-signing / macOS notarization** (M7) needs Apple/Windows certs supplied
-  as CI secrets; builds are produced unsigned when the secrets are absent.
+- **Local e2e in a bare sandbox**: Electron's window needs a display; without
+  `xvfb` it can't launch (and `--ozone-platform=headless` segfaults on some
+  hosts). CI installs `xvfb` and runs the suite there. Node 24 also trips a
+  Playwright TS-loader bug on relative spec imports; CI pins **Node 22**.
+- **Code-signing / macOS notarization** (M7): needs Apple/Windows certs supplied
+  as CI secrets (`CSC_LINK`, `APPLE_ID`, …); the package job builds **unsigned**
+  when they're absent.

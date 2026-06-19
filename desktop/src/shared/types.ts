@@ -41,6 +41,12 @@ export interface Scenario {
   iterations?: number;
   stages?: Json[];
   rate?: number;
+  start_vus?: number;
+  start_rate?: number;
+  time_unit?: string;
+  pre_allocated_vus?: number;
+  max_vus?: number;
+  max_duration?: string;
   flow?: Step[];
   exec?: string;
 }

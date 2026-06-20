@@ -15,8 +15,8 @@ export default tseslint.config(
     },
   },
   {
-    // Node build scripts (plain ESM) — give them Node globals.
-    files: ['scripts/**/*.mjs'],
+    // Node build / dev scripts (plain ESM) — give them Node globals.
+    files: ['scripts/**/*.mjs', 'e2e/**/*.mjs'],
     languageOptions: { globals: { process: 'readonly', console: 'readonly', URL: 'readonly' } },
   },
 );

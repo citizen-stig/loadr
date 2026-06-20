@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { addScenario, addStep, deleteIn, getIn, moveStep, setExecutor, setIn } from './edit';
+import {
+  addScenario, addStep, addStepAt, appendTo, deleteIn, getIn, moveStep, moveStepAt, setExecutor, setIn,
+} from './edit';
 import { serializePlan } from './plan';
 import { stepKind, type Plan } from './types';
 
@@ -63,6 +65,25 @@ describe('scenario + flow operations', () => {
     plan = addStep(plan, 's', 'group');
     plan = moveStep(plan, 's', 2, 0); // group to front
     expect(plan.scenarios!.s.flow!.map(stepKind)).toEqual(['group', 'request', 'think_time']);
+  });
+
+  it('addStepAt / moveStepAt edit a nested steps array (if → then)', () => {
+    let plan = addScenario({}, 's');
+    plan = addStep(plan, 's', 'if');
+    const thenPath = ['scenarios', 's', 'flow', 0, 'if', 'then'];
+    plan = addStepAt(plan, thenPath, 'request');
+    plan = addStepAt(plan, thenPath, 'think_time');
+    expect((getIn(plan, thenPath) as unknown[]).map((x) => stepKind(x as never))).toEqual(['request', 'think_time']);
+    plan = moveStepAt(plan, thenPath, 1, 0);
+    expect((getIn(plan, thenPath) as unknown[]).map((x) => stepKind(x as never))).toEqual(['think_time', 'request']);
+  });
+
+  it('appendTo creates the array and pushes', () => {
+    let plan: Plan = {};
+    const path = ['scenarios', 's', 'flow', 0, 'parallel', 'branches'];
+    plan = appendTo(plan, path, []);
+    plan = appendTo(plan, path, []);
+    expect((getIn(plan, path) as unknown[]).length).toBe(2);
   });
 
   it('a composed plan serializes to YAML', () => {

@@ -128,7 +128,11 @@ export async function convert(file: string): Promise<string> {
  * progress/log line to `onLine` (loadr uses \r for the live line, so we split
  * on either), and resolve with the parsed end-of-run summary. Array args only.
  */
-export function runPlan(yamlText: string, onLine: (line: string) => void): Promise<Summary> {
+export function runPlan(
+  yamlText: string,
+  onLine: (line: string) => void,
+  onChild?: (child: ReturnType<typeof spawn>) => void,
+): Promise<Summary> {
   const dir = mkdtempSync(join(tmpdir(), 'loadr-run-'));
   const planPath = join(dir, 'plan.yaml');
   const summaryPath = join(dir, 'summary.json');
@@ -138,6 +142,7 @@ export function runPlan(yamlText: string, onLine: (line: string) => void): Promi
     const child = spawn(resolveLoadr(), ['run', planPath, '--summary-export', summaryPath], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    onChild?.(child);
     const pump = (buf: Buffer) => {
       for (const line of buf.toString().split(/[\r\n]+/)) {
         if (line.trim()) onLine(line);

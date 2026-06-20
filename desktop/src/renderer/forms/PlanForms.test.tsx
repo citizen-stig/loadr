@@ -25,7 +25,7 @@ describe('ScenariosForm composes a plan', () => {
   it('adds a scenario, a request step, and edits its URL — all reflected in YAML', () => {
     render(<Harness />);
 
-    fireEvent.click(screen.getByText('+ scenario'));
+    fireEvent.click(screen.getByText('Scenario'));
     expect(parsePlan(yamlText()).scenarios?.scenario.executor).toBe('constant-vus');
 
     fireEvent.change(screen.getByLabelText('add step'), { target: { value: 'request' } });
@@ -39,9 +39,30 @@ describe('ScenariosForm composes a plan', () => {
     expect(req.url).toBe('https://api.example.com/v1');
   });
 
+  it('composes a foreach with a nested request — no YAML editing required', () => {
+    render(<Harness />);
+    fireEvent.click(screen.getByText('Scenario'));
+
+    fireEvent.change(screen.getByLabelText('add step'), { target: { value: 'foreach' } });
+    expect(parsePlan(yamlText()).scenarios!.scenario.flow!.map(stepKind)).toEqual(['foreach']);
+
+    fireEvent.change(screen.getByLabelText('Items'), { target: { value: '${users}' } });
+
+    // the nested per-item flow has its own "add step" control
+    const adders = screen.getAllByLabelText('add step');
+    fireEvent.change(adders[adders.length - 1], { target: { value: 'request' } });
+    fireEvent.change(screen.getByLabelText('URL'), { target: { value: '/u/${item}' } });
+
+    const fe = parsePlan(yamlText()).scenarios!.scenario.flow![0].foreach as {
+      items: string; steps: { request: { url: string } }[];
+    };
+    expect(fe.items).toBe('${users}');
+    expect(fe.steps[0].request.url).toBe('/u/${item}');
+  });
+
   it('changing the executor reshapes the params', () => {
     render(<Harness />);
-    fireEvent.click(screen.getByText('+ scenario'));
+    fireEvent.click(screen.getByText('Scenario'));
     fireEvent.change(screen.getByLabelText('Executor'), {
       target: { value: 'constant-arrival-rate' },
     });

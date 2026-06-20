@@ -102,23 +102,60 @@ const NEW_STEP: Record<StepKind, () => Step> = {
   rendezvous: () => ({ rendezvous: { name: 'sync', users: 2 } }),
 };
 
+/**
+ * Rename a key in the object at `objPath`, preserving insertion order. No-op if
+ * `from` is missing or `to` already exists / is empty. Used for `switch` case
+ * names, which are object keys.
+ */
+export function renameKey<T extends object>(root: T, objPath: Path, from: string, to: string): T {
+  const obj = getIn(root, objPath);
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return root;
+  const src = obj as Record<string, unknown>;
+  if (!(from in src) || !to || to === from || to in src) return root;
+  const next: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(src)) next[k === from ? to : k] = v;
+  return setIn(root, objPath, next as unknown as Json);
+}
+
+/** Append `value` to the array at `arrayPath` (creating it if absent). */
+export function appendTo(plan: Plan, arrayPath: Path, value: unknown): Plan {
+  const arr = getIn(plan, arrayPath);
+  const next = Array.isArray(arr) ? [...arr] : [];
+  next.push(value);
+  return setIn(plan, arrayPath, next as unknown as Json);
+}
+
+/**
+ * Add a new step of the given kind to the steps array located at `stepsPath`.
+ * `stepsPath` points at the array itself (e.g. a scenario's `flow`, an `if`'s
+ * `then`, a `parallel` branch), so the same editor drives every nesting level.
+ */
+export function addStepAt(plan: Plan, stepsPath: Path, kind: StepKind, index?: number): Plan {
+  const arr = getIn(plan, stepsPath);
+  const flow = Array.isArray(arr) ? [...arr] : [];
+  flow.splice(index ?? flow.length, 0, NEW_STEP[kind]());
+  return setIn(plan, stepsPath, flow as unknown as Json);
+}
+
+/** Move a step within the steps array at `stepsPath` (drag-and-drop reorder). */
+export function moveStepAt(plan: Plan, stepsPath: Path, from: number, to: number): Plan {
+  const arr = getIn(plan, stepsPath);
+  if (!Array.isArray(arr)) return plan;
+  const flow = [...arr];
+  if (from < 0 || from >= flow.length || to < 0 || to >= flow.length) return plan;
+  const [moved] = flow.splice(from, 1);
+  flow.splice(to, 0, moved);
+  return setIn(plan, stepsPath, flow as unknown as Json);
+}
+
 /** Append a new step of the given kind to a scenario's flow. */
 export function addStep(plan: Plan, scenario: string, kind: StepKind, index?: number): Plan {
-  const sc = plan.scenarios?.[scenario];
-  if (!sc) return plan;
-  const flow = [...(sc.flow ?? [])];
-  const step = NEW_STEP[kind]();
-  flow.splice(index ?? flow.length, 0, step);
-  return setIn(plan, ['scenarios', scenario, 'flow'], flow as unknown as Json);
+  if (!plan.scenarios?.[scenario]) return plan;
+  return addStepAt(plan, ['scenarios', scenario, 'flow'], kind, index);
 }
 
 /** Move a step within a scenario's flow (drag-and-drop reorder). */
 export function moveStep(plan: Plan, scenario: string, from: number, to: number): Plan {
-  const sc = plan.scenarios?.[scenario];
-  if (!sc?.flow) return plan;
-  const flow = [...sc.flow];
-  if (from < 0 || from >= flow.length || to < 0 || to >= flow.length) return plan;
-  const [moved] = flow.splice(from, 1);
-  flow.splice(to, 0, moved);
-  return setIn(plan, ['scenarios', scenario, 'flow'], flow as unknown as Json);
+  if (!plan.scenarios?.[scenario]) return plan;
+  return moveStepAt(plan, ['scenarios', scenario, 'flow'], from, to);
 }

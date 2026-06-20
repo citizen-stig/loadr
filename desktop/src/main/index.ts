@@ -6,6 +6,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron';
+import type { ChildProcess } from 'node:child_process';
 
 import {
   convert, pluginInstall, pluginList, pluginRemove, runPlan, schema, validate, version,
@@ -18,7 +19,7 @@ function createWindow(): void {
   const win = new BrowserWindow({
     width: 1280,
     height: 860,
-    backgroundColor: '#0a0a0e',
+    backgroundColor: '#07070a',
     show: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -42,9 +43,23 @@ ipcMain.handle('loadr:schema', () => schema());
 ipcMain.handle('loadr:validate', (_e: IpcMainInvokeEvent, yamlText: string) => validate(yamlText));
 
 // ---- IPC: run -------------------------------------------------------------
+// Track in-flight runs by id so the renderer can stop one mid-flight.
+const runningChildren = new Map<string, ChildProcess>();
 ipcMain.handle('plan:run', (event: IpcMainInvokeEvent, arg: { yaml: string; runId: string }) =>
-  runPlan(arg.yaml, (line) => event.sender.send('loadr:run:line', { runId: arg.runId, line })),
+  runPlan(
+    arg.yaml,
+    (line) => event.sender.send('loadr:run:line', { runId: arg.runId, line }),
+    (child) => {
+      runningChildren.set(arg.runId, child);
+      child.on('close', () => runningChildren.delete(arg.runId));
+    },
+  ),
 );
+// Stop a run with SIGINT so loadr shuts down gracefully and still flushes its
+// summary export (a Ctrl-C equivalent), rather than a hard kill.
+ipcMain.handle('plan:stop', (_e: IpcMainInvokeEvent, runId: string) => {
+  runningChildren.get(runId)?.kill('SIGINT');
+});
 
 // ---- IPC: run history (persisted in userData) ------------------------------
 const historyFile = () => join(app.getPath('userData'), 'run-history.json');

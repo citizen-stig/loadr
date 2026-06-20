@@ -21,10 +21,10 @@ test('run a plan and render results', async () => {
     await page.getByLabel('Duration').fill('2s');
     await page.getByRole('button', { name: /Run/ }).click();
 
-    // Results panel appears with a verdict and headline stats.
-    await expect(page.getByText(/passed|failed/)).toBeVisible({ timeout: 40_000 });
-    await expect(page.getByText('requests')).toBeVisible();
-    await expect(page.getByText('error rate')).toBeVisible();
+    // The live monitoring dashboard appears with a verdict and headline tiles.
+    await expect(page.getByText(/✓ passed|✗ failed/)).toBeVisible({ timeout: 40_000 });
+    await expect(page.getByText('Requests / s', { exact: true })).toBeVisible();
+    await expect(page.getByText('Active VUs', { exact: true })).toBeVisible();
 
     // The run is recorded in history (a compare list appears).
     await expect(page.getByText(/History/)).toBeVisible();

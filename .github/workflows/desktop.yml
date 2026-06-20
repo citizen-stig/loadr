@@ -32,7 +32,8 @@ jobs:
         working-directory: desktop
       - name: Unit + round-trip tests
         working-directory: desktop
-        env: { LOADR_BIN: ${{ github.workspace }}/target/debug/loadr }
+        env:
+          LOADR_BIN: ${{ github.workspace }}/target/debug/loadr
         run: npm test
 
   e2e:
@@ -56,7 +57,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y xvfb libnss3 libgbm1 libgtk-3-0 libasound2t64
       - name: Acceptance suite (headless)
         working-directory: desktop
-        env: { LOADR_BIN: ${{ github.workspace }}/target/debug/loadr }
+        env:
+          LOADR_BIN: ${{ github.workspace }}/target/debug/loadr
         run: xvfb-run -a npm run e2e
       - uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
         if: failure()

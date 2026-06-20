@@ -5,6 +5,8 @@ import { PluginsPanel } from './PluginsPanel';
 import {
   activeTab, closeTab, emptyWorkspace, newTabId, openTab, selectTab, updateTab, type Workspace,
 } from './workspace/tabs';
+import { Badge, Button } from './ui/controls';
+import { Copy, FolderOpen, Import, Plus, Puzzle, X } from './ui/icons';
 
 const STARTER = `name: new plan
 scenarios:
@@ -75,42 +77,55 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen flex-col">
-      <header className="flex items-center justify-between border-b border-[#232330] px-4 py-2">
-        <div className="flex items-center gap-3">
-          <span className="font-extrabold">loadr <span className="font-medium text-[#9ca3af]">Desktop</span></span>
-          <span className="rounded-full border border-[#ef4444]/40 bg-[#ef4444]/10 px-2 py-0.5 text-[10px] font-bold uppercase text-[#f87171]">Beta</span>
+    <div className="flex h-screen flex-col bg-ink text-ash">
+      <header className="flex items-center justify-between border-b border-edge bg-coal px-4 py-2.5">
+        <div className="flex items-center gap-2.5">
+          <span className="grid h-7 w-7 place-items-center rounded-lg bg-gradient-to-b from-ember to-blood text-sm font-black text-white shadow-[0_6px_18px_-8px_rgb(220_38_38/0.8)]">
+            l
+          </span>
+          <span className="text-[15px] font-extrabold tracking-tight text-white">
+            loadr <span className="font-medium text-smoke">Desktop</span>
+          </span>
+          <Badge tone="ember">Beta</Badge>
         </div>
-        <div className="flex gap-2 text-sm">
-          <button onClick={() => newTab()} className="rounded border border-[#232330] px-3 py-1 text-[#e5e7eb]">New</button>
-          <button onClick={openFile} className="rounded border border-[#232330] px-3 py-1 text-[#e5e7eb]">Open…</button>
-          <button onClick={importFile} className="rounded border border-[#232330] px-3 py-1 text-[#e5e7eb]">Import…</button>
-          <button onClick={duplicate} className="rounded border border-[#232330] px-3 py-1 text-[#e5e7eb]">Duplicate</button>
-          <button onClick={() => setShowPlugins(true)} className="rounded border border-[#232330] px-3 py-1 text-[#e5e7eb]">Plugins</button>
+        <div className="flex items-center gap-2">
+          <Button variant="primary" icon={Plus} onClick={() => newTab()}>New</Button>
+          <Button icon={FolderOpen} onClick={openFile}>Open…</Button>
+          <Button icon={Import} onClick={importFile}>Import…</Button>
+          <Button icon={Copy} onClick={duplicate}>Duplicate</Button>
+          <div className="mx-1 h-5 w-px bg-edge" />
+          <Button icon={Puzzle} onClick={() => setShowPlugins(true)}>Plugins</Button>
         </div>
       </header>
 
       {showPlugins && <PluginsPanel onClose={() => setShowPlugins(false)} />}
 
-      <div role="tablist" className="flex items-center gap-1 overflow-x-auto border-b border-[#232330] bg-[#0d0d12] px-2">
-        {ws.tabs.map((t) => (
-          <div
-            key={t.id}
-            role="tab"
-            aria-selected={t.id === ws.activeId}
-            className={`flex items-center gap-2 border-b-2 px-3 py-1.5 text-sm ${
-              t.id === ws.activeId ? 'border-[#ef4444] text-white' : 'border-transparent text-[#9ca3af]'
-            }`}
-          >
-            <button onClick={() => setWs(selectTab(ws, t.id))}>
-              {t.dirty && <span className="mr-1 text-[#fbbf24]">●</span>}
-              {t.title}
-            </button>
-            <button aria-label={`close ${t.title}`} className="text-[#6b7280] hover:text-[#fca5a5]" onClick={() => setWs(closeTab(ws, t.id))}>
-              ✕
-            </button>
-          </div>
-        ))}
+      <div role="tablist" className="flex items-center gap-1 overflow-x-auto border-b border-edge bg-coal px-2 pt-1">
+        {ws.tabs.map((t) => {
+          const active = t.id === ws.activeId;
+          return (
+            <div
+              key={t.id}
+              role="tab"
+              aria-selected={active}
+              className={`group flex items-center gap-1.5 rounded-t-lg border-b-2 px-3 py-2 text-sm transition-colors ${
+                active ? 'border-ember bg-ink text-white' : 'border-transparent text-smoke hover:bg-panel/60 hover:text-ash'
+              }`}
+            >
+              <button className="flex items-center gap-1.5" onClick={() => setWs(selectTab(ws, t.id))}>
+                {t.dirty && <span className="h-1.5 w-1.5 rounded-full bg-warn" aria-label="unsaved changes" />}
+                {t.title}
+              </button>
+              <button
+                aria-label={`close ${t.title}`}
+                className="grid h-4 w-4 place-items-center rounded text-mist opacity-0 transition group-hover:opacity-100 hover:bg-edge hover:text-flare"
+                onClick={() => setWs(closeTab(ws, t.id))}
+              >
+                <X />
+              </button>
+            </div>
+          );
+        })}
       </div>
 
       <div className="relative flex-1 overflow-hidden">
@@ -123,10 +138,17 @@ export default function App() {
             />
           </div>
         ))}
-        {ws.tabs.length === 0 && <p className="p-6 text-[#9ca3af]">No open plans. Click <strong>New</strong>.</p>}
+        {ws.tabs.length === 0 && (
+          <div className="grid h-full place-items-center text-smoke">
+            <p>No open plans. Click <strong className="text-ash">New</strong> to start.</p>
+          </div>
+        )}
       </div>
 
-      <footer className="border-t border-[#232330] px-4 py-1 text-xs text-[#6b7280]">{version}</footer>
+      <footer className="flex items-center gap-2 border-t border-edge bg-coal px-4 py-1 text-xs text-mist">
+        <span className="h-1.5 w-1.5 rounded-full bg-ok" />
+        <span className="font-mono">{version || 'loadr —'}</span>
+      </footer>
     </div>
   );
 }

@@ -7,6 +7,10 @@ import { launchApp } from './app';
 test('compose: scenario, request, reorder, executor reshape', async () => {
   const { app, page } = await launchApp();
 
+  // The YAML pane is optional (forms-first); open Split so we can assert that
+  // form edits flow into the Monaco YAML view.
+  await page.getByRole('tab', { name: 'Split' }).click();
+
   // Starter plan already has a "default" scenario; add a second request step.
   await page.getByLabel('add step').selectOption('request');
   // Two request steps now in the default scenario's flow.
@@ -31,6 +35,25 @@ test('compose: scenario, request, reorder, executor reshape', async () => {
   await page.getByLabel('Executor').selectOption('constant-arrival-rate');
   await expect(page.locator('.view-lines')).toContainText('constant-arrival-rate');
   await expect(page.locator('.view-lines')).toContainText('rate:');
+
+  await app.close();
+});
+
+// The Monaco YAML pane is an optional view, not a permanent half of the editor.
+test('compose: YAML pane is optional — hidden in Form view, shown on demand', async () => {
+  const { app, page } = await launchApp();
+
+  // Default is the Form view: Monaco is not mounted.
+  await expect(page.getByLabel('add step')).toBeVisible();
+  await expect(page.locator('.view-lines')).toHaveCount(0);
+
+  // Switching to the YAML view reveals the editor…
+  await page.getByRole('tab', { name: 'YAML' }).click();
+  await expect(page.locator('.view-lines')).toBeVisible();
+
+  // …and back to Form hides it again.
+  await page.getByRole('tab', { name: 'Form' }).click();
+  await expect(page.locator('.view-lines')).toHaveCount(0);
 
   await app.close();
 });

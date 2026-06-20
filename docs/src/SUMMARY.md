@@ -50,6 +50,10 @@
 
 - [The management UI](webui.md)
 
+# Desktop app
+
+- [loadr Desktop](desktop.md)
+
 # Plugins
 
 - [Plugin system overview](plugins/overview.md)

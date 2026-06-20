@@ -32,7 +32,8 @@ export interface LoadrApi {
   importPlan(): Promise<OpenedPlan | null>;
   readPlan(path: string): Promise<string>;
   savePlan(path: string | null, content: string): Promise<string | null>;
-  run(yamlText: string, onLine: (line: string) => void): Promise<Summary>;
+  run(yamlText: string, onLine: (line: string) => void, onStart?: (runId: string) => void): Promise<Summary>;
+  stopRun(runId: string): Promise<void>;
   historyList(): Promise<RunRecord[]>;
   historyAppend(rec: RunRecord): Promise<RunRecord[]>;
   pluginList(): Promise<InstalledPlugin[]>;
@@ -49,8 +50,9 @@ const api: LoadrApi = {
   importPlan: () => ipcRenderer.invoke('plan:import'),
   readPlan: (path) => ipcRenderer.invoke('plan:read', path),
   savePlan: (path, content) => ipcRenderer.invoke('plan:save', path, content),
-  run: (yamlText, onLine) => {
+  run: (yamlText, onLine, onStart) => {
     const runId = `run-${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+    onStart?.(runId);
     const listener = (_e: unknown, payload: { runId: string; line: string }) => {
       if (payload.runId === runId) onLine(payload.line);
     };
@@ -59,6 +61,7 @@ const api: LoadrApi = {
       .invoke('plan:run', { yaml: yamlText, runId })
       .finally(() => ipcRenderer.removeListener('loadr:run:line', listener));
   },
+  stopRun: (runId) => ipcRenderer.invoke('plan:stop', runId),
   historyList: () => ipcRenderer.invoke('history:list'),
   historyAppend: (rec) => ipcRenderer.invoke('history:append', rec),
   pluginList: () => ipcRenderer.invoke('plugin:list'),

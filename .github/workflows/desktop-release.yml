@@ -91,7 +91,15 @@ jobs:
       - name: Attest provenance
         uses: actions/attest-build-provenance@c074443f1aee8d4aeeae555aebba3282517141b2 # v2.2.3
         with:
-          subject-path: 'desktop/dist/*.{dmg,exe,AppImage,deb,zip}'
+          # @actions/glob has no brace expansion — list each pattern on its own
+          # line. Per-OS only some match (e.g. ubuntu → AppImage/deb); the action
+          # only errors if the combined match set is empty, which it never is.
+          subject-path: |
+            desktop/dist/*.dmg
+            desktop/dist/*.exe
+            desktop/dist/*.AppImage
+            desktop/dist/*.deb
+            desktop/dist/*-mac.zip
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: installers-${{ matrix.os }}

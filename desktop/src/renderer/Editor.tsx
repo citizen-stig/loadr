@@ -73,7 +73,9 @@ export function Editor({
 
   const forms = (
     <div ref={formsRef} className="h-full overflow-y-auto px-6 py-5">
-      <div className={`mx-auto space-y-8 ${view === 'split' ? 'max-w-3xl' : 'max-w-6xl'}`}>
+      {/* Fill the container — no centered max-width cap. In split view this is
+          the left pane; in form view it's the whole editor width. */}
+      <div className="w-full space-y-8">
         <PlanMetaForm doc={doc} />
         <ScenariosForm doc={doc} />
       </div>

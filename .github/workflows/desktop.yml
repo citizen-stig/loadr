@@ -66,6 +66,9 @@ jobs:
 
   package:
     name: package (${{ matrix.os }})
+    # macOS cross-build + package legitimately takes ~25m; cap well above that so
+    # a hang fails fast without tripping healthy runs.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:

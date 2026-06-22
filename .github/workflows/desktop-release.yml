@@ -18,6 +18,14 @@ on:
 permissions:
   contents: read
 
+# Share the `release` group with the CLI Release and Publish-package workflows so
+# release writes to main/tags never overlap. A concurrent CLI release used to push
+# package-manifest commits to main mid-build, leaving desktop semantic-release
+# "behind the remote" and silently skipping publish. Serializing eliminates that.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   plan:
     name: plan release
@@ -54,6 +62,8 @@ jobs:
     name: build installers (${{ matrix.os }})
     needs: plan
     if: needs.plan.outputs.publish == 'true'
+    # macOS cross-build + package + notarize takes ~25m; cap above that.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -153,6 +163,12 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.PAT_TOKEN }}
+          # Check out the live main tip (not the triggering SHA) so semantic-release
+          # is never "behind the remote" after a sibling release committed to main.
+          # The installers come from the build job at the triggering SHA; the only
+          # thing that can land in between is a [skip ci] package-manifest commit,
+          # which doesn't touch desktop/, so the artifacts stay accurate.
+          ref: main
       - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4
         with: { node-version: 22 }
       - run: npm ci

@@ -12,6 +12,12 @@ on:
 permissions:
   contents: read
 
+# Share the `release` group with the CLI/Desktop release workflows so this
+# commit to main can't land while a desktop release is mid-publish.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   manifests:
     name: refresh Homebrew + Scoop manifests

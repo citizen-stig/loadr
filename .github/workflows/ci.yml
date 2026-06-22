@@ -34,6 +34,9 @@ jobs:
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # Healthy runs finish in minutes; a hang (seen stalling ~3h on macOS) should
+    # fail fast instead of blocking merges.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:

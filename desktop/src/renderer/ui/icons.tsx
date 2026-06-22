@@ -48,6 +48,8 @@ export const ArrowUp: Icon = (p) => <Svg {...p}><path d="M12 19V5m-7 7 7-7 7 7" 
 export const ArrowDown: Icon = (p) => <Svg {...p}><path d="M12 5v14m7-7-7 7-7-7" /></Svg>;
 export const Search: Icon = (p) => <Svg {...p}><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></Svg>;
 export const PanelLeft: Icon = (p) => <Svg {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></Svg>;
+export const Sparkles: Icon = (p) => <Svg {...p}><path d="M12 3l1.6 4.6L18 9l-4.4 1.4L12 15l-1.6-4.6L6 9l4.4-1.4L12 3zM19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14z" /></Svg>;
+export const Key: Icon = (p) => <Svg {...p}><circle cx="7.5" cy="15.5" r="3.5" /><path d="m10 13 7-7M21 4l-3 3M17 8l2 2" /></Svg>;
 
 // ---- step-kind glyphs ------------------------------------------------------
 const Globe: Icon = (p) => <Svg {...p}><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18z" /></Svg>;

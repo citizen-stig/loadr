@@ -40,6 +40,20 @@ export interface LoadrApi {
   pluginInstall(spec: string, allowUntrusted: boolean): Promise<string>;
   pluginRemove(name: string): Promise<void>;
   pluginBrowseDir(): Promise<string | null>;
+  ai: {
+    hasKey(provider: string): Promise<boolean>;
+    setKey(provider: string, key: string): Promise<void>;
+    clearKey(provider: string): Promise<void>;
+    browseRepo(): Promise<string | null>;
+    generate(arg: { provider: string; mode: 'prompt' | 'repo'; prompt: string; source?: string; model: string }): Promise<AiPlanResult>;
+  };
+}
+
+export interface AiPlanResult {
+  yaml: string;
+  valid: boolean;
+  repaired: boolean;
+  diagnostics: { severity: string; message: string }[];
 }
 
 const api: LoadrApi = {
@@ -68,6 +82,13 @@ const api: LoadrApi = {
   pluginInstall: (spec, allowUntrusted) => ipcRenderer.invoke('plugin:install', { spec, allowUntrusted }),
   pluginRemove: (name) => ipcRenderer.invoke('plugin:remove', name),
   pluginBrowseDir: () => ipcRenderer.invoke('plugin:browseDir'),
+  ai: {
+    hasKey: (provider) => ipcRenderer.invoke('ai:hasKey', provider),
+    setKey: (provider, key) => ipcRenderer.invoke('ai:setKey', { provider, key }),
+    clearKey: (provider) => ipcRenderer.invoke('ai:clearKey', provider),
+    browseRepo: () => ipcRenderer.invoke('ai:browseRepo'),
+    generate: (arg) => ipcRenderer.invoke('ai:generate', arg),
+  },
 };
 
 contextBridge.exposeInMainWorld('loadr', api);

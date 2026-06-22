@@ -30,6 +30,15 @@ what a run produced.
   two-way synced with the forms. Forms-first by default.
 - **Drag-and-drop** flow composition, keyboard-accessible (dnd-kit).
 - **Import** JMeter / k6 / HAR via `loadr convert`.
+- **Generate with AI** — describe a test in plain English ("200 VUs for 2m
+  against `POST /checkout`, assert 200 and p95 < 400ms") **or point loadr at a
+  repository** (local folder or git URL); it reads the OpenAPI spec / routes and
+  writes a test covering them. Every generated plan is validated against
+  `loadr validate` (with one automatic repair pass) before it opens in a tab.
+  Works with your choice of provider — **Anthropic (Claude), OpenAI (GPT),
+  Google (Gemini) or xAI (Grok)** — using your own API key per provider, stored
+  OS-encrypted; all calls happen in the main process (the renderer stays
+  sandboxed).
 - **Run + live monitoring** — a dashboard mirroring the
   [web UI](webui.md): live Requests/s, Active VUs, p95 and error tiles, a
   streaming throughput chart, threshold pills, a **Stop** control, plus run

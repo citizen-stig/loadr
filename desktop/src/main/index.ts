@@ -2,15 +2,19 @@
 // the renderer reaches only through the typed preload bridge. The renderer
 // never spawns processes or touches the filesystem directly.
 
-import { readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, type IpcMainInvokeEvent } from 'electron';
 import type { ChildProcess } from 'node:child_process';
 
 import {
   convert, pluginInstall, pluginList, pluginRemove, runPlan, schema, validate, version,
 } from './loadr';
+import { generatePlan, providerChat, type ChatMessage } from './ai';
+import { gatherRepo } from './repo';
+import { getProvider, type ProviderId } from '../shared/providers';
 import { addRun, type RunRecord } from '../shared/history';
 
 const isDev = !app.isPackaged;
@@ -130,6 +134,68 @@ ipcMain.handle('plan:save', async (_e: IpcMainInvokeEvent, path: string | null, 
   await writeFile(target, content, 'utf8');
   return target;
 });
+
+// ---- IPC: AI plan authoring ------------------------------------------------
+// The Anthropic API key is stored OS-encrypted (safeStorage) in userData; it is
+// never exposed back to the renderer. All network/LLM calls happen here in main.
+// One encrypted key file per provider. getProvider() sanitises the id (unknown
+// ids fall back to a known one), so the path can't be influenced by the renderer.
+const keyFile = (provider: string) => join(app.getPath('userData'), `ai-key-${getProvider(provider).id}.bin`);
+
+async function setApiKey(provider: string, key: string): Promise<void> {
+  const blob = safeStorage.isEncryptionAvailable()
+    ? safeStorage.encryptString(key)
+    : Buffer.from(`plain:${key}`);
+  await writeFile(keyFile(provider), blob);
+}
+async function getApiKey(provider: string): Promise<string | null> {
+  let buf: Buffer;
+  try {
+    buf = await readFile(keyFile(provider));
+  } catch {
+    return null;
+  }
+  try {
+    if (safeStorage.isEncryptionAvailable()) return safeStorage.decryptString(buf);
+  } catch {
+    /* fall through to plain */
+  }
+  const s = buf.toString();
+  return s.startsWith('plain:') ? s.slice(6) : null;
+}
+
+let schemaCache: unknown;
+async function cachedSchema(): Promise<unknown> {
+  if (!schemaCache) schemaCache = await schema();
+  return schemaCache;
+}
+
+ipcMain.handle('ai:hasKey', (_e: IpcMainInvokeEvent, provider: string) => existsSync(keyFile(provider)));
+ipcMain.handle('ai:setKey', (_e: IpcMainInvokeEvent, a: { provider: string; key: string }) => setApiKey(a.provider, a.key));
+ipcMain.handle('ai:clearKey', async (_e: IpcMainInvokeEvent, provider: string) => {
+  await unlink(keyFile(provider)).catch(() => {});
+});
+ipcMain.handle('ai:browseRepo', async () => {
+  const r = await dialog.showOpenDialog({ properties: ['openDirectory'] });
+  return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0];
+});
+ipcMain.handle(
+  'ai:generate',
+  async (
+    _e: IpcMainInvokeEvent,
+    arg: { provider: ProviderId; mode: 'prompt' | 'repo'; prompt: string; source?: string; model: string },
+  ) => {
+    const apiKey = await getApiKey(arg.provider);
+    if (!apiKey) throw new Error(`Set your ${getProvider(arg.provider).label} API key first.`);
+    const repo = arg.mode === 'repo' && arg.source ? await gatherRepo(arg.source) : null;
+    const chat = (messages: ChatMessage[]) => providerChat(arg.provider, apiKey, arg.model, messages);
+    const validateFn = async (yaml: string) => {
+      const v = await validate(yaml);
+      return { ok: v.ok, diagnostics: v.diagnostics };
+    };
+    return generatePlan({ prompt: arg.prompt, schema: await cachedSchema(), repo }, chat, validateFn);
+  },
+);
 
 app.whenReady().then(createWindow);
 app.on('window-all-closed', () => {

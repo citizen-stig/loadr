@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { AiPanel } from './AiPanel';
 import { Editor, type EditorState } from './Editor';
 import { PluginsPanel } from './PluginsPanel';
 import {
   activeTab, closeTab, emptyWorkspace, newTabId, openTab, selectTab, updateTab, type Workspace,
 } from './workspace/tabs';
 import { Badge, Button } from './ui/controls';
-import { Copy, FolderOpen, Import, Plus, Puzzle, X } from './ui/icons';
+import { Copy, FolderOpen, Import, Plus, Puzzle, Sparkles, X } from './ui/icons';
 
 const STARTER = `name: new plan
 scenarios:
@@ -39,6 +40,7 @@ export default function App() {
   const yamlRef = useRef<Record<string, string>>({});
   const [version, setVersion] = useState('');
   const [showPlugins, setShowPlugins] = useState(false);
+  const [showAi, setShowAi] = useState(false);
 
   useEffect(() => {
     window.loadr?.version().then(setVersion).catch(() => setVersion('loadr not found'));
@@ -89,7 +91,9 @@ export default function App() {
           <Badge tone="ember">Beta</Badge>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="primary" icon={Plus} onClick={() => newTab()}>New</Button>
+          <Button variant="primary" icon={Sparkles} onClick={() => setShowAi(true)}>AI</Button>
+          <div className="mx-1 h-5 w-px bg-edge" />
+          <Button icon={Plus} onClick={() => newTab()}>New</Button>
           <Button icon={FolderOpen} onClick={openFile}>Open…</Button>
           <Button icon={Import} onClick={importFile}>Import…</Button>
           <Button icon={Copy} onClick={duplicate}>Duplicate</Button>
@@ -99,6 +103,12 @@ export default function App() {
       </header>
 
       {showPlugins && <PluginsPanel onClose={() => setShowPlugins(false)} />}
+      {showAi && (
+        <AiPanel
+          onClose={() => setShowAi(false)}
+          onGenerated={(yaml, title) => newTab(yaml, null, title)}
+        />
+      )}
 
       <div role="tablist" className="flex items-center gap-1 overflow-x-auto border-b border-edge bg-coal px-2 pt-1">
         {ws.tabs.map((t) => {

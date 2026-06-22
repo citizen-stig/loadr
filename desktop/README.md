@@ -32,6 +32,12 @@ Stack: Electron + TypeScript, React 19 + Vite 6 + Tailwind 4 (renderer), Vitest
   and **real forms for every step kind** with recursive nested-step editors
   (request, think_time, js, group, repeat, while, if, random, foreach, switch,
   during, retry, parallel, rendezvous) — composing a plan never requires YAML
+- [x] **Generate with AI** — natural-language **or** repository → a validated
+  loadr plan, with your choice of provider (**Anthropic / OpenAI / Google / xAI**),
+  your key per provider stored OS-encrypted; generate → `loadr validate` → one
+  repair pass → opens in a tab. All LLM/network in main; the renderer stays
+  sandboxed. Pure core (`shared/ai.ts`, `shared/repo.ts`, `shared/providers.ts`)
+  is unit-tested; the model calls are behind a seam.
 
 ## Develop
 ```bash

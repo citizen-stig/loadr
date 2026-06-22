@@ -1,12 +1,12 @@
 {
-  "version": "1.22.1",
+  "version": "1.22.2",
   "description": "Modern load-testing tool: declarative YAML, embedded JS, many protocols",
   "homepage": "https://loadr.io",
   "license": "Elastic-2.0",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/levantar-ai/loadr/releases/download/v1.22.1/loadr-x86_64-pc-windows-msvc.zip",
-      "hash": "4f031d43d7be6b8473de2136585510eb1792ee62c194a1df7209c99adc10cd2d",
+      "url": "https://github.com/levantar-ai/loadr/releases/download/v1.22.2/loadr-x86_64-pc-windows-msvc.zip",
+      "hash": "abbb69e5d8d6f76b1ba8b9875358aff3172bff512535dfd6ba56839039e5fe36",
       "extract_dir": "loadr-x86_64-pc-windows-msvc"
     }
   },

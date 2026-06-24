@@ -1,18 +1,18 @@
 # loadr GitHub Actions
 
-First-party composite actions that make loadr **CI-native**: install the CLI on a
-runner, run a test plan, and turn thresholds + checks into a **JUnit XML** report
-that GitHub (and every other CI) renders in its test panel. A breached threshold
+First-party actions that make loadr **CI-native**: install the CLI on a runner,
+run a test plan, and turn thresholds + checks into a **JUnit XML** report that
+GitHub (and every other CI) renders in its test panel. A breached threshold
 fails the job.
 
-## `levantar-ai/loadr/.github/actions/run`
+## `levantar-ai/loadr@v1`
 
-Install loadr, run a plan, write a JUnit report and JSON summary, and fail the
-job on a threshold breach.
+The Marketplace action — install loadr, run a plan, write a JUnit report and JSON
+summary, and fail the job on a threshold breach.
 
 ```yaml
 - name: Load test
-  uses: levantar-ai/loadr/.github/actions/run@v1
+  uses: levantar-ai/loadr@v1
   with:
     plan: tests/checkout.yaml
     version: latest          # or a tag like v1.21.5
@@ -21,6 +21,10 @@ job on a threshold breach.
     # args: "--vus 50 --duration 2m"   # extra `loadr run` flags
     # fail-on-threshold: 'false'        # record without failing the job
 ```
+
+`@v1` floats to the latest `v1.x` release; pin a full tag like `@v1.22.2` for a
+fixed version. The subdirectory form
+`levantar-ai/loadr/.github/actions/run@v1` is identical and still supported.
 
 Surface the results in the PR's checks tab with any JUnit reporter, e.g.
 [`dorny/test-reporter`](https://github.com/dorny/test-reporter):

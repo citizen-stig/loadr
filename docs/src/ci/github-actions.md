@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Load test
-        uses: levantar-ai/loadr/.github/actions/run@v1
+        uses: levantar-ai/loadr@v1
         with:
           plan: perf/checkout.yaml
           version: latest
@@ -32,9 +32,13 @@ jobs:
           reporter: java-junit
 ```
 
-The `run` action installs loadr, runs the plan, writes `loadr-junit.xml` and
+The action installs loadr, runs the plan, writes `loadr-junit.xml` and
 `loadr-summary.json`, and fails the step when a threshold is breached. Any JUnit
 reporter then renders the thresholds and checks as a test report.
+
+`@v1` floats to the latest `v1.x` release; pin a full tag (e.g. `@v1.22.2`) to
+freeze the version. The subdirectory form
+`levantar-ai/loadr/.github/actions/run@v1` is equivalent.
 
 ### `run` inputs
 

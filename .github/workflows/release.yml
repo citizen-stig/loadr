@@ -26,6 +26,7 @@ on:
       - '.github/workflows/acceptance.yml'
       - '.github/workflows/benchmark.yml'
       - '.github/workflows/release.yml'
+      - '.github/workflows/major-tag.yml'
       - '.github/workflows/publish-packages.yml'
       - 'Formula/**'
       - 'bucket/**'

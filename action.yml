@@ -1,0 +1,77 @@
+# Marketplace entry point: `uses: levantar-ai/loadr@v1`.
+#
+# loadr is a monorepo, so this root action is the canonical, Marketplace-listed
+# "run a load test" action. It is a thin wrapper that delegates to the
+# self-contained composite under .github/actions/run (kept DRY — the install +
+# run + JUnit logic lives in one place). The subdirectory form
+# `levantar-ai/loadr/.github/actions/run@v1` keeps working too.
+name: loadr load test
+description: >-
+  Run a loadr load test in CI. Installs loadr, runs a test plan, writes a JUnit
+  XML report + JSON summary, and fails the job when a threshold is breached.
+author: levantar-ai
+
+branding:
+  icon: activity
+  color: purple
+
+inputs:
+  plan:
+    description: Path to the loadr test plan (YAML).
+    required: true
+  version:
+    description: 'loadr version to install (a tag like "v1.21.5", or "latest").'
+    required: false
+    default: latest
+  bin:
+    description: >-
+      Path to a preinstalled loadr binary. When set, the download is skipped and
+      this binary is used (handy for self-hosted runners that already ship loadr).
+    required: false
+    default: ''
+  junit:
+    description: Path to write the JUnit XML report.
+    required: false
+    default: loadr-junit.xml
+  summary:
+    description: Path to write the JSON summary export.
+    required: false
+    default: loadr-summary.json
+  args:
+    description: Extra arguments passed verbatim to `loadr run`.
+    required: false
+    default: ''
+  fail-on-threshold:
+    description: >-
+      When 'true' (default) a breached threshold fails the step. Set 'false' to
+      record results without failing the job.
+    required: false
+    default: 'true'
+
+outputs:
+  passed:
+    description: "'true' when every threshold passed and the run was not aborted."
+    value: ${{ steps.run.outputs.passed }}
+  exit-code:
+    description: The exit code from `loadr run`.
+    value: ${{ steps.run.outputs.exit-code }}
+  junit:
+    description: Path to the JUnit XML report.
+    value: ${{ steps.run.outputs.junit }}
+  summary:
+    description: Path to the JSON summary.
+    value: ${{ steps.run.outputs.summary }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      uses: ./.github/actions/run
+      with:
+        plan: ${{ inputs.plan }}
+        version: ${{ inputs.version }}
+        bin: ${{ inputs.bin }}
+        junit: ${{ inputs.junit }}
+        summary: ${{ inputs.summary }}
+        args: ${{ inputs.args }}
+        fail-on-threshold: ${{ inputs.fail-on-threshold }}

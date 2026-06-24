@@ -71,13 +71,26 @@ jobs:
           junit: loadr-junit.xml
           summary: loadr-summary.json
 
+      - name: Run loadr via the root (Marketplace) action
+        id: root
+        uses: ./
+        with:
+          plan: plan.yaml
+          bin: ${{ github.workspace }}/target/release/loadr
+          junit: root-junit.xml
+          summary: root-summary.json
+
       - name: Assert outputs and JUnit report
         run: |
           test "${{ steps.loadr.outputs.passed }}" = "true"
           test -f loadr-junit.xml
           grep -q '<testsuites name="loadr: action-selftest"' loadr-junit.xml
           grep -q 'classname="check"' loadr-junit.xml
-          echo "JUnit report OK"
+          # The root action must delegate to the same engine and report.
+          test "${{ steps.root.outputs.passed }}" = "true"
+          test -f root-junit.xml
+          grep -q '<testsuites name="loadr: action-selftest"' root-junit.xml
+          echo "JUnit report OK (run + root action)"
 
       - name: Upload reports
         if: always()
@@ -87,3 +100,5 @@ jobs:
           path: |
             loadr-junit.xml
             loadr-summary.json
+            root-junit.xml
+            root-summary.json

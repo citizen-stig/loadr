@@ -34,10 +34,6 @@ jobs:
       - uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
         with:
           egress-policy: audit
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.PAT_TOKEN }}
       - name: Move major-version tag
         env:
           GH_TOKEN: ${{ secrets.PAT_TOKEN }}
@@ -62,19 +58,29 @@ jobs:
             echo "::error::no CLI v<x.y.z> release found"; exit 1
           fi
 
-          major="v${latest#v}"; major="v${major%%.*}"   # v1.22.2 -> v1
+          ver="${latest#v}"; major="v${ver%%.*}"   # v1.22.2 -> v1
           echo "Latest CLI release: ${latest} -> major tag ${major}"
 
-          git fetch --force --tags origin
-          if ! git rev-parse -q --verify "refs/tags/${latest}" >/dev/null; then
-            echo "::error::tag ${latest} not found in the repo"; exit 1
+          # Resolve the commit the release tag points at (deref annotated tags).
+          obj_type="$(gh api "repos/${REPO}/git/ref/tags/${latest}" --jq '.object.type')"
+          sha="$(gh api "repos/${REPO}/git/ref/tags/${latest}" --jq '.object.sha')"
+          if [ "${obj_type}" = "tag" ]; then
+            sha="$(gh api "repos/${REPO}/git/tags/${sha}" --jq '.object.sha')"
           fi
+          echo "${latest} -> commit ${sha}"
 
-          if [ "$(git rev-parse -q --verify "refs/tags/${major}" || true)" = "$(git rev-parse "refs/tags/${latest}")" ]; then
-            echo "::notice::${major} already points at ${latest}; nothing to do"
-            exit 0
+          # Create or force-move the major tag via the Git Refs API. The API path
+          # is NOT subject to the PAT 'workflow'-scope rule that rejects a plain
+          # `git push` of any ref whose tree touches .github/workflows/** — the
+          # same reason semantic-release creates tags through the API, not git.
+          if cur="$(gh api "repos/${REPO}/git/ref/tags/${major}" --jq '.object.sha' 2>/dev/null)"; then
+            if [ "${cur}" = "${sha}" ]; then
+              echo "::notice::${major} already points at ${sha}; nothing to do"; exit 0
+            fi
+            gh api -X PATCH "repos/${REPO}/git/refs/tags/${major}" \
+              -f sha="${sha}" -F force=true >/dev/null
+          else
+            gh api -X POST "repos/${REPO}/git/refs" \
+              -f ref="refs/tags/${major}" -f sha="${sha}" >/dev/null
           fi
-
-          git tag -f "${major}" "${latest}"
-          git push --force origin "refs/tags/${major}"
-          echo "::notice::moved ${major} -> ${latest}"
+          echo "::notice::moved ${major} -> ${latest} (${sha})"

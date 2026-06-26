@@ -1,10 +1,13 @@
 # Marketplace entry point: `uses: levantar-ai/loadr@v1`.
 #
 # loadr is a monorepo, so this root action is the canonical, Marketplace-listed
-# "run a load test" action. It is a thin wrapper that delegates to the
-# self-contained composite under .github/actions/run (kept DRY — the install +
-# run + JUnit logic lives in one place). The subdirectory form
-# `levantar-ai/loadr/.github/actions/run@v1` keeps working too.
+# "run a load test" action. It is SELF-CONTAINED: it inlines the install + run
+# logic rather than delegating to .github/actions/run via a local `uses: ./…`.
+# A published composite action cannot reference a sibling action by local path —
+# GitHub resolves `./…` against the CONSUMER'S checkout, not this repo, so the
+# delegating form fails with "Can't find action.yml under
+# <consumer>/.github/actions/run". The subdirectory action
+# (`levantar-ai/loadr/.github/actions/run@v1`) is the same logic and still works.
 name: loadr load test
 description: >-
   Run a loadr load test in CI. Installs loadr, runs a test plan, writes a JUnit
@@ -54,24 +57,96 @@ outputs:
     value: ${{ steps.run.outputs.passed }}
   exit-code:
     description: The exit code from `loadr run`.
-    value: ${{ steps.run.outputs.exit-code }}
+    value: ${{ steps.run.outputs.exit_code }}
   junit:
     description: Path to the JUnit XML report.
-    value: ${{ steps.run.outputs.junit }}
+    value: ${{ inputs.junit }}
   summary:
     description: Path to the JSON summary.
-    value: ${{ steps.run.outputs.summary }}
+    value: ${{ inputs.summary }}
 
 runs:
   using: composite
   steps:
+    - name: Install loadr
+      shell: bash
+      env:
+        LOADR_VERSION: ${{ inputs.version }}
+        LOADR_PREINSTALLED: ${{ inputs.bin }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        repo="levantar-ai/loadr"
+        # A preinstalled binary short-circuits the download.
+        if [ -n "${LOADR_PREINSTALLED}" ]; then
+          if [ ! -x "${LOADR_PREINSTALLED}" ]; then
+            echo "::error::bin '${LOADR_PREINSTALLED}' is not an executable file"; exit 1
+          fi
+          echo "Using preinstalled loadr at ${LOADR_PREINSTALLED}"
+          echo "$(cd "$(dirname "${LOADR_PREINSTALLED}")" && pwd)" >> "$GITHUB_PATH"
+          "${LOADR_PREINSTALLED}" --version || true
+          exit 0
+        fi
+        os="$(uname -s)"; arch="$(uname -m)"
+        case "$os" in
+          Linux)  triple_os="unknown-linux-gnu"; ext="tar.gz" ;;
+          Darwin) triple_os="apple-darwin";       ext="tar.gz" ;;
+          MINGW*|MSYS*|CYGWIN*|Windows_NT) triple_os="pc-windows-msvc"; ext="zip" ;;
+          *) echo "::error::unsupported OS: $os"; exit 1 ;;
+        esac
+        case "$arch" in
+          x86_64|amd64) triple_arch="x86_64" ;;
+          arm64|aarch64) triple_arch="aarch64" ;;
+          *) echo "::error::unsupported arch: $arch"; exit 1 ;;
+        esac
+        if [ "$triple_os" = "pc-windows-msvc" ]; then triple_arch="x86_64"; fi
+        asset="loadr-${triple_arch}-${triple_os}.${ext}"
+        if [ "${LOADR_VERSION}" = "latest" ] || [ -z "${LOADR_VERSION}" ]; then
+          base="https://github.com/${repo}/releases/latest/download"
+          tag="$(gh release view --repo "$repo" --json tagName -q .tagName 2>/dev/null || echo latest)"
+        else
+          tag="${LOADR_VERSION}"
+          base="https://github.com/${repo}/releases/download/${tag}"
+        fi
+        echo "Installing loadr ${tag} (${asset})"
+        dest="${RUNNER_TEMP:-/tmp}/loadr-install"
+        mkdir -p "$dest"
+        curl --fail --location --retry 3 --silent --show-error -o "${dest}/${asset}" "${base}/${asset}"
+        if [ "$ext" = "zip" ]; then
+          unzip -o -q "${dest}/${asset}" -d "$dest"
+          bin="$(find "$dest" -name 'loadr.exe' -type f | head -n1)"
+        else
+          tar -xzf "${dest}/${asset}" -C "$dest"
+          bin="$(find "$dest" -name 'loadr' -type f | head -n1)"
+        fi
+        if [ -z "$bin" ]; then echo "::error::loadr binary not found in $asset"; exit 1; fi
+        chmod +x "$bin" || true
+        echo "$(dirname "$bin")" >> "$GITHUB_PATH"
+        "$bin" --version || true
+
     - id: run
-      uses: ./.github/actions/run
-      with:
-        plan: ${{ inputs.plan }}
-        version: ${{ inputs.version }}
-        bin: ${{ inputs.bin }}
-        junit: ${{ inputs.junit }}
-        summary: ${{ inputs.summary }}
-        args: ${{ inputs.args }}
-        fail-on-threshold: ${{ inputs.fail-on-threshold }}
+      shell: bash
+      env:
+        PLAN: ${{ inputs.plan }}
+        JUNIT: ${{ inputs.junit }}
+        SUMMARY: ${{ inputs.summary }}
+        EXTRA: ${{ inputs.args }}
+        FAIL_ON_THRESHOLD: ${{ inputs.fail-on-threshold }}
+      run: |
+        set -uo pipefail
+        # shellcheck disable=SC2086
+        loadr run "$PLAN" \
+          --junit "$JUNIT" \
+          --summary-export "$SUMMARY" \
+          $EXTRA
+        code=$?
+        echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+        if [ "$code" -eq 0 ]; then
+          echo "passed=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "passed=false" >> "$GITHUB_OUTPUT"
+        fi
+        if [ "$code" -ne 0 ] && [ "$FAIL_ON_THRESHOLD" = "true" ]; then
+          echo "::error::loadr run failed (exit ${code}); see ${JUNIT}"
+          exit "$code"
+        fi

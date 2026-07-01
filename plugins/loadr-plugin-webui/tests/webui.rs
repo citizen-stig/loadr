@@ -509,7 +509,9 @@ async fn sse_stream_emits_snapshots() {
 /// command propagates to the run loop asynchronously, so a single read right
 /// after the POST can race the not-yet-applied flag (flaky on slow CI runners).
 async fn wait_is_paused(server: &TestServer, run_id: &str, expected: bool) {
-    for _ in 0..200 {
+    // 500 * 20ms = 10s. The async pause propagation can exceed 4s on slow CI
+    // runners (observed flaking on macos-latest), so give it real headroom.
+    for _ in 0..500 {
         let (_, detail) = server
             .call("GET", &format!("/api/runs/{run_id}"), None)
             .await;
@@ -525,7 +527,8 @@ async fn wait_is_paused(server: &TestServer, run_id: &str, expected: bool) {
 /// `POST /api/runs` returns before the run handle is registered, so a pause
 /// issued immediately can race a not-yet-ready run and be silently dropped.
 async fn wait_run_state(server: &TestServer, run_id: &str, state: &str) {
-    for _ in 0..200 {
+    // 500 * 20ms = 10s — matches wait_is_paused; slow CI runners need the room.
+    for _ in 0..500 {
         let (_, detail) = server
             .call("GET", &format!("/api/runs/{run_id}"), None)
             .await;

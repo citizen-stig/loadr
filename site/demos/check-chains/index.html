@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="/assets/consent.js"></script>
+<title>JMESPath &amp; fused check-chains — loadr demo</title>
+<meta name="description" content="Chain extract-and-assert steps that short-circuit on the first miss. A runnable loadr demo backed by examples/25-check-chains.yaml.">
+<meta property="og:title" content="JMESPath &amp; fused check-chains — loadr demo">
+<meta property="og:description" content="Chain extract-and-assert steps that short-circuit on the first miss. A runnable loadr demo backed by examples/25-check-chains.yaml.">
+<meta property="og:url" content="https://loadr.io/demos/check-chains/">
+<meta property="og:type" content="website">
+<link rel="canonical" href="https://loadr.io/demos/check-chains/">
+<link rel="icon" type="image/png" sizes="64x64" href="/assets/favicon-64.png">
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+<link rel="stylesheet" href="/assets/site.css">
+</head>
+<body class="antialiased overflow-x-clip">
+
+<!-- INCLUDE:NAV -->
+
+<!-- ======================================================= HERO -->
+<section class="hero-grid relative overflow-hidden pt-32 pb-10">
+  <div class="pointer-events-none absolute -top-40 left-1/2 h-[40rem] w-[56rem] -translate-x-1/2 rounded-[50%] bg-blood/20 blur-[150px]"></div>
+  <div class="mx-auto max-w-5xl px-5">
+    <nav class="flex items-center gap-2 text-sm text-smoke">
+      <a class="hover:text-flare" href="/demos/">Demos</a>
+      <span class="text-edge-bright">/</span>
+      <span class="text-ash">JMESPath &amp; fused check-chains</span>
+    </nav>
+    <div class="mt-4 flex items-center gap-4">
+      <span class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-edge bg-coal"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fd1e2e" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span>
+      <h1 class="text-3xl font-black tracking-tight text-white sm:text-4xl">JMESPath &amp; fused check-chains</h1>
+      <span class="rounded-full border border-edge bg-coal px-3 py-1 text-xs text-ash">Validation &amp; CI</span>
+    </div>
+    <p class="mt-5 max-w-2xl text-lg text-smoke">Fuse extraction and assertion into a chain: each link pulls a value and checks it, and the chain stops at the first failure with a precise cause — richer than a flat list of checks.</p>
+  </div>
+</section>
+
+<!-- ======================================================= DETAIL -->
+<section class="pb-16">
+  <div class="mx-auto grid max-w-5xl gap-8 px-5 lg:grid-cols-2">
+    <div>
+      <div class="codebox">
+        <div class="codebar"><span>Run it</span><button data-copy="#check-chainsRun" class="rounded border border-edge px-2 py-0.5 text-[10px] text-smoke hover:text-flare">copy</button></div>
+        <pre id="check-chainsRun"><code data-lang="bash">$ loadr run examples/25-check-chains.yaml</code></pre>
+      </div>
+      <div class="codebox mt-4"><div class="codebar"><span>examples/25-check-chains.yaml</span><button data-copy="#check-chainsSrc" class="rounded border border-edge px-2 py-0.5 text-[10px] text-smoke hover:text-flare">copy</button></div><pre id="check-chainsSrc"><code data-lang="yaml"># Fused check-chains: extract → coerce type → transform → validate → save,
+# all in one declarative `extract:` step (Gatling-style). Chains live happily
+# next to the classic `type:`-tagged extractors — mix them freely.
+#
+# Each `chain:` is the variable name to save. Pick exactly one source
+# (jmespath / jsonpath / regex / header / css / xpath / left+right boundary),
+# then optionally `as:` a type, run a `transform:` pipeline, `check:` the value
+# and fall back to a `default:`.
+name: check-chains
+description: JMESPath extraction and fused extract/coerce/transform/validate/save chains
+
+defaults:
+  http:
+    base_url: https://shop.example.com
+
+scenarios:
+  catalog:
+    executor: constant-vus
+    vus: 3
+    duration: 30s
+    flow:
+      - request:
+          name: list inventory
+          url: /inventory
+          extract:
+            # JMESPath filter + projection: cheapest item's name, uppercased.
+            - chain: cheapest_name
+              jmespath: "items | sort_by(@, &amp;price)[0].name"
+              as: string
+              transform: [trim, uppercase]
+              check:
+                not_empty: true
+                matches: "^[A-Z]+$"
+
+            # JMESPath again, this time keeping the native numeric type, then
+            # validating the price falls in a sane range before we save it.
+            - chain: cheapest_price
+              jmespath: "min(items[].price)"
+              as: int
+              check: { min: 1, max: 1000 }
+
+            # A classic extractor in the same step — back-compat is preserved.
+            - { type: jsonpath, name: item_count, expression: "$.count" }
+
+      - request:
+          name: fetch cheapest
+          # Both the chain var and the classic var interpolate the same way.
+          url: "/items/${cheapest_name}?max=${cheapest_price}&amp;seen=${item_count}"
+          checks:
+            - { type: status, equals: 200 }
+
+      - request:
+          name: place order
+          method: POST
+          url: /orders
+          body:
+            json: { item: "${cheapest_name}" }
+          extract:
+            # Chain over the order response: normalise status to lowercase and
+            # assert it is one of the states we expect, saving it for routing.
+            - chain: order_status
+              jsonpath: "$.status"
+              transform: [lowercase]
+              check:
+                one_of: [pending, paid, shipped, delivered]
+                # If the value is unexpected, fail the request but keep going.
+                on_failure: continue
+              default: pending
+
+      - request:
+          name: poll order status
+          url: "/orders/status?state=${order_status}"
+          checks:
+            - { type: status, equals: 200 }
+
+thresholds:
+  http_req_failed: ["rate&lt;0.01"]
+  checks: ["rate&gt;0.99"]</code></pre></div><p class="mt-4 text-sm text-smoke">View raw: <a class="font-semibold text-flare hover:underline" href="/examples/25-check-chains.yaml">examples/25-check-chains.yaml</a></p>
+      
+    </div>
+    <div>
+      <div class="rounded-2xl border border-edge bg-panel p-6">
+        <h2 class="text-lg font-bold text-white">What it shows</h2>
+        <ul class="mt-4 space-y-2.5 text-sm text-ash">
+          <li class="flex gap-2"><span class="mt-0.5 text-ember">▸</span><span>JMESPath over JSON bodies</span></li>
+<li class="flex gap-2"><span class="mt-0.5 text-ember">▸</span><span>Fused extract + check links</span></li>
+<li class="flex gap-2"><span class="mt-0.5 text-ember">▸</span><span>Short-circuits with a clear failure reason</span></li>
+        </ul>
+        <p class="mt-6 text-sm text-smoke">Key metrics: <code class="text-flare">checks</code>.</p>
+      </div>
+      
+      
+      <div class="mt-6 overflow-hidden rounded-xl border border-edge bg-ink">
+        <video controls preload="none" aria-label="Demo: JMESPath &amp; fused check-chains" poster="/videos/12-check-chains-poster.jpg" class="aspect-video w-full bg-ink">
+          <source src="/videos/12-check-chains.mp4" type="video/mp4">
+        </video>
+      </div>
+      <div class="mt-6 flex flex-wrap gap-4">
+        <a href="/download/" class="glow rounded-xl bg-blood px-6 py-3 font-bold text-white">Download &amp; run →</a>
+        <a href="/docs/yaml/checks.html" class="rounded-xl border border-edge-bright bg-coal px-6 py-3 font-semibold text-ash hover:border-ember/60 hover:text-white">Read the docs →</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================================================= PREV / NEXT -->
+<section class="border-t border-edge/60 bg-coal/40 py-10">
+  <div class="mx-auto flex max-w-5xl items-center justify-between gap-4 px-5 text-sm">
+    <a class="text-smoke hover:text-flare" href="/demos/functional-test/">← Functional / smoke test</a>
+    <a class="font-semibold text-flare hover:underline" href="/demos/">All demos</a>
+    <a class="text-smoke hover:text-flare" href="/demos/failure-breakdown/">Failure breakdown, by cause →</a>
+  </div>
+</section>
+
+</main>
+
+<footer class="border-t border-edge/60 bg-coal/40 py-14">
+  <div class="mx-auto max-w-7xl px-5">
+    <div class="grid gap-10 md:grid-cols-4">
+      <div>
+        <div class="flex items-center gap-2">
+          <img src="/assets/logo-mark.png" width="20" height="20" alt="" />
+          <span class="font-extrabold text-white">loadr<span class="text-ember">.io</span></span>
+        </div>
+        <p class="mt-3 text-sm text-smoke">Break things on purpose.<br>© 2026 loadr. All rights reserved.</p>
+      </div>
+      <div>
+        <h4 class="text-xs font-bold uppercase tracking-wider text-smoke">Product</h4>
+        <ul class="mt-3 space-y-2 text-sm text-smoke">
+          <li><a class="hover:text-flare" href="/#features">Features</a></li>
+          <li><a class="hover:text-flare" href="/#protocols">Protocols</a></li>
+          <li><a class="hover:text-flare" href="/plugins/">Plugins</a></li>
+          <li><a class="hover:text-flare" href="/demos/">Demos</a></li>
+          <li><a class="hover:text-flare" href="/download/">Download</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4 class="text-xs font-bold uppercase tracking-wider text-smoke">Documentation</h4>
+        <ul class="mt-3 space-y-2 text-sm text-smoke">
+          <li><a class="hover:text-flare" href="/docs/getting-started/first-test.html">Your first test</a></li>
+          <li><a class="hover:text-flare" href="/docs/yaml/overview.html">YAML reference</a></li>
+          <li><a class="hover:text-flare" href="/docs/js/api.html">JS API</a></li>
+          <li><a class="hover:text-flare" href="/examples/">All examples</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4 class="text-xs font-bold uppercase tracking-wider text-smoke">Source</h4>
+        <ul class="mt-3 space-y-2 text-sm text-smoke">
+          <li><a class="hover:text-flare" href="/download/">Download</a></li>
+          <li><a class="hover:text-flare" href="https://github.com/levantar-ai/loadr" rel="noopener">Source (GitHub)</a></li>
+          <li><a class="hover:text-flare" href="https://github.com/levantar-ai/loadr/releases" rel="noopener">Releases</a></li>
+          <li><a class="hover:text-flare" href="https://github.com/levantar-ai/loadr/blob/main/LICENSE" rel="noopener">License (Elastic 2.0)</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="mt-12 border-t border-edge/60 pt-6 text-xs text-smoke">
+      © 2026 loadr. Built in Rust. The loadr tool ships zero telemetry — it never phones home. This site uses privacy-first, consent-based analytics only. · <a class="hover:text-flare" href="/privacy/">Privacy</a> · <a class="hover:text-flare" href="/cookies/">Cookies</a>
+    </div>
+  </div>
+</footer>
+
+<script src="/assets/site.js" defer></script>
+</body>
+</html>

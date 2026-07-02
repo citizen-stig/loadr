@@ -11,6 +11,10 @@ paths = [
   '''testsupport/.*''',       # in-process test servers
   '''.*_test\.rs''',
   '''crates/loadr-convert/src/har\.rs''',  # embedded fake HAR fixture for the unit tests
+  # The recorded-video fixtures: demo-only credentials (mock IdP client secrets,
+  # vault dev tokens, minio demo creds, the public AWS docs example keys) used
+  # against throwaway local rig containers. Verified fake by construction.
+  '''site/videos/fixtures/.*''',
 ]
 # Belt-and-braces: these placeholder values appear in examples/docs.
 regexes = [

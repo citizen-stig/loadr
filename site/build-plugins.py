@@ -499,7 +499,7 @@ def card_new(p):
     mono = (f'<span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg '
             f'border border-edge bg-coal font-mono font-bold text-flare">{p["name"][0]}</span>')
     return (
-        f'<a href="/docs/plugins/{p["slug"]}.html" class="group flex flex-col rounded-2xl border border-edge bg-panel p-5 transition hover:border-ember/60 hover:bg-coal/40">'
+        f'<a href="/plugins/{p["slug"]}/" class="group flex flex-col rounded-2xl border border-edge bg-panel p-5 transition hover:border-ember/60 hover:bg-coal/40">'
         '<div class="flex items-center gap-3">'
         + mono +
         f'<div class="min-w-0"><h3 class="font-bold text-white">{p["name"]}</h3></div>'
@@ -507,7 +507,7 @@ def card_new(p):
         f'<p class="mt-3 flex-1 text-sm text-smoke">{p["tagline"]}</p>'
         '<div class="mt-4 flex items-center justify-between">'
         f'{badge}'
-        '<span class="text-sm font-semibold text-flare group-hover:underline">Read docs →</span>'
+        '<span class="text-sm font-semibold text-flare group-hover:underline">View plugin →</span>'
         '</div></a>'
     )
 
@@ -721,6 +721,101 @@ def render_detail(p, prev, nxt):
     return "".join(parts)
 
 
+
+def render_detail_new(p, prev, nxt):
+    """Detail page for an expansion plugin: install, real example, video, docs."""
+    import html as _html
+    slug = p["slug"]
+    status = plugin_status(slug)
+    example_path = _repo_root() / "examples" / "plugins" / f"{slug}.yaml"
+    example = _html.escape(example_path.read_text(encoding="utf-8").rstrip()) if example_path.is_file() else ""
+    video = (_repo_root() / "site" / "videos" / "out" / f"plugin-{slug}.mp4").is_file()
+    title = f'{p["name"]} plugin — loadr plugin install {slug}'
+    desc = f'{p["tagline"]} Part of loadr\'s runtime plugin system — installed on demand, never baked into the binary.'
+    canonical = f"https://loadr.io/plugins/{slug}/"
+    badge = ('<span class="rounded-full border border-[#4ade80]/40 bg-[#4ade80]/10 px-3 py-1 text-xs text-[#4ade80]">available</span>'
+             if status == "available" else
+             '<span class="rounded-full border border-edge bg-coal px-3 py-1 text-xs text-smoke">planned</span>')
+    mono = (f'<span class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg '
+            f'border border-edge bg-coal font-mono text-2xl font-bold text-flare">{p["name"][0]}</span>')
+    video_html = ""
+    if video:
+        video_html = f"""
+      <div class="overflow-hidden rounded-xl border border-edge bg-ink">
+        <video controls preload="none" aria-label="Demo: the {p["name"]} plugin in action" poster="/videos/plugin-{slug}-poster.jpg" class="aspect-video w-full bg-ink">
+          <source src="/videos/plugin-{slug}.mp4" type="video/mp4">
+        </video>
+      </div>
+      <p class="mt-3 text-sm text-smoke">A real run: install from the signed index, then watch the plugin work.</p>"""
+    example_html = ""
+    if example:
+        example_html = f"""
+      <div class="codebox mt-4">
+        <div class="codebar"><span>examples/plugins/{slug}.yaml</span><button data-copy="#{slug}Yaml" class="rounded border border-edge px-2 py-0.5 text-[10px] text-smoke hover:text-flare">copy</button></div>
+        <pre id="{slug}Yaml" style="max-height:34rem;overflow:auto"><code data-lang="yaml">{example}</code></pre>
+      </div>"""
+    parts = [head(title, desc, canonical)]
+    parts.append(f"""
+<section class="hero-grid relative overflow-hidden pt-32 pb-10">
+  <div class="pointer-events-none absolute -top-40 left-1/2 h-[40rem] w-[56rem] -translate-x-1/2 rounded-[50%] bg-blood/20 blur-[150px]"></div>
+  <div class="mx-auto max-w-5xl px-5">
+    <nav class="flex items-center gap-2 text-sm text-smoke">
+      <a class="hover:text-flare" href="/plugins/">Plugins</a>
+      <span class="text-edge-bright">/</span>
+      <span class="text-ash">{p["name"]}</span>
+    </nav>
+    <div class="mt-4 flex items-center gap-4">
+      {mono}
+      <h1 class="text-4xl font-black tracking-tight text-white sm:text-5xl">{p["name"]}</h1>
+      <span class="rounded-full border border-edge bg-coal px-3 py-1 text-xs text-ash">{p["role"]}</span>
+      {badge}
+    </div>
+    <p class="mt-5 max-w-2xl text-lg text-smoke">{p["tagline"]}</p>
+  </div>
+</section>
+
+<section class="pb-16">
+  <div class="mx-auto grid max-w-5xl gap-8 px-5 lg:grid-cols-2">
+    <div>
+      <div class="codebox">
+        <div class="codebar"><span>Install</span><button data-copy="#{slug}Install" class="rounded border border-edge px-2 py-0.5 text-[10px] text-smoke hover:text-flare">copy</button></div>
+        <pre id="{slug}Install"><code data-lang="bash">$ loadr plugin install {slug}</code></pre>
+      </div>
+      {example_html}
+      <div class="mt-6 flex flex-wrap gap-4">
+        <a href="/docs/plugins/{slug}.html" class="glow rounded-xl bg-blood px-6 py-3 font-bold text-white">Read the docs →</a>
+        <a href="/download/" class="rounded-xl border border-edge-bright bg-coal px-6 py-3 font-semibold text-ash hover:border-ember/60 hover:text-white">Get loadr</a>
+      </div>
+    </div>
+    <div>
+      {video_html}
+      <div class="mt-6 rounded-2xl border border-edge bg-panel p-5 text-sm text-smoke">
+        <p class="font-semibold text-white">A runtime plugin, never in the binary</p>
+        <p class="mt-2">Installing pulls a per-platform driver from the signed index, verifies its SHA-256 and checks its ABI before it ever loads. Remove it any time with <code class="text-flare">loadr plugin remove {slug}</code>.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="border-t border-edge/60 bg-coal/40 py-10">
+  <div class="mx-auto flex max-w-5xl items-center justify-between gap-4 px-5 text-sm">
+""")
+    if prev:
+        parts.append(f'    <a class="text-smoke hover:text-flare" href="/plugins/{prev["slug"]}/">← {prev["name"]}</a>\n')
+    else:
+        parts.append('    <span></span>\n')
+    parts.append('    <a class="font-semibold text-flare hover:underline" href="/plugins/">All plugins</a>\n')
+    if nxt:
+        parts.append(f'    <a class="text-smoke hover:text-flare" href="/plugins/{nxt["slug"]}/">{nxt["name"]} →</a>\n')
+    else:
+        parts.append('    <span></span>\n')
+    parts.append("""  </div>
+</section>
+""")
+    parts.append(FOOTER)
+    return "".join(parts)
+
+
 def main():
     out_dir = pathlib.Path(__file__).resolve().parent / "plugins"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -736,7 +831,13 @@ def main():
         (pdir / "index.html").write_text(render_detail(p, prev, nxt), encoding="utf-8")
         print(f"wrote {pdir / 'index.html'}")
 
-    print(f"done: index + {len(PLUGINS)} detail pages")
+    for i, p in enumerate(NEW_PLUGINS):
+        prev = NEW_PLUGINS[i - 1] if i > 0 else None
+        nxt = NEW_PLUGINS[i + 1] if i < len(NEW_PLUGINS) - 1 else None
+        pdir = out_dir / p["slug"]
+        pdir.mkdir(parents=True, exist_ok=True)
+        (pdir / "index.html").write_text(render_detail_new(p, prev, nxt), encoding="utf-8")
+    print(f"done: index + {len(PLUGINS)} + {len(NEW_PLUGINS)} detail pages")
 
 
 if __name__ == "__main__":

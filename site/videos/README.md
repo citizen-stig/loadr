@@ -41,3 +41,33 @@ ships a broken player.
 
 Still un-recorded and worth doing as Playwright recipes (browser, not a tape):
 the **browser** demo and the **Prometheus + Grafana** dashboard.
+
+## Plugin tapes (`plugin-<slug>.tape`)
+
+One ready-to-record tape per expansion plugin (29 of them). Each runs the
+plugin's committed example (`examples/plugins/<slug>.yaml`, staged into
+`/tmp/loadr-demo/<slug>.yaml`) and, for the installable ones, shows
+`loadr plugin install <slug>` first. Every tape's header comment names the
+**backend the record host must provide** — e.g.:
+
+```
+# Source: examples/plugins/nats.yaml · plugin: nats (protocol) · backend: nats
+```
+
+So a single record pass, with those services up, produces `out/plugin-<slug>.mp4`
+for all of them:
+
+```bash
+export LOADR_BIN_DIR=$PWD/target/release
+# bring up the backend named in the tape header (redis / nats / postgres / …)
+vhs site/videos/plugin-nats.tape        # → site/videos/out/plugin-nats.mp4
+```
+
+Backends needed, by group: **none** (faker-gen, junit-report, aws-sigv4,
+hmac-signer); **httpbin** (the extractors/assertions: jwt-decode, xpath,
+css-select, protobuf-decode, json-schema, openapi-contract, response-signature,
+plus datadog/slack/webhook against a mock sink); **a real service** (redis,
+postgres, nats, mosquitto, cassandra, minio, vault, an OTel collector,
+localstack, a kube metrics API, docker for testcontainers). Once recorded, wire
+each into its plugin's docs page (or the plugins-page tile) the same way the
+shipped plugins embed their videos.

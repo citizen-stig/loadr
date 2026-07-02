@@ -85,6 +85,13 @@ jobs:
           for dir in plugins/loadr-plugin-*; do
             [ -f "$dir/plugin.toml" ] || continue
             [ -f "$dir/Cargo.toml" ] || continue
+            # Only native plugins are built per-triple here. WASM plugins
+            # (type = "wasm") are single-artifact wasm32-wasip2 components and
+            # need their own publish path — skipping them keeps broken native
+            # builds of guest crates out of the signed index.
+            if grep -qE '^type[[:space:]]*=[[:space:]]*"wasm"' "$dir/plugin.toml"; then
+              echo "skip (wasm): $dir"; continue
+            fi
             grep -q 'crate-type' "$dir/Cargo.toml" \
               && grep -q 'cdylib' "$dir/Cargo.toml" || continue
             crate="$(grep -E '^name[[:space:]]*=' "$dir/Cargo.toml" | head -1 \

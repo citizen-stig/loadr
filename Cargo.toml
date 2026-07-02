@@ -144,7 +144,7 @@ flate2 = "1"
 tar = "0.4"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 brotli = "8"
-quick-xml = { version = "0.40", features = ["serialize"] }
+quick-xml = { version = "0.41", features = ["serialize"] }
 sxd-document = "0.3"
 sxd-xpath = "0.4"
 scraper = "0.27"

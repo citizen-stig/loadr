@@ -25,4 +25,13 @@ regexes = [
   # earlier branch history of the from-har docs). Known-fake, not real secrets.
   '''c2a5f1e8-9b3d-4a6c-8e21-7f0d4b9a1c33''',
   '''3f2504e0-4f89-41d3-9a0c-0305e82c3301''',
+  # The canonical, world-public AWS *documentation* example credentials, used
+  # verbatim as the SigV4 test vectors in the aws-sigv4 / s3-archive / s3-dataset
+  # / cloudwatch plugins (inline #[cfg(test)] in src/lib.rs, so not matched by
+  # the *_test.rs path). Non-functional; published in AWS's own docs.
+  '''AKIAIOSFODNN7EXAMPLE''',
+  '''wJalrXUtnFEMI/K7MDENG\+bPxRfiCYEXAMPLEKEY''',
+  # The canonical jwt.io example token (HS256, sub=1234567890, "John Doe"), used
+  # as the fixture in the jwt-decode plugin's inline tests. Public, non-secret.
+  '''eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ''',
 ]

@@ -307,6 +307,70 @@ CATEGORY_BLURB = {
     "Search": "Search and analytics engines over their HTTP/JSON APIs.",
 }
 
+# ---------------------------------------------------------------------------
+# Role-based taxonomy. Every plugin has a ROLE (what it does in a test) on top
+# of the protocol-domain "category" the shipped 7 already carry. NEW_PLUGINS are
+# the expansion set; `status` is computed from the filesystem so a tile flips
+# from "planned" to "available" automatically once its crate lands.
+# ---------------------------------------------------------------------------
+ROLE_ORDER = [
+    "Protocol adapters", "Data sources & feeders", "Outputs & exporters",
+    "Observability collectors", "Extractors", "Assertions & validators",
+    "Auth & signers", "Fixtures & lifecycle",
+]
+ROLE_BLURB = {
+    "Protocol adapters": "Drive the system under test at its native protocol.",
+    "Data sources & feeders": "Feed the test — stream rows and datasets into VUs.",
+    "Outputs & exporters": "Send results somewhere — dashboards, stores, chat, reports.",
+    "Observability collectors": "Pull system metrics to correlate against the load.",
+    "Extractors": "Pull values out of responses (WASM plugins).",
+    "Assertions & validators": "Custom correctness checks (WASM plugins).",
+    "Auth & signers": "Inject credentials — tokens, signatures, secrets.",
+    "Fixtures & lifecycle": "Set up and tear down state around a run.",
+}
+
+def _repo_root():
+    return pathlib.Path(__file__).resolve().parent.parent
+
+def plugin_status(slug):
+    """available if a workspace crate exists, else planned."""
+    crate = _repo_root() / "plugins" / f"loadr-plugin-{slug}" / "Cargo.toml"
+    return "available" if crate.is_file() else "planned"
+
+# Expansion plugins (the shipped 7 protocol plugins live in PLUGINS above).
+NEW_PLUGINS = [
+    {"slug": "nats", "name": "NATS", "role": "Protocol adapters", "tagline": "Publish and request/reply over the NATS line protocol, one op per request."},
+    {"slug": "mqtt", "name": "MQTT", "role": "Protocol adapters", "tagline": "Publish and subscribe over MQTT 3.1.1/5.0 with per-VU sessions."},
+    {"slug": "cassandra", "name": "Cassandra / ScyllaDB", "role": "Protocol adapters", "tagline": "One bound CQL statement per request over the native protocol."},
+    {"slug": "redis-loader", "name": "Redis data loader", "role": "Data sources & feeders", "tagline": "Feed VUs values from a Redis list/stream over raw RESP — a distributed feeder."},
+    {"slug": "sql-feeder", "name": "SQL feeder", "role": "Data sources & feeders", "tagline": "Feed rows from a Postgres/MySQL query into the run, shared across VUs."},
+    {"slug": "s3-dataset", "name": "S3 dataset", "role": "Data sources & feeders", "tagline": "Stream a dataset object from S3 with a pure-Rust SigV4 signer."},
+    {"slug": "faker-gen", "name": "Synthetic data", "role": "Data sources & feeders", "tagline": "Generate deterministic synthetic feeder rows — names, emails, UUIDs, numbers."},
+    {"slug": "datadog", "name": "Datadog", "role": "Outputs & exporters", "tagline": "Ship metrics to the Datadog API over HTTPS, batched with retries."},
+    {"slug": "slack-notifier", "name": "Slack notifier", "role": "Outputs & exporters", "tagline": "Post the run summary and threshold breaches to a Slack webhook."},
+    {"slug": "webhook", "name": "Webhook", "role": "Outputs & exporters", "tagline": "POST run snapshots/summary as JSON to any HTTP endpoint."},
+    {"slug": "s3-archive", "name": "S3 archive", "role": "Outputs & exporters", "tagline": "Archive the final report/metrics as an object to S3 (SigV4)."},
+    {"slug": "junit-report", "name": "JUnit report", "role": "Outputs & exporters", "tagline": "Write a JUnit XML report of checks and thresholds for CI."},
+    {"slug": "cloudwatch", "name": "CloudWatch", "role": "Observability collectors", "tagline": "PutMetricData to AWS CloudWatch, and pull metrics back to correlate."},
+    {"slug": "otlp-metrics", "name": "OTLP metrics", "role": "Observability collectors", "tagline": "Export/collect metrics via OTLP to an OpenTelemetry collector."},
+    {"slug": "k8s-metrics", "name": "Kubernetes metrics", "role": "Observability collectors", "tagline": "Collect pod/node metrics from the Kubernetes metrics API during a run."},
+    {"slug": "jwt-decode", "name": "JWT decode", "role": "Extractors", "tagline": "Decode a JWT and extract claims into variables."},
+    {"slug": "xpath", "name": "XPath", "role": "Extractors", "tagline": "Extract values from XML/HTML responses with XPath."},
+    {"slug": "css-select", "name": "CSS selector", "role": "Extractors", "tagline": "Extract text/attributes from HTML with CSS selectors."},
+    {"slug": "protobuf-decode", "name": "Protobuf decode", "role": "Extractors", "tagline": "Decode a protobuf message body and extract fields."},
+    {"slug": "json-schema", "name": "JSON Schema", "role": "Assertions & validators", "tagline": "Validate a response body against a JSON Schema."},
+    {"slug": "openapi-contract", "name": "OpenAPI contract", "role": "Assertions & validators", "tagline": "Assert responses conform to an OpenAPI operation's schema."},
+    {"slug": "response-signature", "name": "Response signature", "role": "Assertions & validators", "tagline": "Verify a response's HMAC/RSA signature header."},
+    {"slug": "oauth2-minter", "name": "OAuth2 minter", "role": "Auth & signers", "tagline": "Mint, cache and refresh OAuth2 tokens; serve them to VUs."},
+    {"slug": "aws-sigv4", "name": "AWS SigV4 signer", "role": "Auth & signers", "tagline": "Return SigV4 Authorization headers for arbitrary AWS requests."},
+    {"slug": "hmac-signer", "name": "HMAC signer", "role": "Auth & signers", "tagline": "Serve HMAC-SHA256 request signatures for signed-request auth."},
+    {"slug": "vault-fetch", "name": "Vault fetch", "role": "Auth & signers", "tagline": "Fetch secrets from HashiCorp Vault (KV v2) into the run."},
+    {"slug": "db-seeder", "name": "DB seeder", "role": "Fixtures & lifecycle", "tagline": "Run seed SQL on start and clean up on stop — a DB fixture."},
+    {"slug": "testcontainers", "name": "Testcontainers", "role": "Fixtures & lifecycle", "tagline": "Spin ephemeral service containers up for a run and down after."},
+    {"slug": "data-cleanup", "name": "Data cleanup", "role": "Fixtures & lifecycle", "tagline": "Run cleanup commands on stop() to reset state after a run."},
+]
+
+
 
 # ---------------------------------------------------------------------------
 # Rendering helpers
@@ -426,24 +490,50 @@ def card(p):
     )
 
 
+def card_new(p):
+    status = plugin_status(p["slug"])
+    if status == "available":
+        badge = '<span class="rounded-full border border-[#4ade80]/40 bg-[#4ade80]/10 px-2.5 py-0.5 text-xs text-[#4ade80]">available</span>'
+    else:
+        badge = '<span class="rounded-full border border-edge bg-coal px-2.5 py-0.5 text-xs text-smoke">planned</span>'
+    mono = (f'<span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg '
+            f'border border-edge bg-coal font-mono font-bold text-flare">{p["name"][0]}</span>')
+    return (
+        f'<a href="/docs/plugins/{p["slug"]}.html" class="group flex flex-col rounded-2xl border border-edge bg-panel p-5 transition hover:border-ember/60 hover:bg-coal/40">'
+        '<div class="flex items-center gap-3">'
+        + mono +
+        f'<div class="min-w-0"><h3 class="font-bold text-white">{p["name"]}</h3></div>'
+        '</div>'
+        f'<p class="mt-3 flex-1 text-sm text-smoke">{p["tagline"]}</p>'
+        '<div class="mt-4 flex items-center justify-between">'
+        f'{badge}'
+        '<span class="text-sm font-semibold text-flare group-hover:underline">Read docs →</span>'
+        '</div></a>'
+    )
+
+
 def render_index():
-    cards_by_cat = {}
+    by_role = {r: [] for r in ROLE_ORDER}
     for p in PLUGINS:
-        cards_by_cat.setdefault(p["category"], []).append(p)
+        by_role["Protocol adapters"].append(("existing", p))
+    for p in NEW_PLUGINS:
+        by_role.setdefault(p["role"], []).append(("new", p))
 
     groups = []
-    for cat in CATEGORY_ORDER:
-        items = cards_by_cat.get(cat, [])
+    for role in ROLE_ORDER:
+        items = by_role.get(role, [])
         if not items:
             continue
-        grid = "\n        ".join(card(p) for p in items)
+        cards = [card(p) if k == "existing" else card_new(p) for k, p in items]
+        grid = "\n        ".join(cards)
+        avail = sum(1 for k, p in items if k == "existing" or plugin_status(p["slug"]) == "available")
         groups.append(
             '<div>'
-            f'<div class="flex items-baseline justify-between border-b border-edge/60 pb-3">'
-            f'<h2 class="text-xl font-extrabold text-white">{cat}</h2>'
-            f'<span class="text-xs text-smoke">{len(items)} plugin{"s" if len(items) != 1 else ""}</span>'
+            '<div class="flex items-baseline justify-between border-b border-edge/60 pb-3">'
+            f'<h2 class="text-xl font-extrabold text-white">{role}</h2>'
+            f'<span class="text-xs text-smoke">{avail}/{len(items)} available</span>'
             '</div>'
-            f'<p class="mt-2 text-sm text-smoke">{CATEGORY_BLURB.get(cat, "")}</p>'
+            f'<p class="mt-2 text-sm text-smoke">{ROLE_BLURB.get(role, "")}</p>'
             '<div class="mt-5 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">'
             f'{grid}'
             '</div></div>'

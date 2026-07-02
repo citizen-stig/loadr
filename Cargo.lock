@@ -1516,6 +1516,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c"
 dependencies = [
  "powerfmt",
+ "serde_core",
 ]
 
 [[package]]
@@ -2746,6 +2747,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "libsqlite3-sys"
+version = "0.30.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e99fb7a497b1e3339bc746195567ed8d3e24945ecd636e3619d20b9de9e9149"
+dependencies = [
+ "pkg-config",
+ "vcpkg",
+]
+
+[[package]]
 name = "linux-raw-sys"
 version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3002,6 +3013,97 @@ dependencies = [
 ]
 
 [[package]]
+name = "loadr-plugin-aws-sigv4"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "hmac 0.13.0",
+ "loadr-plugin-api",
+ "serde_json",
+ "sha2 0.11.0",
+ "time",
+ "url",
+]
+
+[[package]]
+name = "loadr-plugin-cassandra"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "base64 0.22.1",
+ "loadr-plugin-api",
+ "serde_json",
+ "url",
+]
+
+[[package]]
+name = "loadr-plugin-cloudwatch"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "bytes",
+ "hmac 0.13.0",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "loadr-plugin-api",
+ "once_cell",
+ "serde_json",
+ "sha2 0.11.0",
+ "time",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "loadr-plugin-data-cleanup"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "loadr-plugin-api",
+ "once_cell",
+ "serde_json",
+ "sqlx",
+ "tokio",
+]
+
+[[package]]
+name = "loadr-plugin-datadog"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "loadr-plugin-api",
+ "once_cell",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "loadr-plugin-db-seeder"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "loadr-plugin-api",
+ "once_cell",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "loadr-plugin-elasticsearch"
 version = "1.0.0"
 dependencies = [
@@ -3043,6 +3145,56 @@ dependencies = [
 ]
 
 [[package]]
+name = "loadr-plugin-faker-gen"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "loadr-plugin-api",
+ "rand 0.10.1",
+ "serde_json",
+]
+
+[[package]]
+name = "loadr-plugin-hmac-signer"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "base64 0.22.1",
+ "hmac 0.13.0",
+ "loadr-plugin-api",
+ "serde_json",
+ "sha2 0.11.0",
+]
+
+[[package]]
+name = "loadr-plugin-junit-report"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "loadr-plugin-api",
+ "serde_json",
+]
+
+[[package]]
+name = "loadr-plugin-k8s-metrics"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "loadr-plugin-api",
+ "once_cell",
+ "rustls",
+ "rustls-pemfile",
+ "serde_json",
+ "tokio",
+ "webpki-roots 0.26.11",
+]
+
+[[package]]
 name = "loadr-plugin-kafka"
 version = "1.0.0"
 dependencies = [
@@ -3072,6 +3224,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "loadr-plugin-mqtt"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "loadr-plugin-api",
+ "serde_json",
+ "url",
+]
+
+[[package]]
 name = "loadr-plugin-mysql"
 version = "1.0.0"
 dependencies = [
@@ -3083,6 +3245,50 @@ dependencies = [
  "sqlx",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "loadr-plugin-nats"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "loadr-plugin-api",
+ "serde_json",
+ "url",
+]
+
+[[package]]
+name = "loadr-plugin-oauth2-minter"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "base64 0.22.1",
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "loadr-plugin-api",
+ "once_cell",
+ "serde_json",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "loadr-plugin-otlp-metrics"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "loadr-plugin-api",
+ "once_cell",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -3127,6 +3333,129 @@ dependencies = [
  "serde_json",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "loadr-plugin-redis-loader"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "loadr-plugin-api",
+ "serde_json",
+ "url",
+]
+
+[[package]]
+name = "loadr-plugin-s3-archive"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "bytes",
+ "flate2",
+ "hmac 0.13.0",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "loadr-plugin-api",
+ "once_cell",
+ "serde_json",
+ "sha2 0.11.0",
+ "time",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "loadr-plugin-s3-dataset"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "bytes",
+ "csv",
+ "hmac 0.13.0",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "loadr-plugin-api",
+ "once_cell",
+ "serde_json",
+ "sha2 0.11.0",
+ "time",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "loadr-plugin-slack-notifier"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "loadr-plugin-api",
+ "once_cell",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "loadr-plugin-sql-feeder"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "loadr-plugin-api",
+ "once_cell",
+ "serde_json",
+ "sqlx",
+ "tokio",
+]
+
+[[package]]
+name = "loadr-plugin-testcontainers"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "loadr-plugin-api",
+ "serde_json",
+]
+
+[[package]]
+name = "loadr-plugin-vault-fetch"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "loadr-plugin-api",
+ "once_cell",
+ "serde_json",
+ "tokio",
+ "url",
+]
+
+[[package]]
+name = "loadr-plugin-webhook"
+version = "1.0.0"
+dependencies = [
+ "abi_stable",
+ "bytes",
+ "hmac 0.13.0",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "loadr-plugin-api",
+ "serde_json",
+ "sha2 0.11.0",
+ "tokio",
 ]
 
 [[package]]
@@ -3976,6 +4305,12 @@ dependencies = [
  "der",
  "spki",
 ]
+
+[[package]]
+name = "pkg-config"
+version = "0.3.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "plain"
@@ -5364,6 +5699,7 @@ dependencies = [
  "sqlx-macros",
  "sqlx-mysql",
  "sqlx-postgres",
+ "sqlx-sqlite",
 ]
 
 [[package]]
@@ -5516,6 +5852,29 @@ dependencies = [
  "thiserror 2.0.18",
  "tracing",
  "whoami",
+]
+
+[[package]]
+name = "sqlx-sqlite"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c2d12fe70b2c1b4401038055f90f151b78208de1f9f89a7dbfd41587a10c3eea"
+dependencies = [
+ "atoi",
+ "flume",
+ "futures-channel",
+ "futures-core",
+ "futures-executor",
+ "futures-intrusive",
+ "futures-util",
+ "libsqlite3-sys",
+ "log",
+ "percent-encoding",
+ "serde_urlencoded",
+ "sqlx-core",
+ "thiserror 2.0.18",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -6479,6 +6838,12 @@ name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
+
+[[package]]
+name = "vcpkg"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "version_check"

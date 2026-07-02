@@ -222,7 +222,7 @@ jobs:
         run: |
           set -euo pipefail
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --title "$TAG" \
+            gh release create "$TAG" --title "$TAG" --latest=false \
               --notes "loadr plugin artifacts for $TAG (cdylibs + SHA-256 + SLSA provenance)."
           fi
           gh release upload "$TAG" \

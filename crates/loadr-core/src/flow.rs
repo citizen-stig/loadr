@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use loadr_config::{
-    Body, FailureAction, GroupStep, HttpDefaults, JsStep, RequestStep, Scenario, Step, Template,
-    TestPlan, ThinkTimeSpec, WsMessage,
+    Body, DropMode, FailureAction, FaultDistribution, FaultSpec, GroupStep, HttpDefaults, JsStep,
+    LatencyFault, RequestStep, Scenario, Step, Template, TestPlan, ThinkTimeSpec, WsMessage,
 };
 
 use crate::conditions::{CompiledCondition, ConditionResult};
@@ -50,6 +50,8 @@ pub struct ScenarioProgram {
     pub pacing: Option<f64>,
     /// Global request-rate ceiling (Gatling throttle), shared across all VUs.
     pub throttle: Option<Arc<Throttle>>,
+    /// Chaos fault injection: extra latency and/or dropped requests.
+    pub faults: Option<FaultSpec>,
     /// Named rendezvous barriers, created lazily and shared across VUs.
     pub barriers: parking_lot::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Barrier>>>,
     /// scenario + global tags.
@@ -240,6 +242,7 @@ impl ScenarioProgram {
             throttle: scenario
                 .throttle
                 .map(|t| Arc::new(Throttle::new(t.requests_per_second))),
+            faults: scenario.faults,
             barriers: parking_lot::Mutex::new(std::collections::HashMap::new()),
             tags: Arc::new(tags),
             http: Arc::new(plan.defaults.http.clone()),
@@ -994,6 +997,16 @@ impl FlowRunner {
             throttle.acquire().await;
         }
 
+        // 0.5 Chaos fault injection: extra latency before the request is sent,
+        // sampled from the VU's seeded rng so runs stay deterministic.
+        if let Some(latency) = self.program.faults.and_then(|f| f.latency) {
+            let pause = sample_fault_jitter(&latency, &mut vu.rng);
+            if !pause.is_zero() {
+                self.note_fault(vu, "latency");
+                tokio::time::sleep(pause).await;
+            }
+        }
+
         // 1. Render the request.
         let mut prepared = match self.prepare(req, vu, script) {
             Ok(p) => p,
@@ -1042,13 +1055,43 @@ impl FlowRunner {
                 return RequestFlow::Continue;
             }
         };
-        let response = match handler.execute(vu, &prepared).await {
-            Ok(r) => r,
-            Err(e) => ProtocolResponse {
-                error: Some(e.to_string()),
+        // Chaos fault injection: decide whether to drop this request. The
+        // decision consumes exactly one rng sample per request regardless of
+        // mode, so seeded runs stay deterministic.
+        let faults = self.program.faults.unwrap_or_default();
+        let drop_fault = faults
+            .drop_rate
+            .map(|rate| fault_drop_decision(rate, &mut vu.rng))
+            .unwrap_or(false);
+        let drop_before_send =
+            drop_fault && faults.drop_mode.unwrap_or_default() == DropMode::BeforeSend;
+
+        let response = if drop_before_send {
+            // Fail as a transport-class error without sending; mirrors the
+            // handler-error shape below so it lands in `http_req_failed` and
+            // the failure breakdown groups it as `fault_injected`.
+            self.note_fault(vu, "drop");
+            ProtocolResponse {
+                error: Some(FAULT_DROP_ERROR.to_string()),
                 url: prepared.url.clone(),
                 ..Default::default()
-            },
+            }
+        } else {
+            let mut response = match handler.execute(vu, &prepared).await {
+                Ok(r) => r,
+                Err(e) => ProtocolResponse {
+                    error: Some(e.to_string()),
+                    url: prepared.url.clone(),
+                    ..Default::default()
+                },
+            };
+            if drop_fault {
+                // `after_response` mode: the request went out, but the
+                // response is discarded and the request failed.
+                self.note_fault(vu, "drop");
+                response.error = Some(FAULT_DROP_RESPONSE_ERROR.to_string());
+            }
+            response
         };
 
         // 4. Metrics.
@@ -1357,6 +1400,14 @@ impl FlowRunner {
             .map(|d| d.name)
             .unwrap_or_else(|| Arc::from(name));
         vu.metrics.emit_value(&metric, kind, value, tags);
+    }
+
+    /// Record an injected chaos fault on the `faults_injected` counter,
+    /// split-tagged by `kind` (`latency` or `drop`).
+    fn note_fault(&self, vu: &VuContext, kind: &str) {
+        let tags = vu.sample_tags(&[("kind", kind)]);
+        vu.metrics
+            .counter(&self.builtins.faults_injected, 1.0, &tags);
     }
 
     /// Record a JS/script exception so the UI can group failures by cause.
@@ -1742,9 +1793,42 @@ fn metric_family(protocol: &str) -> String {
     }
 }
 
+/// Error message for a request dropped by fault injection before sending;
+/// `classify_transport_error` buckets it as `fault_injected`.
+const FAULT_DROP_ERROR: &str = "fault injected: request dropped before send";
+/// Error message for a response discarded by `drop_mode: after_response`.
+const FAULT_DROP_RESPONSE_ERROR: &str = "fault injected: response dropped";
+
+/// Sample the extra latency for a `faults.latency` spec from the VU's rng:
+/// `uniform(0..jitter)` or `gaussian(mean=0, std=jitter)` clamped at zero.
+fn sample_fault_jitter(latency: &LatencyFault, rng: &mut impl rand::RngExt) -> Duration {
+    use rand_distr::{Distribution, Normal};
+    let jitter = latency.jitter.as_duration().as_secs_f64();
+    if jitter <= 0.0 {
+        return Duration::ZERO;
+    }
+    match latency.distribution {
+        FaultDistribution::Uniform => Duration::from_secs_f64(rng.random_range(0.0..jitter)),
+        FaultDistribution::Gaussian => {
+            let sampled = Normal::new(0.0, jitter)
+                .map(|n| n.sample(rng))
+                .unwrap_or(0.0);
+            Duration::from_secs_f64(sampled.max(0.0))
+        }
+    }
+}
+
+/// Decide whether to drop a request with probability `rate`, consuming one
+/// sample from the VU's seeded rng.
+fn fault_drop_decision(rate: f64, rng: &mut impl rand::RngExt) -> bool {
+    rate > 0.0 && rng.random_range(0.0..1.0) < rate
+}
+
 fn classify_transport_error(error: &str) -> &'static str {
     let e = error.to_ascii_lowercase();
-    if e.contains("timed out") || e.contains("timeout") {
+    if e.contains("fault injected") {
+        "fault_injected"
+    } else if e.contains("timed out") || e.contains("timeout") {
         "timeout"
     } else if e.contains("dns") || e.contains("resolve") || e.contains("name or service") {
         "dns"
@@ -2264,5 +2348,129 @@ mod failure_grouping_tests {
     fn normalize_exception_empty_is_stable() {
         assert_eq!(normalize_exception("   "), "exception");
         assert_eq!(normalize_exception("12345"), "N");
+    }
+}
+
+#[cfg(test)]
+mod fault_injection_tests {
+    use super::{
+        classify_transport_error, fault_drop_decision, sample_fault_jitter, FAULT_DROP_ERROR,
+        FAULT_DROP_RESPONSE_ERROR,
+    };
+    use loadr_config::{Dur, FaultDistribution, LatencyFault};
+    use rand::SeedableRng;
+    use std::time::Duration;
+
+    fn rng(seed: u64) -> rand::rngs::SmallRng {
+        rand::rngs::SmallRng::seed_from_u64(seed)
+    }
+
+    #[test]
+    fn uniform_jitter_stays_below_bound() {
+        let latency = LatencyFault {
+            jitter: Dur::from_millis(50),
+            distribution: FaultDistribution::Uniform,
+        };
+        let mut r = rng(7);
+        for _ in 0..1000 {
+            let d = sample_fault_jitter(&latency, &mut r);
+            assert!(d < Duration::from_millis(50), "sample {d:?} >= jitter");
+        }
+    }
+
+    #[test]
+    fn gaussian_jitter_clamped_at_zero() {
+        let latency = LatencyFault {
+            jitter: Dur::from_millis(50),
+            distribution: FaultDistribution::Gaussian,
+        };
+        let mut r = rng(7);
+        let mut zeros = 0u32;
+        let mut positives = 0u32;
+        for _ in 0..1000 {
+            // Never negative (would panic in from_secs_f64).
+            let d = sample_fault_jitter(&latency, &mut r);
+            if d.is_zero() {
+                zeros += 1;
+            } else {
+                positives += 1;
+            }
+        }
+        // gaussian(mean=0): roughly half the samples clamp to zero.
+        assert!(zeros > 300, "expected ~half zeros, got {zeros}");
+        assert!(positives > 300, "expected ~half positives, got {positives}");
+    }
+
+    #[test]
+    fn jitter_is_deterministic_for_a_seed() {
+        for distribution in [FaultDistribution::Uniform, FaultDistribution::Gaussian] {
+            let latency = LatencyFault {
+                jitter: Dur::from_millis(20),
+                distribution,
+            };
+            let (mut a, mut b) = (rng(42), rng(42));
+            for _ in 0..100 {
+                assert_eq!(
+                    sample_fault_jitter(&latency, &mut a),
+                    sample_fault_jitter(&latency, &mut b),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn zero_jitter_never_sleeps() {
+        let latency = LatencyFault {
+            jitter: Dur::ZERO,
+            distribution: FaultDistribution::Uniform,
+        };
+        assert_eq!(sample_fault_jitter(&latency, &mut rng(1)), Duration::ZERO);
+    }
+
+    #[test]
+    fn drop_decision_is_deterministic_for_a_seed() {
+        let (mut a, mut b) = (rng(9), rng(9));
+        for _ in 0..1000 {
+            assert_eq!(
+                fault_drop_decision(0.3, &mut a),
+                fault_drop_decision(0.3, &mut b),
+            );
+        }
+    }
+
+    #[test]
+    fn drop_decision_respects_rate() {
+        // rate 0 never drops.
+        let mut r = rng(11);
+        assert!((0..1000).all(|_| !fault_drop_decision(0.0, &mut r)));
+
+        let mut r = rng(11);
+        let dropped = (0..10_000)
+            .filter(|_| fault_drop_decision(0.2, &mut r))
+            .count();
+        assert!(
+            (1500..2500).contains(&dropped),
+            "rate 0.2 dropped {dropped}/10000"
+        );
+
+        let mut r = rng(11);
+        let dropped = (0..1000)
+            .filter(|_| fault_drop_decision(0.999, &mut r))
+            .count();
+        assert!(dropped > 950, "rate 0.999 dropped only {dropped}/1000");
+    }
+
+    #[test]
+    fn fault_errors_classify_as_fault_injected() {
+        assert_eq!(classify_transport_error(FAULT_DROP_ERROR), "fault_injected");
+        assert_eq!(
+            classify_transport_error(FAULT_DROP_RESPONSE_ERROR),
+            "fault_injected"
+        );
+        // Ordinary transport errors are unaffected.
+        assert_eq!(
+            classify_transport_error("connection refused"),
+            "connection_refused"
+        );
     }
 }

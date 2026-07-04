@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { compareResults, runsForPlan, type RunRecord } from '../shared/history';
+import { runsForPlan, type RunRecord } from '../shared/history';
 import { pushSample } from '../shared/monitor';
 import { deriveResults, parseProgressLine, type LiveMetrics, type Results } from '../shared/results';
+import { CompareView } from './CompareView';
 import { RunMonitor } from './RunMonitor';
 import { Button } from './ui/controls';
 import { Download, Play } from './ui/icons';
@@ -98,33 +99,9 @@ export function RunPanel({ yaml, planName }: { yaml: string; planName: string })
               </li>
             ))}
           </ul>
-          {results && baseline && (
-            <table className="mt-2 w-full text-xs">
-              <thead>
-                <tr className="text-left text-mist"><th className="font-medium">metric</th><th className="font-medium">baseline</th><th className="font-medium">current</th><th className="font-medium">Δ</th></tr>
-              </thead>
-              <tbody>
-                {compareResults(baseline, results).map((d) => (
-                  <tr key={d.label} className="border-t border-edge/50">
-                    <td className="py-0.5 text-smoke">{d.label}</td>
-                    <td className="font-mono">{d.a ?? '—'}</td>
-                    <td className="font-mono">{d.b ?? '—'}</td>
-                    <td className={`font-mono ${deltaClass(d.deltaPct, d.lowerIsBetter)}`}>
-                      {d.deltaPct == null ? '—' : `${d.deltaPct > 0 ? '+' : ''}${d.deltaPct.toFixed(1)}%`}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+          {results && baseline && <CompareView baseline={baseline} current={results} />}
         </div>
       )}
     </div>
   );
-}
-
-function deltaClass(deltaPct: number | null, lowerIsBetter: boolean): string {
-  if (deltaPct == null || deltaPct === 0) return 'text-mist';
-  const better = lowerIsBetter ? deltaPct < 0 : deltaPct > 0;
-  return better ? 'text-ok' : 'text-flare';
 }

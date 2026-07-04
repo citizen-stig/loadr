@@ -1,0 +1,3 @@
+loadr multipart upload fixture.
+Replace this file with whatever payload your upload endpoint expects
+(an image, a CSV, a PDF, ...). See examples/37-file-uploads.yaml.

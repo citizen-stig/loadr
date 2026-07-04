@@ -4,16 +4,21 @@ name: Action self-test
 # On a PR the released binary may predate new flags, so we build loadr from this
 # checkout and feed it to the action via `bin:` — exercising the action's run +
 # JUnit plumbing against the code under review. The plan hits a throwaway local
-# server so the test never depends on a third-party endpoint.
+# server so the test never depends on a third-party endpoint. A second root
+# action invocation replays the plan with `baseline-summary` set, proving the
+# `loadr compare` path writes markdown and reports the regression verdict
+# (`comment-pr` stays off — this job has no pull-requests permission).
 
 on:
   push:
     branches: [main]
     paths:
+      - 'action.yml'
       - '.github/actions/**'
       - '.github/workflows/action-selftest.yml'
   pull_request:
     paths:
+      - 'action.yml'
       - '.github/actions/**'
       - '.github/workflows/action-selftest.yml'
   workflow_dispatch:
@@ -80,7 +85,21 @@ jobs:
           junit: root-junit.xml
           summary: root-summary.json
 
-      - name: Assert outputs and JUnit report
+      - name: Rerun via the root action with a baseline comparison
+        id: compare
+        uses: ./
+        with:
+          plan: plan.yaml
+          bin: ${{ github.workspace }}/target/release/loadr
+          junit: compare-junit.xml
+          summary: compare-summary.json
+          baseline-summary: root-summary.json
+          compare-markdown: loadr-compare.md
+          # Two identical short runs jitter; only genuine breakage may fail.
+          max-regression: 'p95=500% p99=500% error_rate=5'
+          comment-pr: 'false'
+
+      - name: Assert outputs, JUnit report and comparison
         run: |
           test "${{ steps.loadr.outputs.passed }}" = "true"
           test -f loadr-junit.xml
@@ -90,7 +109,13 @@ jobs:
           test "${{ steps.root.outputs.passed }}" = "true"
           test -f root-junit.xml
           grep -q '<testsuites name="loadr: action-selftest"' root-junit.xml
-          echo "JUnit report OK (run + root action)"
+          # The comparison run must diff cleanly and write the markdown table.
+          test "${{ steps.compare.outputs.regression }}" = "false"
+          test "${{ steps.compare.outputs.comparison }}" = "loadr-compare.md"
+          test -f loadr-compare.md
+          grep -q '## Load test comparison' loadr-compare.md
+          grep -q 'http_req_duration' loadr-compare.md
+          echo "JUnit report + comparison OK (run + root action)"
 
       - name: Upload reports
         if: always()
@@ -102,3 +127,6 @@ jobs:
             loadr-summary.json
             root-junit.xml
             root-summary.json
+            compare-junit.xml
+            compare-summary.json
+            loadr-compare.md

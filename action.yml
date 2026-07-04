@@ -8,10 +8,25 @@
 # delegating form fails with "Can't find action.yml under
 # <consumer>/.github/actions/run". The subdirectory action
 # (`levantar-ai/loadr/.github/actions/run@v1`) is the same logic and still works.
+#
+# Baseline comparison: pass `baseline-summary` (a JSON summary exported by a
+# previous run) and, after the test, the action runs `loadr compare` against
+# this run's summary, writes a markdown report to `compare-markdown`, upserts
+# it as a single PR comment (found by the `<!-- loadr-compare -->` marker;
+# `comment-pr: 'false'` or a non-pull_request event skips it), and fails the
+# job when a regression exceeds its tolerance — unless `fail-on-regression`
+# is 'false'. `max-regression` takes whitespace-separated `field=limit` specs
+# (e.g. `p95=10% error_rate=0.5 http_req_duration.p99=25`); without a spec the
+# compare command's defaults gate p95/p99/error_rate/pass_rate at 5%. The
+# `regression` output is 'true'/'false' whenever a comparison ran, regardless
+# of `fail-on-regression`. Commenting needs `pull-requests: write` on the
+# calling job.
 name: loadr load test
 description: >-
   Run a loadr load test in CI. Installs loadr, runs a test plan, writes a JUnit
   XML report + JSON summary, and fails the job when a threshold is breached.
+  Optionally diffs the run against a baseline summary and comments the
+  comparison on the pull request.
 author: levantar-ai
 
 branding:
@@ -50,6 +65,35 @@ inputs:
       record results without failing the job.
     required: false
     default: 'true'
+  baseline-summary:
+    description: >-
+      Path to a baseline JSON summary from a previous run. When set, the action
+      runs `loadr compare` between it and this run's summary.
+    required: false
+    default: ''
+  compare-markdown:
+    description: Path to write the baseline comparison as markdown.
+    required: false
+    default: loadr-compare.md
+  max-regression:
+    description: >-
+      Whitespace-separated regression tolerances, passed to `loadr compare` as
+      repeated `--max-regression` flags (e.g. 'p95=10% error_rate=0.5').
+    required: false
+    default: ''
+  fail-on-regression:
+    description: >-
+      When 'true' (default) a regression beyond tolerance fails the job — after
+      the PR comment is posted. Set 'false' to record the comparison without
+      failing.
+    required: false
+    default: 'true'
+  comment-pr:
+    description: >-
+      When 'true' (default) the comparison markdown is upserted as a single PR
+      comment. Only acts on pull_request events.
+    required: false
+    default: 'true'
 
 outputs:
   passed:
@@ -64,6 +108,14 @@ outputs:
   summary:
     description: Path to the JSON summary.
     value: ${{ inputs.summary }}
+  regression:
+    description: >-
+      'true' when the baseline comparison found a regression beyond tolerance,
+      'false' when it ran clean; empty when no baseline-summary was given.
+    value: ${{ steps.compare.outputs.regression }}
+  comparison:
+    description: Path to the comparison markdown (when baseline-summary is set).
+    value: ${{ inputs.compare-markdown }}
 
 runs:
   using: composite
@@ -150,3 +202,80 @@ runs:
           echo "::error::loadr run failed (exit ${code}); see ${JUNIT}"
           exit "$code"
         fi
+
+    - name: Compare against the baseline
+      id: compare
+      if: inputs.baseline-summary != ''
+      shell: bash
+      env:
+        BASELINE: ${{ inputs.baseline-summary }}
+        SUMMARY: ${{ inputs.summary }}
+        MD: ${{ inputs.compare-markdown }}
+        MAX_REGRESSION: ${{ inputs.max-regression }}
+      run: |
+        set -uo pipefail
+        # Always `--assert` so the exit code carries the verdict (99 on
+        # regression); failing the job is deferred to the step below so the
+        # PR comment lands first and `fail-on-regression: false` still yields
+        # an accurate `regression` output.
+        cmd=(loadr compare "$BASELINE" "$SUMMARY" --markdown "$MD" --assert)
+        # Tolerance specs never contain whitespace, so word-splitting is safe.
+        for spec in $MAX_REGRESSION; do
+          cmd+=(--max-regression "$spec")
+        done
+        "${cmd[@]}"
+        code=$?
+        echo "exit_code=${code}" >> "$GITHUB_OUTPUT"
+        if [ "$code" -eq 99 ]; then
+          echo "regression=true" >> "$GITHUB_OUTPUT"
+        elif [ "$code" -eq 0 ]; then
+          echo "regression=false" >> "$GITHUB_OUTPUT"
+        else
+          # Not a verdict — unreadable summaries and the like fail right away.
+          echo "::error::loadr compare failed (exit ${code})"
+          exit "$code"
+        fi
+
+    - name: Comment the comparison on the PR
+      if: >-
+        inputs.baseline-summary != '' && inputs.comment-pr == 'true' &&
+        github.event_name == 'pull_request'
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+      env:
+        MD: ${{ inputs.compare-markdown }}
+      with:
+        script: |
+          const fs = require('fs');
+          const marker = '<!-- loadr-compare -->';
+          const body = `${marker}\n${fs.readFileSync(process.env.MD, 'utf8')}`;
+          const { owner, repo } = context.repo;
+          const issue_number = context.issue.number;
+          const comments = await github.paginate(github.rest.issues.listComments, {
+            owner,
+            repo,
+            issue_number,
+            per_page: 100,
+          });
+          const existing = comments.find((c) => c.body && c.body.includes(marker));
+          if (existing) {
+            await github.rest.issues.updateComment({
+              owner,
+              repo,
+              comment_id: existing.id,
+              body,
+            });
+          } else {
+            await github.rest.issues.createComment({ owner, repo, issue_number, body });
+          }
+
+    - name: Fail on regression
+      if: >-
+        inputs.baseline-summary != '' && inputs.fail-on-regression == 'true' &&
+        steps.compare.outputs.regression == 'true'
+      shell: bash
+      env:
+        BASELINE: ${{ inputs.baseline-summary }}
+        MD: ${{ inputs.compare-markdown }}
+      run: |
+        echo "::error::performance regression beyond tolerance vs ${BASELINE}; see ${MD}"
+        exit 99

@@ -7,18 +7,23 @@
 //!   checks, groups, sleeps) using lightweight source analysis, no JS engine.
 //! - [`convert_har`] — HAR (HTTP Archive) recordings, with heuristic
 //!   auto-correlation of dynamic values (tokens/ids) reused across requests.
+//! - [`convert_accesslog`] — nginx/apache COMBINED access logs (`.log`),
+//!   reconstructing the observed traffic shape (arrival rate, duration,
+//!   weighted endpoint mix).
 //!
-//! Both converters are best-effort: anything they cannot represent faithfully
+//! All converters are best-effort: anything they cannot represent faithfully
 //! becomes a [`ConversionWarning`] instead of a hard error, and the resulting
 //! [`loadr_config::TestPlan`] is designed to pass `loadr_config::validate`
 //! without errors.
 
+mod accesslog;
 mod har;
 mod jmx;
 mod k6;
 
 use thiserror::Error;
 
+pub use accesslog::convert_accesslog;
 pub use har::convert_har;
 pub use jmx::convert_jmx;
 pub use k6::convert_k6;
@@ -65,4 +70,7 @@ pub enum ConvertError {
     /// The input is not a usable HAR (HTTP Archive) document.
     #[error("invalid HAR: {0}")]
     Har(String),
+    /// The access log contained no parseable request lines.
+    #[error("invalid access log: {0}")]
+    AccessLog(String),
 }

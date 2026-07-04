@@ -298,9 +298,70 @@ pub struct Scenario {
     /// executor (Gatling `throttle`/`reachRps`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub throttle: Option<ThrottleSpec>,
+    /// Chaos fault injection: extra latency and/or dropped requests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub faults: Option<FaultSpec>,
     /// Tags added to all samples from this scenario.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub tags: BTreeMap<String, String>,
+}
+
+/// Chaos / fault-injection hooks applied to every request in a scenario:
+/// extra sampled latency before each send and/or a fraction of requests
+/// dropped as transport-class failures (`error_kind=fault_injected`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct FaultSpec {
+    /// Extra latency injected before each request is sent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latency: Option<LatencyFault>,
+    /// Probability in `[0, 1)` that a request is dropped: it is failed as a
+    /// transport error instead of completing normally.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drop_rate: Option<f64>,
+    /// When the drop takes effect (default `before_send`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drop_mode: Option<DropMode>,
+}
+
+/// Extra per-request latency, sampled from the VU's seeded rng.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
+pub struct LatencyFault {
+    /// Jitter magnitude: the upper bound for `uniform`, the standard
+    /// deviation for `gaussian` (mean 0, clamped at zero).
+    pub jitter: Dur,
+    /// Sampling distribution (default `uniform`).
+    #[serde(default, skip_serializing_if = "FaultDistribution::is_default")]
+    pub distribution: FaultDistribution,
+}
+
+/// Distribution the latency jitter is sampled from.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FaultDistribution {
+    /// `uniform(0..jitter)`.
+    #[default]
+    Uniform,
+    /// `gaussian(mean=0, std=jitter)`, clamped at zero.
+    Gaussian,
+}
+
+impl FaultDistribution {
+    fn is_default(&self) -> bool {
+        *self == FaultDistribution::Uniform
+    }
+}
+
+/// When a drop-fault takes effect.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DropMode {
+    /// Fail the request without sending it (default).
+    #[default]
+    BeforeSend,
+    /// Send the request, then discard the response and fail it.
+    AfterResponse,
 }
 
 /// A request-rate ceiling for a scenario (Gatling-style throttle).
@@ -2026,6 +2087,20 @@ pub enum ObserveConfig {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         token: Option<String>,
     },
+    /// Sample the local host's CPU / memory / disk / network from `/proc`,
+    /// live on the load timeline. Linux-only; other platforms log a warning
+    /// and produce no series.
+    System {
+        /// Metrics to sample: `cpu | memory | disk | network` (default: all).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        metrics: Vec<String>,
+        /// Sampling interval (default `1s`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        interval: Option<Dur>,
+        /// Series name prefix (default `system`, giving `system_cpu`, …).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        as_prefix: Option<String>,
+    },
 }
 
 /// OTLP transport.
@@ -2237,6 +2312,64 @@ plugins:
     fn unknown_field_rejected() {
         let err = serde_yaml::from_str::<TestPlan>("scenariosss: {}").unwrap_err();
         assert!(err.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn faults_block_parses() {
+        let s: Scenario = serde_yaml::from_str(
+            r#"
+executor: constant-vus
+vus: 1
+duration: 1s
+faults:
+  latency: { jitter: 50ms, distribution: gaussian }
+  drop_rate: 0.02
+  drop_mode: before_send
+flow:
+  - request: { url: https://example.com/ }
+"#,
+        )
+        .expect("parse");
+        let faults = s.faults.expect("faults");
+        let latency = faults.latency.expect("latency");
+        assert_eq!(latency.jitter, Dur::from_millis(50));
+        assert_eq!(latency.distribution, FaultDistribution::Gaussian);
+        assert_eq!(faults.drop_rate, Some(0.02));
+        assert_eq!(faults.drop_mode, Some(DropMode::BeforeSend));
+    }
+
+    #[test]
+    fn faults_defaults() {
+        // All fields optional; distribution defaults to uniform.
+        let f: FaultSpec = serde_yaml::from_str("latency: { jitter: 10ms }").expect("parse");
+        assert_eq!(
+            f.latency.expect("latency").distribution,
+            FaultDistribution::Uniform
+        );
+        assert_eq!(f.drop_rate, None);
+        assert_eq!(f.drop_mode, None);
+        let f: FaultSpec = serde_yaml::from_str("drop_rate: 0.5").expect("parse");
+        assert!(f.latency.is_none());
+        assert_eq!(f.drop_rate, Some(0.5));
+        assert_eq!(DropMode::default(), DropMode::BeforeSend);
+    }
+
+    #[test]
+    fn faults_round_trip_and_unknown_fields() {
+        let f = FaultSpec {
+            latency: Some(LatencyFault {
+                jitter: Dur::from_millis(50),
+                distribution: FaultDistribution::Gaussian,
+            }),
+            drop_rate: Some(0.02),
+            drop_mode: Some(DropMode::AfterResponse),
+        };
+        let yaml = serde_yaml::to_string(&f).expect("serialize");
+        let back: FaultSpec = serde_yaml::from_str(&yaml).expect("reparse");
+        assert_eq!(back, f);
+        // Unknown keys are rejected (`deny_unknown_fields`).
+        assert!(serde_yaml::from_str::<FaultSpec>("drop_probability: 0.5").is_err());
+        assert!(serde_yaml::from_str::<LatencyFault>("jitter: 1s\nshape: gaussian").is_err());
     }
 
     #[test]

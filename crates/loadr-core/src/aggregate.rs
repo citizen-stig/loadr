@@ -184,6 +184,17 @@ impl AggValues {
                 // merged histogram (see Aggregator::aggregate_selector_percentile).
                 _ => None,
             },
+            // SLO expressions resolve to the equivalent percentile lookup
+            // (slo(99.9%) -> p99.9; slo(50%) -> median). thresholds::evaluate
+            // resolves before calling here; this arm keeps the match total.
+            Agg::Slo(n) => match *n {
+                n if (n - 50.0).abs() < 1e-9 => self.med,
+                n if (n - 90.0).abs() < 1e-9 => self.p90,
+                n if (n - 95.0).abs() < 1e-9 => self.p95,
+                n if (n - 99.0).abs() < 1e-9 => self.p99,
+                n if (n - 99.9).abs() < 1e-9 => self.p999,
+                _ => None,
+            },
             Agg::Rate => match kind {
                 MetricKind::Rate => self.rate,
                 _ => self.per_second,

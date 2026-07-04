@@ -1,4 +1,5 @@
-//! Threshold expression parsing: `p(95)<400`, `rate>0.99`, `avg<200`, ...
+//! Threshold expression parsing: `p(95)<400`, `rate>0.99`, `avg<200`,
+//! `slo(99.9%) < 300ms`, ...
 //!
 //! A threshold key may carry a tag selector: `http_req_duration{scenario:browse}`.
 
@@ -11,11 +12,17 @@ pub enum ThresholdParseError {
     #[error("empty threshold expression")]
     Empty,
     #[error(
-        "unknown aggregation `{0}` (expected one of: avg, min, max, med, p(N), rate, count, value)"
+        "unknown aggregation `{0}` (expected one of: avg, min, max, med, p(N), rate, count, value, slo(N%))"
     )]
     UnknownAgg(String),
     #[error("invalid percentile `{0}`: must be a number in (0, 100]")]
     BadPercentile(String),
+    #[error(
+        "invalid slo objective `{0}`: must be one of 50, 90, 95, 99, 99.9 (percent sign optional)"
+    )]
+    BadSlo(String),
+    #[error("slo({0}%) unsupported: histogram summary carries p50/p90/p95/p99/p99.9")]
+    UnsupportedSlo(String),
     #[error("missing comparison operator in `{0}` (expected <, <=, >, >=, ==, or !=)")]
     MissingOp(String),
     #[error("invalid numeric bound `{0}`")]
@@ -39,7 +46,16 @@ pub enum Agg {
     Count,
     /// For gauges: last value.
     Value,
+    /// SLO objective: `slo(99.9%) < 300ms` asks that 99.9% of samples stay
+    /// within the bound, evaluated as the percentile-at-N of the trend.
+    /// Only the points the histogram summary carries are accepted:
+    /// 50, 90, 95, 99, 99.9 (see [`SUPPORTED_SLO_POINTS`]).
+    Slo(f64),
 }
+
+/// The SLO objectives `slo(N%)` accepts, matching the fixed percentiles the
+/// histogram summary carries (p50/p90/p95/p99/p99.9).
+pub const SUPPORTED_SLO_POINTS: [f64; 5] = [50.0, 90.0, 95.0, 99.0, 99.9];
 
 impl fmt::Display for Agg {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -52,6 +68,7 @@ impl fmt::Display for Agg {
             Agg::Rate => write!(f, "rate"),
             Agg::Count => write!(f, "count"),
             Agg::Value => write!(f, "value"),
+            Agg::Slo(n) => write!(f, "slo({n}%)"),
         }
     }
 }
@@ -162,11 +179,34 @@ fn parse_agg(s: &str) -> Result<Agg, ThresholdParseError> {
                     return Err(ThresholdParseError::BadPercentile(inner.to_string()));
                 }
                 Ok(Agg::Percentile(p))
+            } else if let Some(inner) = s
+                .strip_prefix("slo(")
+                .and_then(|rest| rest.strip_suffix(')'))
+            {
+                parse_slo(inner)
             } else {
                 Err(ThresholdParseError::UnknownAgg(s.to_string()))
             }
         }
     }
+}
+
+/// Parse the inside of `slo(...)`: a percentage, percent sign optional.
+/// Only the fixed points the histogram summary carries are accepted; anything
+/// else is rejected at parse time rather than silently approximated.
+fn parse_slo(inner: &str) -> Result<Agg, ThresholdParseError> {
+    let inner = inner.trim();
+    let num = inner.strip_suffix('%').unwrap_or(inner).trim();
+    let n: f64 = num
+        .parse()
+        .map_err(|_| ThresholdParseError::BadSlo(inner.to_string()))?;
+    if !n.is_finite() || n <= 0.0 || n >= 100.0 {
+        return Err(ThresholdParseError::BadSlo(inner.to_string()));
+    }
+    if !SUPPORTED_SLO_POINTS.iter().any(|p| (p - n).abs() < 1e-9) {
+        return Err(ThresholdParseError::UnsupportedSlo(num.to_string()));
+    }
+    Ok(Agg::Slo(n))
 }
 
 fn parse_bound(s: &str) -> Result<f64, ThresholdParseError> {
@@ -285,6 +325,73 @@ mod tests {
         ] {
             assert_eq!(ThresholdExpr::parse(s).unwrap().agg, agg, "{s}");
         }
+    }
+
+    #[test]
+    fn parses_slo_objectives() {
+        let t = ThresholdExpr::parse("slo(99.9%) < 300ms").unwrap();
+        assert_eq!(t.agg, Agg::Slo(99.9));
+        assert_eq!(t.op, Op::Lt);
+        assert_eq!(t.bound, 300.0);
+
+        // Percent sign is optional, whitespace tolerated.
+        let t = ThresholdExpr::parse("slo(95)<400").unwrap();
+        assert_eq!(t.agg, Agg::Slo(95.0));
+        let t = ThresholdExpr::parse("slo( 99.9 % ) <= 1s").unwrap();
+        assert_eq!(t.agg, Agg::Slo(99.9));
+        assert_eq!(t.op, Op::Le);
+        assert_eq!(t.bound, 1000.0);
+
+        for n in SUPPORTED_SLO_POINTS {
+            let t = ThresholdExpr::parse(&format!("slo({n}%)<1")).unwrap();
+            assert_eq!(t.agg, Agg::Slo(n), "slo({n})");
+        }
+    }
+
+    #[test]
+    fn slo_display_roundtrips() {
+        assert_eq!(Agg::Slo(99.9).to_string(), "slo(99.9%)");
+        assert_eq!(Agg::Slo(50.0).to_string(), "slo(50%)");
+    }
+
+    #[test]
+    fn rejects_unsupported_slo_points() {
+        let err = ThresholdExpr::parse("slo(99.5%)<300ms").unwrap_err();
+        assert_eq!(err, ThresholdParseError::UnsupportedSlo("99.5".into()));
+        assert_eq!(
+            err.to_string(),
+            "slo(99.5%) unsupported: histogram summary carries p50/p90/p95/p99/p99.9"
+        );
+        for s in ["slo(42%)<1", "slo(99.99)<1"] {
+            assert!(
+                matches!(
+                    ThresholdExpr::parse(s),
+                    Err(ThresholdParseError::UnsupportedSlo(_))
+                ),
+                "{s}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_slo() {
+        for s in [
+            "slo(fast%)<1",
+            "slo()<1",
+            "slo(0)<1",
+            "slo(100%)<1",
+            "slo(-5%)<1",
+        ] {
+            assert!(
+                matches!(ThresholdExpr::parse(s), Err(ThresholdParseError::BadSlo(_))),
+                "{s}"
+            );
+        }
+        // No closing paren falls through to the unknown-aggregation error.
+        assert!(matches!(
+            ThresholdExpr::parse("slo(99<1"),
+            Err(ThresholdParseError::UnknownAgg(_))
+        ));
     }
 
     #[test]

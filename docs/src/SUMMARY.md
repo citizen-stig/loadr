@@ -105,10 +105,21 @@
 - [Migrating from k6](migration/from-k6.md)
 - [Migrating from JMeter](migration/from-jmeter.md)
 - [Recording a browser session (HAR)](migration/from-har.md)
+- [Replaying access logs](migration/from-access-logs.md)
 
 # Reporting
 
 - [HTML reports & time-series charts](reporting.md)
+
+# Observability
+
+- [System metrics (observe)](observe/system.md)
+
+# Guides
+
+- [Comparing runs (loadr compare)](guides/compare.md)
+- [Parameter sweeps (loadr sweep)](guides/sweep.md)
+- [Chaos testing (fault injection)](guides/chaos.md)
 
 # Continuous integration
 

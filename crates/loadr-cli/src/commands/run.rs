@@ -346,12 +346,18 @@ async fn run_local(args: RunArgs, quiet: bool) -> anyhow::Result<i32> {
         Some(tokio::spawn(crate::progress::show_progress(handle.clone())))
     };
 
+    // `type: system` observe sources sample local /proc live — start them now.
+    let system_samplers = loadr_outputs::observe::start_samplers(&observe_cfg);
+
     let mut result = engine.run().await?;
 
     if let Some(p) = progress {
         p.abort();
         eprintln!();
     }
+
+    // Stop the system samplers and take their series (may be empty).
+    let system_series = loadr_outputs::observe::stop_samplers(system_samplers);
 
     // observe: pull system metrics for the run window and overlay them on the
     // timeline so the report shows load↔system correlation. Best-effort — a
@@ -360,7 +366,9 @@ async fn run_local(args: RunArgs, quiet: bool) -> anyhow::Result<i32> {
         let start_ms = result.summary.started_ms as i64;
         let end_ms = result.summary.ended_ms as i64;
         let step = loadr_outputs::observe::step_for(&result.summary.timeline);
-        let series = loadr_outputs::observe::collect(&observe_cfg, start_ms, end_ms, step).await;
+        let mut series =
+            loadr_outputs::observe::collect(&observe_cfg, start_ms, end_ms, step).await;
+        series.extend(system_series);
         if !series.is_empty() {
             loadr_outputs::observe::attach(&mut result.summary, &series);
             eprintln!(

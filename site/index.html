@@ -264,9 +264,21 @@
         <h3 class="font-bold text-white">Thresholds as CI gates</h3>
         <p class="mt-2 text-sm text-smoke"><code>p(95)&lt;400</code>, <code>rate&gt;0.99</code>, any percentile, tag-filtered selectors, <code>abort_on_fail</code> circuit breakers with warm-up delay. Exit code 99 on failure — k6-compatible.</p>
       </a>
+      <a href="/docs/yaml/thresholds.html#slo-objectives" class="fcard rounded-xl border border-edge bg-panel p-6">
+        <h3 class="font-bold text-white">SLO error budgets</h3>
+        <p class="mt-2 text-sm text-smoke"><code>slo(99.9%) &lt; 300ms</code> — thresholds written the way SLOs are. Objectives at 50/90/95/99/99.9 map to exact HDR percentiles and gate CI like any other threshold, but read like the contract they enforce.</p>
+      </a>
       <a href="/docs/ci/github-actions.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">CI-native: GitHub Action + JUnit</h3>
         <p class="mt-2 text-sm text-smoke">A first-party <code>setup-loadr</code> / <code>run</code> action installs the CLI and runs your plan, and <code>--junit</code> emits a JUnit report every CI test panel renders — GitHub, GitLab, Jenkins, CircleCI.</p>
+      </a>
+      <a href="/docs/guides/compare.html" class="fcard rounded-xl border border-edge bg-panel p-6">
+        <h3 class="font-bold text-white">Run-over-run comparison</h3>
+        <p class="mt-2 text-sm text-smoke"><code>loadr compare base.json current.json</code> diffs two runs with direction-aware regression detection, writes a markdown table for PR comments, and with <code>--assert</code> exits 99 when <code>--max-regression p95=10%</code> is blown.</p>
+      </a>
+      <a href="/docs/guides/sweep.html" class="fcard rounded-xl border border-edge bg-panel p-6">
+        <h3 class="font-bold text-white">Parameter sweeps</h3>
+        <p class="mt-2 text-sm text-smoke"><code>loadr sweep plan.yaml --var vus=10,50,100</code> runs one plan across a matrix — repeat <code>--var</code> and the axes multiply — then tabulates p50/p95/p99, error rate and RPS per combination, on the terminal or as markdown.</p>
       </a>
       <a href="/docs/yaml/assertions-checks.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">Checks + JMeter assertions</h3>
@@ -287,6 +299,10 @@
       <a href="/docs/yaml/feeders.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">Throttling</h3>
         <p class="mt-2 text-sm text-smoke">A global request-rate ceiling (<code>throttle: { requests_per_second }</code>) on top of any executor — Gatling's <code>reachRps</code>, for staying under a known rate limit no matter how fast the target is.</p>
+      </a>
+      <a href="/docs/guides/chaos.html" class="fcard rounded-xl border border-edge bg-panel p-6">
+        <h3 class="font-bold text-white">Fault injection</h3>
+        <p class="mt-2 text-sm text-smoke">A <code>faults:</code> block degrades the traffic loadr generates — latency jitter (uniform or gaussian) and a request <code>drop_rate</code> — so you can rehearse the bad day from the load generator, with nothing installed on the target.</p>
       </a>
       <a href="/docs/js/overview.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">Embedded JavaScript</h3>
@@ -316,6 +332,10 @@
         <h3 class="font-bold text-white">6 metric exporters</h3>
         <p class="mt-2 text-sm text-smoke">JSON lines, CSV, Prometheus (scrape + remote-write), InfluxDB line protocol, OpenTelemetry OTLP (gRPC &amp; HTTP), StatsD — plus a pre-built Grafana dashboard in the repo.</p>
       </a>
+      <a href="/docs/observe/system.html" class="fcard rounded-xl border border-edge bg-panel p-6">
+        <h3 class="font-bold text-white">System correlation</h3>
+        <p class="mt-2 text-sm text-smoke">An <code>observe: system</code> source samples host CPU, memory, disk and network alongside the load — <code>system_cpu</code> lands on the same timeline as latency and can gate thresholds (<code>max&lt;0.9</code>) like any other metric.</p>
+      </a>
       <a href="/docs/plugins/overview.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">WASM + native plugins</h3>
         <p class="mt-2 text-sm text-smoke">Five plugin types (protocol, output, extractor, assertion, service) over two mechanisms: sandboxed WASM components with a WIT interface, and abi_stable native libraries. No rebuilds, ever.</p>
@@ -331,6 +351,10 @@
       <a href="/docs/migration/from-jmeter.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">JMeter &amp; k6 importers</h3>
         <p class="mt-2 text-sm text-smoke"><code>loadr convert plan.jmx</code> translates thread groups, samplers, timers, assertions, extractors and CSV configs; the k6 importer maps options, scenarios, checks and http calls — with clear warnings for the rest.</p>
+      </a>
+      <a href="/docs/migration/from-access-logs.html" class="fcard rounded-xl border border-edge bg-panel p-6">
+        <h3 class="font-bold text-white">Traffic replay from logs</h3>
+        <p class="mt-2 text-sm text-smoke"><code>loadr convert access.log</code> turns a combined-format access log into a runnable plan: the observed arrival rate as a <code>constant-arrival-rate</code> executor over a weighted mix of your real top endpoints.</p>
       </a>
       <a href="/docs/getting-started/cli.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">Reports &amp; tooling</h3>
@@ -674,6 +698,12 @@ $ loadr validate converted.yaml
           <tr><td class="font-semibold text-ash">Fleet-wide percentiles</td><td>cloud</td><td>averaged</td><td>Enterprise</td><td>approximate</td><td class="bg-ember/5 text-ash">✓ exact (HDR histogram merge)</td></tr>
           <tr><td class="font-semibold text-ash">Live management UI</td><td>cloud</td><td>—</td><td>Enterprise</td><td>✓ built-in</td><td class="bg-ember/5 text-ash">✓ embedded</td></tr>
           <tr><td class="font-semibold text-ash">Per-phase timings (DNS/TLS/TTFB)</td><td>✓</td><td>partial</td><td>✓</td><td>—</td><td class="bg-ember/5 text-ash">✓ on every protocol</td></tr>
+          <tr><td class="font-semibold text-ash">Run comparison + PR gating</td><td>cloud</td><td>—</td><td>Enterprise</td><td>—</td><td class="bg-ember/5 text-ash">✓ <code>loadr compare --assert</code>, markdown for PR comments</td></tr>
+          <tr><td class="font-semibold text-ash">Parameter sweep matrix</td><td>scripted</td><td>—</td><td>—</td><td>scripted</td><td class="bg-ember/5 text-ash">✓ <code>loadr sweep --var vus=10,50,100</code></td></tr>
+          <tr><td class="font-semibold text-ash">SLO budgets</td><td>partial (p(N) thresholds)</td><td>—</td><td>partial (percentile assertions)</td><td>—</td><td class="bg-ember/5 text-ash">✓ <code>slo(99.9%) &lt; 300ms</code></td></tr>
+          <tr><td class="font-semibold text-ash">System metrics on the timeline</td><td>— (external Grafana)</td><td>plugin (PerfMon)</td><td>Enterprise</td><td>—</td><td class="bg-ember/5 text-ash">✓ <code>observe: system</code>, CPU/mem on the run timeline</td></tr>
+          <tr><td class="font-semibold text-ash">Traffic replay from access logs</td><td>—</td><td>partial (log sampler)</td><td>—</td><td>—</td><td class="bg-ember/5 text-ash">✓ converts to a weighted arrival-rate plan</td></tr>
+          <tr><td class="font-semibold text-ash">Fault injection</td><td>extension (k8s disruptor)</td><td>—</td><td>—</td><td>in Python</td><td class="bg-ember/5 text-ash">✓ latency jitter + request drops</td></tr>
           <tr><td class="font-semibold text-ash">Runtime footprint</td><td>Go binary</td><td>JVM + tuning</td><td>JVM</td><td>Python runtime</td><td class="bg-ember/5 text-ash">one Rust binary, distroless image</td></tr>
           <tr><td class="font-semibold text-ash">Migration path in</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="bg-ember/5 text-ash">✓ imports .jmx and k6 scripts</td></tr>
         </tbody>

@@ -28,8 +28,33 @@ thresholds:
 | `rate` | rate | pass fraction 0..1; on counters: events/second |
 | `count` | counter | total |
 | `value` | gauge | last value |
+| `slo(N%)` | trend | SLO form: N% of samples within the bound (see [below](#slo-objectives)) |
 
 Bounds accept durations for time metrics: `p(95)<400ms`, `avg<1.5s`.
+
+## SLO objectives
+
+`slo(N%) < bound` states a latency objective the way SLOs are written —
+"N% of requests complete within *bound*":
+
+```yaml
+thresholds:
+  http_req_duration:
+    - "slo(99%) < 300ms"       # 99% of requests under 300ms
+    - "slo(99.9%) < 1s"
+```
+
+It is exactly equivalent to the matching percentile check
+(`slo(99%) < 300ms` ≡ `p(99)<300`) — the win is that the plan reads like the
+SLO document it enforces.
+
+- Supported objectives: **50, 90, 95, 99, 99.9** — the fixed percentiles the
+  histogram summary carries. Anything else (`slo(99.5%)`) is rejected at
+  parse time rather than silently approximated; use `p(99.5)` if you need an
+  arbitrary percentile.
+- The percent sign is optional: `slo(95)<400` works.
+- Everything else about thresholds applies unchanged: duration bounds, tag
+  selectors, `abort_on_fail`, exit code 99.
 
 ## Tag selectors
 

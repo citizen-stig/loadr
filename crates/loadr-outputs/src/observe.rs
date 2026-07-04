@@ -8,7 +8,10 @@
 //!
 //! Collection is *post-run* (one range query per source over
 //! `[started_ms, ended_ms]`); live streaming into the engine snapshot loop is a
-//! later phase.
+//! later phase. The local `system` source is the one exception: `/proc` can't
+//! be range-queried retroactively, so it is sampled in the background during
+//! the run ([`start_samplers`] / [`stop_samplers`]) and drained into the same
+//! series shape at run end.
 
 use crate::http_client;
 use http::{HeaderName, HeaderValue, Uri};
@@ -95,6 +98,9 @@ pub async fn collect(
                     }
                 }
             }
+            // `system` sources are background samplers, not range queries —
+            // started via [`start_samplers`] and drained via [`stop_samplers`].
+            ObserveConfig::System { .. } => {}
         }
     }
     out
@@ -313,6 +319,430 @@ fn agg_values(s: &ObservedSeries) -> Option<AggValues> {
     })
 }
 
+// ---------------------------------------------------------------------------
+// `type: system` — background sampler for the local host's CPU / memory /
+// disk / network. Unlike the pull sources above there is no backend to query
+// after the run, so one task per source samples `/proc` every interval into a
+// bounded in-memory ring, drained into ordinary [`ObservedSeries`] at run end.
+// ---------------------------------------------------------------------------
+
+/// Handles to the background samplers spawned for `type: system` observe
+/// sources. Created by [`start_samplers`] at run start; the tasks are stopped
+/// and their rings drained by [`stop_samplers`] at run end.
+#[derive(Debug, Default)]
+pub struct SystemSamplerHandles {
+    samplers: Vec<system::Sampler>,
+}
+
+/// Start one background sampler per `type: system` observe source. Must run
+/// at run start (local metrics can't be collected retroactively) and be paired
+/// with [`stop_samplers`] at run end. Non-`system` sources are ignored.
+#[cfg(target_os = "linux")]
+pub fn start_samplers(configs: &[ObserveConfig]) -> SystemSamplerHandles {
+    let mut samplers = Vec::new();
+    for cfg in configs {
+        let ObserveConfig::System {
+            metrics,
+            interval,
+            as_prefix,
+        } = cfg
+        else {
+            continue;
+        };
+        let enabled = system::enabled_metrics(metrics);
+        if enabled.is_empty() {
+            tracing::warn!("observe: system source has no known metrics; skipping");
+            continue;
+        }
+        let prefix = as_prefix.as_deref().unwrap_or("system");
+        // Default 1s; floor at 100ms — finer sampling only amplifies noise.
+        let every = interval
+            .map_or(std::time::Duration::from_secs(1), |d| d.as_duration())
+            .max(std::time::Duration::from_millis(100));
+        samplers.push(system::spawn(prefix, &enabled, every));
+    }
+    SystemSamplerHandles { samplers }
+}
+
+/// Non-Linux: the `system` source reads `/proc`, so it is unsupported here —
+/// log a warning and start nothing (unsupported platforms yield empty series,
+/// never errors).
+#[cfg(not(target_os = "linux"))]
+pub fn start_samplers(configs: &[ObserveConfig]) -> SystemSamplerHandles {
+    if configs
+        .iter()
+        .any(|c| matches!(c, ObserveConfig::System { .. }))
+    {
+        tracing::warn!("observe: 'system' source is Linux-only; no local series collected");
+    }
+    SystemSamplerHandles::default()
+}
+
+/// Stop every sampler and drain its ring into [`ObservedSeries`] — the same
+/// shape [`collect`] produces, so [`attach`] and [`evaluate_thresholds`] apply
+/// to system series unchanged. Series that never received a sample are dropped.
+pub fn stop_samplers(handles: SystemSamplerHandles) -> Vec<ObservedSeries> {
+    let mut out = Vec::new();
+    for s in handles.samplers {
+        s.task.abort();
+        for rs in s.ring.lock().iter() {
+            if rs.points.is_empty() {
+                continue;
+            }
+            out.push(ObservedSeries {
+                name: rs.name.clone(),
+                unit: rs.unit.clone(),
+                points: rs.points.iter().copied().collect(),
+            });
+        }
+    }
+    out
+}
+
+/// `system`-source internals: pure `/proc` parsers plus the sampling task.
+/// Everything except `spawn`/`sample_loop` is platform-independent (`&str` in,
+/// values out) so the unit tests run on any host.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code, unused_imports))]
+mod system {
+    use parking_lot::Mutex;
+    use std::collections::VecDeque;
+    use std::sync::Arc;
+
+    /// Cap on samples kept per series (~24h at the default 1s interval).
+    pub(super) const RING_CAP: usize = 86_400;
+
+    /// One running sampler task plus the ring it fills.
+    #[derive(Debug)]
+    pub(super) struct Sampler {
+        pub(super) task: tokio::task::JoinHandle<()>,
+        pub(super) ring: SharedRing,
+    }
+
+    /// Ring buffers shared between the sampler task and the drain.
+    pub(super) type SharedRing = Arc<Mutex<Vec<RingSeries>>>;
+
+    /// A bounded, time-ordered sample buffer for one series.
+    #[derive(Debug)]
+    pub(super) struct RingSeries {
+        pub(super) metric: Metric,
+        pub(super) name: String,
+        pub(super) unit: String,
+        pub(super) points: VecDeque<(i64, f64)>,
+    }
+
+    impl RingSeries {
+        /// Append a sample, dropping the oldest once [`RING_CAP`] is reached.
+        pub(super) fn push(&mut self, ts_ms: i64, value: f64) {
+            while self.points.len() >= RING_CAP {
+                self.points.pop_front();
+            }
+            self.points.push_back((ts_ms, value));
+        }
+    }
+
+    /// The four local metrics a `system` source can sample.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) enum Metric {
+        Cpu,
+        Memory,
+        DiskIo,
+        Network,
+    }
+
+    impl Metric {
+        /// Series-name suffix under the configured prefix.
+        fn suffix(self) -> &'static str {
+            match self {
+                Metric::Cpu => "cpu",
+                Metric::Memory => "memory",
+                Metric::DiskIo => "disk_io",
+                Metric::Network => "network",
+            }
+        }
+
+        /// Unit hint: `ratio` for 0..1 fractions, `bytes` for byte rates.
+        fn unit(self) -> &'static str {
+            match self {
+                Metric::Cpu | Metric::Memory => "ratio",
+                Metric::DiskIo | Metric::Network => "bytes",
+            }
+        }
+    }
+
+    /// Resolve the plan's `metrics:` list. Empty means all four; unknown names
+    /// are logged and ignored; duplicates collapse.
+    pub(super) fn enabled_metrics(metrics: &[String]) -> Vec<Metric> {
+        if metrics.is_empty() {
+            return vec![Metric::Cpu, Metric::Memory, Metric::DiskIo, Metric::Network];
+        }
+        let mut out = Vec::new();
+        for m in metrics {
+            let metric = match m.as_str() {
+                "cpu" => Metric::Cpu,
+                "memory" => Metric::Memory,
+                "disk" => Metric::DiskIo,
+                "network" => Metric::Network,
+                other => {
+                    tracing::warn!(
+                        "observe: unknown system metric '{other}'; want cpu|memory|disk|network"
+                    );
+                    continue;
+                }
+            };
+            if !out.contains(&metric) {
+                out.push(metric);
+            }
+        }
+        out
+    }
+
+    /// Build the (empty) ring series for the enabled metrics under `prefix`.
+    pub(super) fn ring_for(prefix: &str, metrics: &[Metric]) -> Vec<RingSeries> {
+        metrics
+            .iter()
+            .map(|&m| RingSeries {
+                metric: m,
+                name: format!("{prefix}_{}", m.suffix()),
+                unit: m.unit().to_string(),
+                points: VecDeque::new(),
+            })
+            .collect()
+    }
+
+    /// Spawn the background sampling task for one `system` source.
+    #[cfg(target_os = "linux")]
+    pub(super) fn spawn(prefix: &str, metrics: &[Metric], every: std::time::Duration) -> Sampler {
+        let ring: SharedRing = Arc::new(Mutex::new(ring_for(prefix, metrics)));
+        let task_ring = Arc::clone(&ring);
+        let task = tokio::spawn(sample_loop(task_ring, every));
+        Sampler { task, ring }
+    }
+
+    /// Sample `/proc` every `every`, pushing one point per enabled series,
+    /// until the task is aborted by [`super::stop_samplers`].
+    #[cfg(target_os = "linux")]
+    async fn sample_loop(ring: SharedRing, every: std::time::Duration) {
+        let mut tick = tokio::time::interval(every);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        tick.tick().await; // the first tick fires immediately — it's the baseline
+        let mut prev = read_snapshot();
+        loop {
+            tick.tick().await;
+            let cur = read_snapshot();
+            push_values(&ring, cur.at_ms, &interval_values(&prev, &cur));
+            prev = cur;
+        }
+    }
+
+    /// Append one interval's values to whichever series are enabled.
+    pub(super) fn push_values(ring: &SharedRing, at_ms: i64, vals: &IntervalValues) {
+        let mut ring = ring.lock();
+        for rs in ring.iter_mut() {
+            if let Some(v) = vals.value(rs.metric) {
+                rs.push(at_ms, v);
+            }
+        }
+    }
+
+    /// One pass over `/proc`; a file that can't be read or parsed just yields
+    /// `None` for its metric.
+    #[cfg(target_os = "linux")]
+    fn read_snapshot() -> ProcSnapshot {
+        let read = |path: &str| std::fs::read_to_string(path).ok();
+        ProcSnapshot {
+            at_ms: loadr_core::metrics::now_millis() as i64,
+            cpu: read("/proc/stat").as_deref().and_then(parse_proc_stat),
+            mem_ratio: read("/proc/meminfo").as_deref().and_then(parse_meminfo),
+            disk_sectors: read("/proc/diskstats").as_deref().and_then(parse_diskstats),
+            net_bytes: read("/proc/net/dev").as_deref().and_then(parse_net_dev),
+        }
+    }
+
+    /// Raw counter readings from one pass over `/proc`, taken at `at_ms`.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    pub(super) struct ProcSnapshot {
+        pub(super) at_ms: i64,
+        pub(super) cpu: Option<CpuTimes>,
+        pub(super) mem_ratio: Option<f64>,
+        pub(super) disk_sectors: Option<u64>,
+        pub(super) net_bytes: Option<u64>,
+    }
+
+    /// Cumulative jiffies from the aggregate `cpu` line of `/proc/stat`.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) struct CpuTimes {
+        pub(super) busy: u64,
+        pub(super) total: u64,
+    }
+
+    /// Per-interval metric values; `None` where a reading was unavailable.
+    #[derive(Debug, Clone, Copy, Default, PartialEq)]
+    pub(super) struct IntervalValues {
+        pub(super) cpu: Option<f64>,
+        pub(super) memory: Option<f64>,
+        pub(super) disk_io: Option<f64>,
+        pub(super) network: Option<f64>,
+    }
+
+    impl IntervalValues {
+        fn value(&self, m: Metric) -> Option<f64> {
+            match m {
+                Metric::Cpu => self.cpu,
+                Metric::Memory => self.memory,
+                Metric::DiskIo => self.disk_io,
+                Metric::Network => self.network,
+            }
+        }
+    }
+
+    /// Derive the interval `prev → cur`'s values. Delta-based metrics (cpu,
+    /// disk, network) go `None` on a counter reset (value moving backwards) or
+    /// a zero-length interval; memory is instantaneous.
+    pub(super) fn interval_values(prev: &ProcSnapshot, cur: &ProcSnapshot) -> IntervalValues {
+        let dt = (cur.at_ms - prev.at_ms) as f64 / 1000.0;
+        if dt <= 0.0 {
+            return IntervalValues {
+                memory: cur.mem_ratio,
+                ..Default::default()
+            };
+        }
+        let cpu = match (prev.cpu, cur.cpu) {
+            (Some(p), Some(c)) if c.total > p.total && c.busy >= p.busy => {
+                Some(((c.busy - p.busy) as f64 / (c.total - p.total) as f64).clamp(0.0, 1.0))
+            }
+            _ => None,
+        };
+        let rate = |p: Option<u64>, c: Option<u64>, scale: f64| match (p, c) {
+            (Some(p), Some(c)) if c >= p => Some((c - p) as f64 * scale / dt),
+            _ => None,
+        };
+        IntervalValues {
+            cpu,
+            memory: cur.mem_ratio,
+            // /proc/diskstats counts 512-byte sectors regardless of hardware.
+            disk_io: rate(prev.disk_sectors, cur.disk_sectors, 512.0),
+            network: rate(prev.net_bytes, cur.net_bytes, 1.0),
+        }
+    }
+
+    /// Parse the aggregate `cpu` line of `/proc/stat` into busy/total jiffies.
+    /// Busy = total − (idle + iowait), over the first eight time fields.
+    pub(super) fn parse_proc_stat(s: &str) -> Option<CpuTimes> {
+        let line = s.lines().find(|l| l.starts_with("cpu "))?;
+        let fields = line
+            .split_whitespace()
+            .skip(1)
+            .map(|t| t.parse::<u64>().ok())
+            .collect::<Option<Vec<u64>>>()?;
+        // user nice system idle iowait irq softirq steal [guest guest_nice]
+        if fields.len() < 5 {
+            return None;
+        }
+        let total: u64 = fields.iter().take(8).sum();
+        let idle = fields[3] + fields[4];
+        Some(CpuTimes {
+            busy: total.saturating_sub(idle),
+            total,
+        })
+    }
+
+    /// Parse `/proc/meminfo` into a used/total ratio (`MemAvailable`-based).
+    pub(super) fn parse_meminfo(s: &str) -> Option<f64> {
+        let mut total = None;
+        let mut available = None;
+        for line in s.lines() {
+            if let Some(rest) = line.strip_prefix("MemTotal:") {
+                total = first_u64(rest);
+            } else if let Some(rest) = line.strip_prefix("MemAvailable:") {
+                available = first_u64(rest);
+            }
+        }
+        let (total, available) = (total?, available?);
+        if total == 0 {
+            return None;
+        }
+        Some(total.saturating_sub(available) as f64 / total as f64)
+    }
+
+    /// First whitespace-separated integer in `s`.
+    fn first_u64(s: &str) -> Option<u64> {
+        s.split_whitespace().next()?.parse().ok()
+    }
+
+    /// Parse `/proc/diskstats` into total sectors read+written across physical
+    /// devices. Partitions and virtual devices (`loop*`, `ram*`, `zram*`,
+    /// `dm-*`, `md*`) are skipped so I/O isn't double-counted.
+    pub(super) fn parse_diskstats(s: &str) -> Option<u64> {
+        let mut devices: Vec<String> = Vec::new();
+        let mut sectors: u64 = 0;
+        let mut saw_any = false;
+        for line in s.lines() {
+            let f: Vec<&str> = line.split_whitespace().collect();
+            if f.len() < 10 {
+                continue;
+            }
+            let name = f[2];
+            if ["loop", "ram", "zram", "dm-", "md"]
+                .iter()
+                .any(|p| name.starts_with(p))
+            {
+                continue;
+            }
+            if devices.iter().any(|d| is_partition_of(name, d)) {
+                continue;
+            }
+            // f[5] = sectors read, f[9] = sectors written.
+            let (Ok(read), Ok(written)) = (f[5].parse::<u64>(), f[9].parse::<u64>()) else {
+                continue;
+            };
+            devices.push(name.to_string());
+            sectors += read + written;
+            saw_any = true;
+        }
+        saw_any.then_some(sectors)
+    }
+
+    /// True if `name` names a partition of `device`: the device name followed
+    /// by digits (`sda1`) or `p` + digits (`nvme0n1p1`). `sdab` is *not* a
+    /// partition of `sda`.
+    pub(super) fn is_partition_of(name: &str, device: &str) -> bool {
+        let Some(rest) = name.strip_prefix(device) else {
+            return false;
+        };
+        if rest.is_empty() {
+            return false;
+        }
+        let rest = rest.strip_prefix('p').unwrap_or(rest);
+        !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit())
+    }
+
+    /// Parse `/proc/net/dev` into total rx+tx bytes across non-loopback
+    /// interfaces. Header lines fail the numeric parse and fall through.
+    pub(super) fn parse_net_dev(s: &str) -> Option<u64> {
+        let mut bytes: u64 = 0;
+        let mut saw_any = false;
+        for line in s.lines() {
+            let Some((iface, rest)) = line.split_once(':') else {
+                continue;
+            };
+            if iface.trim() == "lo" {
+                continue;
+            }
+            let f: Vec<&str> = rest.split_whitespace().collect();
+            if f.len() < 9 {
+                continue;
+            }
+            // f[0] = rx bytes, f[8] = tx bytes.
+            let (Ok(rx), Ok(tx)) = (f[0].parse::<u64>(), f[8].parse::<u64>()) else {
+                continue;
+            };
+            bytes += rx + tx;
+            saw_any = true;
+        }
+        saw_any.then_some(bytes)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -410,6 +840,255 @@ mod tests {
         );
         let out2 = evaluate_thresholds(&th2, &series);
         assert!(!out2[0].passed, "max 0.97 should breach max<0.90");
+    }
+
+    // ---- `type: system` sampler internals ----
+
+    #[test]
+    fn parses_the_aggregate_proc_stat_cpu_line() {
+        let stat = concat!(
+            "cpu  4705 150 1120 16250 520 0 175 10 0 0\n",
+            "cpu0 2352 75 560 8125 260 0 87 5 0 0\n",
+            "intr 114930548 113199788 3 0 5\n",
+        );
+        let t = system::parse_proc_stat(stat).unwrap();
+        // total = user..steal (first 8 fields); busy = total − (idle + iowait).
+        assert_eq!(t.total, 4705 + 150 + 1120 + 16250 + 520 + 175 + 10);
+        assert_eq!(t.busy, t.total - (16250 + 520));
+        assert!(system::parse_proc_stat("btime 1700000000\n").is_none());
+    }
+
+    #[test]
+    fn parses_meminfo_into_a_used_ratio() {
+        let mem = concat!(
+            "MemTotal:       16384 kB\n",
+            "MemFree:         1024 kB\n",
+            "MemAvailable:    4096 kB\n",
+            "Buffers:          512 kB\n",
+        );
+        // used/total = (16384 − 4096) / 16384.
+        assert_eq!(system::parse_meminfo(mem), Some(0.75));
+        // No MemAvailable (ancient kernel): unavailable, not a guess.
+        assert!(system::parse_meminfo("MemTotal: 16384 kB\n").is_none());
+    }
+
+    #[test]
+    fn parses_diskstats_skipping_partitions_and_virtual_devices() {
+        let disk = concat!(
+            "   7       0 loop0 10 0 80 0 0 0 0 0 0 0 0\n",
+            " 259       0 nvme0n1 1000 0 8000 0 500 0 4000 0 0 0 0\n",
+            " 259       1 nvme0n1p1 900 0 7000 0 400 0 3500 0 0 0 0\n",
+            "   8       0 sda 100 0 800 0 50 0 400 0 0 0 0\n",
+        );
+        // loop0 and the nvme partition are skipped; whole disks summed.
+        assert_eq!(system::parse_diskstats(disk), Some(8000 + 4000 + 800 + 400));
+        assert!(system::parse_diskstats("garbage\n").is_none());
+    }
+
+    #[test]
+    fn partition_detection_is_name_aware() {
+        assert!(system::is_partition_of("sda1", "sda"));
+        assert!(system::is_partition_of("nvme0n1p2", "nvme0n1"));
+        assert!(!system::is_partition_of("sdab", "sda")); // 28th disk, not a partition
+        assert!(!system::is_partition_of("sda", "sda"));
+    }
+
+    #[test]
+    fn parses_net_dev_skipping_loopback_and_headers() {
+        let net = concat!(
+            "Inter-|   Receive                                             |  Transmit\n",
+            " face |bytes    packets errs drop fifo frame compressed multicast|bytes\n",
+            "    lo: 999999 10 0 0 0 0 0 0 999999 10 0 0 0 0 0 0\n",
+            "  eth0: 5000 50 0 0 0 0 0 0 2500 25 0 0 0 0 0 0\n",
+            "wlan0:100 1 0 0 0 0 0 0 50 1 0 0 0 0 0 0\n", // no space after ':'
+        );
+        assert_eq!(system::parse_net_dev(net), Some(5000 + 2500 + 100 + 50));
+        assert!(system::parse_net_dev("").is_none());
+    }
+
+    #[test]
+    fn interval_values_use_deltas_and_guard_counter_resets() {
+        let prev = snap(
+            1_000,
+            cpu_times(100, 1000),
+            Some(0.40),
+            Some(1_000),
+            Some(10_000),
+        );
+        let cur = snap(
+            3_000,
+            cpu_times(150, 1100),
+            Some(0.42),
+            Some(3_000),
+            Some(30_000),
+        );
+        let v = system::interval_values(&prev, &cur);
+        assert_eq!(v.cpu, Some(0.5)); // 50 busy / 100 total jiffies
+        assert_eq!(v.memory, Some(0.42)); // instantaneous, from `cur`
+        assert_eq!(v.disk_io, Some(512_000.0)); // 2000 sectors × 512 B / 2 s
+        assert_eq!(v.network, Some(10_000.0)); // 20000 B / 2 s
+
+        // Counter resets must not produce garbage rates.
+        let reset = snap(5_000, cpu_times(150, 1100), None, Some(100), Some(5));
+        let v2 = system::interval_values(&cur, &reset);
+        assert_eq!(v2.cpu, None); // cpu total didn't advance
+        assert_eq!(v2.disk_io, None);
+        assert_eq!(v2.network, None);
+
+        // A zero-length interval yields only the instantaneous metric.
+        let v3 = system::interval_values(&cur, &cur);
+        assert_eq!(
+            v3,
+            system::IntervalValues {
+                memory: Some(0.42),
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn ring_drops_the_oldest_sample_beyond_the_cap() {
+        let mut rings = system::ring_for("system", &[system::Metric::Cpu]);
+        assert_eq!(rings[0].name, "system_cpu");
+        assert_eq!(rings[0].unit, "ratio");
+        for i in 0..(system::RING_CAP + 10) {
+            rings[0].push(i as i64, i as f64);
+        }
+        assert_eq!(rings[0].points.len(), system::RING_CAP);
+        assert_eq!(rings[0].points.front().copied(), Some((10, 10.0)));
+    }
+
+    #[tokio::test]
+    async fn system_drain_matches_the_collect_series_shape() {
+        // Unknown names are dropped, duplicates collapse, order is fixed.
+        let enabled = system::enabled_metrics(&[
+            "cpu".to_string(),
+            "network".to_string(),
+            "cpu".to_string(),
+            "bogus".to_string(),
+        ]);
+        assert_eq!(enabled, vec![system::Metric::Cpu, system::Metric::Network]);
+        assert_eq!(system::enabled_metrics(&[]).len(), 4); // empty = all four
+
+        let ring: system::SharedRing =
+            std::sync::Arc::new(parking_lot::Mutex::new(system::ring_for("sys", &enabled)));
+        system::push_values(
+            &ring,
+            1_000,
+            &system::IntervalValues {
+                cpu: Some(0.5),
+                memory: Some(0.9), // not enabled — must not surface
+                network: Some(1_000.0),
+                ..Default::default()
+            },
+        );
+        system::push_values(
+            &ring,
+            2_000,
+            &system::IntervalValues {
+                cpu: Some(0.7),
+                network: Some(2_000.0),
+                ..Default::default()
+            },
+        );
+
+        let handles = SystemSamplerHandles {
+            samplers: vec![system::Sampler {
+                task: tokio::spawn(async {}),
+                ring,
+            }],
+        };
+        let series = stop_samplers(handles);
+        assert_eq!(series.len(), 2);
+        assert_eq!(series[0].name, "sys_cpu");
+        assert_eq!(series[0].unit, "ratio");
+        assert_eq!(series[0].points, vec![(1_000, 0.5), (2_000, 0.7)]);
+        assert_eq!(series[1].name, "sys_network");
+        assert_eq!(series[1].unit, "bytes");
+        assert_eq!(series[1].points, vec![(1_000, 1_000.0), (2_000, 2_000.0)]);
+    }
+
+    #[tokio::test]
+    async fn system_series_resample_and_gate_like_prometheus_ones() {
+        let rings = system::ring_for("system", &[system::Metric::Cpu]);
+        let ring: system::SharedRing = std::sync::Arc::new(parking_lot::Mutex::new(rings));
+        for (ts, v) in [
+            (1_700_000_000_000_i64, 0.10),
+            (1_700_000_001_000, 0.55),
+            (1_700_000_002_000, 0.90),
+        ] {
+            system::push_values(
+                &ring,
+                ts,
+                &system::IntervalValues {
+                    cpu: Some(v),
+                    ..Default::default()
+                },
+            );
+        }
+        let handles = SystemSamplerHandles {
+            samplers: vec![system::Sampler {
+                task: tokio::spawn(async {}),
+                ring,
+            }],
+        };
+        let series = stop_samplers(handles);
+
+        // Same resampling behaviour as a prometheus-sourced series.
+        let mut summary = summary_with(vec![tp(0.0), tp(1.0), tp(2.0)]);
+        attach(&mut summary, &series);
+        assert_eq!(summary.timeline[0].external.get("system_cpu"), Some(&0.10));
+        assert_eq!(summary.timeline[1].external.get("system_cpu"), Some(&0.55));
+        assert_eq!(summary.timeline[2].external.get("system_cpu"), Some(&0.90));
+
+        // And the observe-threshold path evaluates them unchanged.
+        let mut th: indexmap::IndexMap<String, loadr_config::ThresholdList> =
+            indexmap::IndexMap::new();
+        th.insert(
+            "system_cpu".into(),
+            loadr_config::ThresholdList::Single("max<0.95".into()),
+        );
+        let out = evaluate_thresholds(&th, &series);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].passed, "max 0.90 is under 0.95: {out:?}");
+    }
+
+    fn cpu_times(busy: u64, total: u64) -> Option<system::CpuTimes> {
+        Some(system::CpuTimes { busy, total })
+    }
+
+    fn snap(
+        at_ms: i64,
+        cpu: Option<system::CpuTimes>,
+        mem_ratio: Option<f64>,
+        disk_sectors: Option<u64>,
+        net_bytes: Option<u64>,
+    ) -> system::ProcSnapshot {
+        system::ProcSnapshot {
+            at_ms,
+            cpu,
+            mem_ratio,
+            disk_sectors,
+            net_bytes,
+        }
+    }
+
+    fn summary_with(timeline: Vec<loadr_core::summary::TimelinePoint>) -> Summary {
+        Summary {
+            name: None,
+            run_id: "r".into(),
+            started_ms: 1_700_000_000_000,
+            ended_ms: 1_700_000_003_000,
+            duration_secs: 3.0,
+            scenarios: vec![],
+            metrics: vec![],
+            checks: vec![],
+            thresholds: vec![],
+            thresholds_passed: true,
+            aborted: None,
+            snapshot: Default::default(),
+            timeline,
+        }
     }
 
     fn tp(elapsed: f64) -> loadr_core::summary::TimelinePoint {

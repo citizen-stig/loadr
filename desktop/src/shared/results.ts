@@ -129,6 +129,86 @@ export function deriveResults(s: Summary): Results {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Run-to-run comparison (the desktop compare view). Pure: every figure is
+// derived from two Results objects — the GUI never shells out to
+// `loadr compare` — but the verdict rules mirror it: direction-aware
+// (latency/error-rate up = worse, throughput/checks-rate down = worse) with
+// the same 5% default tolerance.
+
+export type CompareUnit = 'ms' | 'rps' | '%';
+
+export interface CompareRow {
+  label: string;
+  unit: CompareUnit;
+  baseline: number | null;
+  current: number | null;
+  /** current − baseline, in the row's unit (null when either side is missing). */
+  delta: number | null;
+  /** % change baseline→current (null when missing, or baseline is 0 and current isn't). */
+  deltaPct: number | null;
+  lowerIsBetter: boolean;
+}
+
+export type CompareVerdict = 'improved' | 'regressed' | 'flat';
+
+/** Default regression tolerance (%), matching `loadr compare --max-regression`. */
+export const REGRESSION_TOLERANCE_PCT = 5;
+
+function changePct(baseline: number | null, current: number | null): number | null {
+  if (baseline == null || current == null) return null;
+  if (baseline === 0) return current === 0 ? 0 : null; // 0→x is an unbounded change
+  return ((current - baseline) / baseline) * 100;
+}
+
+function row(label: string, unit: CompareUnit, baseline: number | null, current: number | null, lowerIsBetter: boolean): CompareRow {
+  const delta = baseline == null || current == null ? null : current - baseline;
+  return { label, unit, baseline, current, delta, deltaPct: changePct(baseline, current), lowerIsBetter };
+}
+
+/** p50 of the busiest *_req_duration trend (the same family deriveResults headlines). */
+function latencyP50(r: Results): number | null {
+  const durations = r.metrics
+    .filter((m) => m.metric.endsWith('_req_duration'))
+    .sort((a, b) => b.agg.count - a.agg.count);
+  return durations[0]?.agg.med ?? null;
+}
+
+function meanRps(r: Results): number | null {
+  return r.durationSecs > 0 ? r.totalRequests / r.durationSecs : null;
+}
+
+/** Merged checks pass percentage (null when the run had no checks). */
+function checksRate(r: Results): number | null {
+  const total = r.checks.passed + r.checks.failed;
+  return total > 0 ? (r.checks.passed / total) * 100 : null;
+}
+
+/** Headline delta table between a baseline run and the current run. */
+export function compareRuns(baseline: Results, current: Results): CompareRow[] {
+  return [
+    row('avg latency', 'ms', baseline.latency.avg, current.latency.avg, true),
+    row('p50 latency', 'ms', latencyP50(baseline), latencyP50(current), true),
+    row('p95 latency', 'ms', baseline.latency.p95, current.latency.p95, true),
+    row('p99 latency', 'ms', baseline.latency.p99, current.latency.p99, true),
+    row('requests / s', 'rps', meanRps(baseline), meanRps(current), false),
+    row('error rate', '%', baseline.errorRate * 100, current.errorRate * 100, true),
+    row('checks rate', '%', checksRate(baseline), checksRate(current), false),
+  ];
+}
+
+/**
+ * Direction-aware verdict: any improvement counts, a regression only beyond
+ * the tolerance. A 0→non-zero move in the worse direction has no finite Δ%
+ * and always counts as a regression.
+ */
+export function compareVerdict(r: CompareRow, tolerancePct = REGRESSION_TOLERANCE_PCT): CompareVerdict {
+  if (r.delta == null || r.delta === 0) return 'flat';
+  const worse = r.lowerIsBetter ? r.delta > 0 : r.delta < 0;
+  if (!worse) return 'improved';
+  return r.deltaPct == null || Math.abs(r.deltaPct) > tolerancePct ? 'regressed' : 'flat';
+}
+
 export interface LiveMetrics {
   elapsedSecs: number;
   vus: number;

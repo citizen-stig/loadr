@@ -37,8 +37,12 @@ enum Command {
     Run(commands::run::RunArgs),
     /// Validate test files and print diagnostics
     Validate(commands::validate::ValidateArgs),
-    /// Convert JMeter .jmx or k6 .js files to loadr YAML
+    /// Convert JMeter .jmx, k6 .js, HAR or access-log files to loadr YAML
     Convert(commands::convert::ConvertArgs),
+    /// Compare two run summaries and flag regressions
+    Compare(commands::compare::CompareArgs),
+    /// Run a plan across a parameter matrix and compare the results
+    Sweep(commands::sweep::SweepArgs),
     /// Run the distributed-mode controller
     Controller(commands::controller::ControllerArgs),
     /// Run a load-generating agent
@@ -82,6 +86,8 @@ fn run(cli: Cli) -> anyhow::Result<i32> {
         Command::Run(args) => commands::run::execute(args, cli.quiet > 0),
         Command::Validate(args) => commands::validate::execute(args),
         Command::Convert(args) => commands::convert::execute(args),
+        Command::Compare(args) => commands::compare::execute(args),
+        Command::Sweep(args) => commands::sweep::execute(args),
         Command::Controller(args) => commands::controller::execute(args),
         Command::Agent(args) => commands::agent::execute(args),
         Command::Plugin(cmd) => commands::plugin::execute(cmd),

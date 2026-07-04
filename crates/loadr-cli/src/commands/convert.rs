@@ -1,4 +1,4 @@
-//! `loadr convert` — import JMeter .jmx and k6 .js files.
+//! `loadr convert` — import JMeter .jmx, k6 .js, HAR and access-log files.
 
 use std::path::PathBuf;
 
@@ -7,13 +7,13 @@ use owo_colors::OwoColorize;
 
 #[derive(Args)]
 pub struct ConvertArgs {
-    /// Source file: a JMeter .jmx plan, a k6 .js script, or a .har recording
+    /// Source file: a JMeter .jmx plan, a k6 .js script, a .har recording, or an access .log
     pub input: PathBuf,
     /// Output YAML path (default: stdout)
     #[arg(short, long)]
     pub output: Option<PathBuf>,
     /// Input kind; inferred from the extension when omitted
-    #[arg(long, value_parser = ["jmx", "k6", "har"])]
+    #[arg(long, value_parser = ["jmx", "k6", "har", "accesslog"])]
     pub from: Option<String>,
 }
 
@@ -27,8 +27,9 @@ pub fn execute(args: ConvertArgs) -> anyhow::Result<i32> {
             Some("jmx") | Some("xml") => "jmx".to_string(),
             Some("js") | Some("ts") | Some("mjs") => "k6".to_string(),
             Some("har") => "har".to_string(),
+            Some("log") => "accesslog".to_string(),
             other => anyhow::bail!(
-                "cannot infer input kind from extension {:?}; pass --from jmx|k6|har",
+                "cannot infer input kind from extension {:?}; pass --from jmx|k6|har|accesslog",
                 other
             ),
         },
@@ -38,6 +39,7 @@ pub fn execute(args: ConvertArgs) -> anyhow::Result<i32> {
         "jmx" => loadr_convert::convert_jmx(&source)?,
         "k6" => loadr_convert::convert_k6(&source)?,
         "har" => loadr_convert::convert_har(&source)?,
+        "accesslog" => loadr_convert::convert_accesslog(&source)?,
         _ => unreachable!(),
     };
 

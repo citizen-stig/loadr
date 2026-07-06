@@ -390,7 +390,7 @@ $ loadr compare before.json after.json
 
 The p50 barely moved — it never was the problem — while the p99 collapsed from 2.7
 seconds to 138ms. _That's_ what a real fix looks like: the tail comes home and the
-median doesn't lie about it. Wire the same comparison into CI (<<ch14>>) with a
+median doesn't lie about it. Wire the same comparison into CI (<<ch15>>) with a
 regression tolerance and the pipeline now defends the fix — the next change that
 re-inflates that tail fails the build instead of reaching production. This is also
 the honest guard against the most seductive mistake in the whole discipline:
@@ -425,4 +425,26 @@ because you stopped guessing and started reading the system.
   linear passes, super-linear is a latent outage. It's cheap enough for every PR.
 * A fix isn't done until a *re-test proves it*. Compare distributions and watch the
   tail you were chasing — a fix that only moves the average is a fix that lied.
+****
+
+[.fieldcard]
+.Field Card — Hunting Bottlenecks
+****
+Symptom to cause, outside in: read the resources (USE), profile the saturated one, match the signature, fix the smallest thing, re-test.
+
+Generator CPU crested 0.90:: The rig is the bottleneck, not the target — add generators and re-run before believing any latency.
+Bad app p99, bored database:: Connection-pool exhaustion — instrument acquire-vs-execute time, size the pool to the downstream, not bigger.
+Latency scales with input size, not rate:: Algorithmic-complexity DoS — sweep one magnitude and fit the exponent.
+Fix applied:: Re-run the *identical* test and `compare` distributions — watch the tail you were chasing, not the average.
+
+[source,console]
+----
+# Prove reachable, then prove it's super-linear and gate on the slope
+loadr payload nested-json:10000 | curl -X POST localhost:3001/api/parse --data-binary @-
+loadr sweep examples/49-payload-complexity.yaml \
+  --var depth=4000,8000,16000,32000,64000 --complexity depth --max-exponent 1.2
+loadr compare before.json after.json   # from --summary-export
+----
+
+*Remember:* saturation, not utilization, is what users feel. Gate the generator (`system_cpu: max < 0.90`). `O(n^1.99)` past the 1.2 bound → exit 99, merge blocked; healthy fits near `O(n^1.03)`. Profile *under load*, never at rest.
 ****

@@ -165,7 +165,7 @@ Knee::
 The point on the load-versus-latency curve where latency stops creeping and
 starts climbing — the beginning of queueing dominance. The knee, not the
 breakpoint, is your usable capacity; running production near the knee means any
-traffic blip lands on the steep part of the curve. Capacity tests (<<ch16>>)
+traffic blip lands on the steep part of the curve. Capacity tests (<<ch17>>)
 exist to find it: step the arrival rate up in stages and watch for the bend.
 
 === Objectives and contracts
@@ -206,7 +206,7 @@ Error budget::
 The complement of the SLO: a 99.9 percent objective grants a budget of 0.1
 percent bad events per window — roughly 43 minutes per month. The budget is
 meant to be _spent_: on deploys, experiments, chaos drills, and load tests
-against production (<<ch15>>). A team that never touches its budget is
+against production (<<ch16>>). A team that never touches its budget is
 over-cautious; a team that burns it in week one stops shipping.
 
 Apdex::
@@ -240,7 +240,7 @@ is *coherency* (crosstalk — the cost of keeping N parties consistent). σ alon
 caps your speedup (Amdahl's Law is the κ=0 special case); any κ > 0 means
 throughput _peaks and then declines_ as you add nodes — the cluster where 12
 instances serve less traffic than 8. Fit it to measured throughput at several
-scales to predict the peak; <<ch16>> walks through the fit.
+scales to predict the peak; <<ch17>> walks through the fit.
 +
 _Misuse to avoid:_ fitting σ and κ to two or three data points and extrapolating
 far beyond the measured range. The USL interpolates honestly and extrapolates

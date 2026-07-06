@@ -284,7 +284,7 @@ $ kubectl logs -f job/loadr-run                         # merged summary
 
 The Job's exit code reflects the thresholds — zero on pass, non-zero on breach
 — so the same manifest doubles as an in-cluster CI gate, a thread we pick up
-properly in <<ch14>>. Locust's Helm chart and the k6-operator's `TestRun`
+properly in <<ch15>>. Locust's Helm chart and the k6-operator's `TestRun`
 custom resource give you the same pattern with the same economics.
 
 Kubernetes also introduces two generator-specific traps:
@@ -426,13 +426,13 @@ agent-loss case the controller already has a policy for. Scale the fleet to
 zero between runs; an idle load-generation cluster is the most embarrassing
 line on a platform team's bill.
 
-*Match the fleet to the question.* The everyday CI gate (<<ch14>>) needs one
+*Match the fleet to the question.* The everyday CI gate (<<ch15>>) needs one
 small generator and five minutes. The full fleet exists for the questions that
 need it — the quarterly capacity validation, the pre-launch breakpoint hunt,
 the geo test before an international rollout. Teams that run the big fleet
 nightly out of ritual get numb to it, and numbness is how a real regression
 sails through. The capacity-and-cost decisions those big runs feed into get a
-full treatment in <<ch16>>.
+full treatment in <<ch17>>.
 
 The through-line of this chapter is plain: scale is not the
 goal. *Valid measurement at the required load* is the goal, and every
@@ -467,4 +467,29 @@ where its honesty ends, beats it every time.
   distribution describes nobody.
 * Generators are cheap; invalid runs are expensive. Spot instances, scale to
   zero between runs, and reserve the big fleet for the big questions.
+****
+
+[.fieldcard]
+.Field Card — Load at Scale, Honestly
+****
+When the numbers get big, protect validity first: the generator is part of the experiment, so measure it like the target.
+
+Any result that matters:: run the *halving test* — same load, twice the generators. If latency improves, the rig was the bottleneck and every prior single-node number is suspect.
+Sizing a fleet:: measure the per-node ceiling with a sweep, then run each agent at *50–60%* of it. Headroom below 70% CPU is correctness; below 50% is budget on fire.
+Merging N agents:: merge HDR histograms, *never average percentiles*, and evaluate thresholds centrally — per-agent gates split-brain.
+Geo run:: report per region. A global percentile over a bimodal distribution describes no real user.
+
+[source,console]
+----
+# Make one machine honest, then find its ceiling
+ulimit -n 65536; sysctl -w net.ipv4.tcp_tw_reuse=1
+loadr sweep ceiling.yaml --var rate=5000,10000,20000,40000 --duration 60s
+
+# Fleet: control plane + dumb agents, submit via the API port
+loadr controller --bind 0.0.0.0:7625 --ui-bind 0.0.0.0:6464
+loadr agent --join controller-host:7625 --name agent-$(hostname)
+loadr run --controller controller-host:6464 distributed.yaml
+----
+
+*Remember:* distrust any number from a generator above *70% CPU*; without keep-alive one box dies at ~*470 conn/s* (28k ports, 60s `TIME_WAIT`); default `ulimit -n` is a prehistoric *1024*; on k8s, CPU limits CFS-throttle agents into lying — gate `dropped_iterations: [ "count<10" ]` and watch it.
 ****

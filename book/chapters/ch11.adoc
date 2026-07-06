@@ -271,7 +271,7 @@ familiar client-side gate. The second is the interesting one: a run whose
 latency passed *while the target ran at 90 percent CPU* is a pass with no
 headroom — one marketing email away from a failure. Gating on server-side
 utilization turns "we passed" into "we passed with margin," which is the only
-kind of pass worth reporting to the capacity conversation in <<ch16>>.
+kind of pass worth reporting to the capacity conversation in <<ch17>>.
 
 No tool monopoly here either: the portable version is a post-run script that
 queries the Prometheus HTTP API over the run window and asserts on the result.
@@ -286,7 +286,7 @@ $ curl -sG http://prometheus:9090/api/v1/query_range \
     --data-urlencode 'step=15' | jq '[.data.result[].values[][1] | tonumber] | max'
 ----
 
-Wrap it in a threshold check and exit nonzero, and your CI pipeline (<<ch14>>)
+Wrap it in a threshold check and exit nonzero, and your CI pipeline (<<ch15>>)
 now fails on server-side saturation regardless of which load tool produced the
 traffic.
 
@@ -401,11 +401,11 @@ $ curl -s -X POST http://grafana:3000/api/annotations \
 And propagate the identity *into* the traffic itself: a header like
 `x-load-test: nightly-soak-3f2c91a` on every synthetic request lets backend
 teams filter their logs and — critically, when you start testing in production
-in <<ch15>> — lets downstream systems recognize and, where necessary, divert
+in <<ch16>> — lets downstream systems recognize and, where necessary, divert
 synthetic traffic. Finally, archive the client-side artifact under the same
 identity: export the run summary (`loadr run --summary-export results.json
 soak.yaml`) and store it keyed by the same build SHA, so the regression comparisons of
-<<ch14>> and the capacity models of <<ch16>> can join load-test results to
+<<ch15>> and the capacity models of <<ch17>> can join load-test results to
 server-side history without archaeology.
 
 That's the full loop. The load test stamps its identity on everything it
@@ -435,4 +435,28 @@ instead of an argument.
 * Tag everything with a run and build identity — samples, annotations, a
   header on the traffic itself — so every server-side effect is attributable
   to the test that caused it.
+****
+
+[.fieldcard]
+.Field Card — One Time Axis, One Request
+****
+When a run finishes ugly, don't argue about whose dashboard is right — put both clocks on the same axis and let the correlation do the first half of the diagnosis.
+
+Client and server p99 disagree:: trust the client number as user truth; the *gap* is a finding — a queue between the clocks (LB, kernel backlog, pool), not handler code.
+Watching a run live:: add a `prometheus` output and graph loadr's metrics in the *same* Grafana as the server's — one shared cursor.
+Gating in CI:: pull server metrics in with `observe` + `type: prometheus`, then threshold `target_cpu` — a latency pass at 90% CPU is a fail with no headroom.
+Chasing the slow request:: set `tracing: true`, then read metrics -> trace -> logs, in that order.
+
+[source,console]
+----
+# expose live run metrics for Prometheus to scrape
+#   outputs: [ { type: prometheus, listen: 0.0.0.0:9091 } ]
+# gate on the target's own CPU, not just latency
+#   observe: [ { type: prometheus, source: http://prometheus:9090,
+#                query: sum(rate(container_cpu_usage_seconds_total[1m])), as: target_cpu } ]
+#   thresholds: { target_cpu: [ "max < 0.75" ] }
+$ loadr run soak.yaml --summary-export results.json
+----
+
+*Remember:* label by endpoint/status/scenario, never `user_id` (cardinality kills the backend first). A 10m/400rps run is 240k requests — sample traces *tail-based* or you discard the slow 1% you ran the test to find. NTP-discipline both clocks, or you'll "correlate" a spike with a deploy that happened after it.
 ****

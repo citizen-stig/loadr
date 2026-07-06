@@ -233,7 +233,7 @@ were chosen.
 thread pool exhausts, and its SLO caps response time at 400ms. Little's Law
 puts its maximum SLO-compliant throughput at 200 / 0.4 = 500 rps. No load test
 required for the first-order estimate — and when the load test disagrees with
-it, one of your assumptions just became visible. <<ch16>> builds capacity
+it, one of your assumptions just became visible. <<ch17>> builds capacity
 planning on this foundation.
 
 [TIP]
@@ -390,7 +390,7 @@ $ loadr sweep capacity.yaml --var vus=10,25,50,100,200 --duration 5m
 ----
 
 In the resulting table, find the first row where p99 leaves the flat region:
-the knee is between that row and the one before it. <<ch16>>
+the knee is between that row and the one before it. <<ch17>>
 turns this into a full capacity-planning method.
 
 === What counts as an error?
@@ -557,4 +557,31 @@ and still breach their contracts.
 * SLIs are measurements, SLOs are targets, SLAs are contracts, and the error
   budget is the SLO turned into a spendable resource. Write your test gates
   in the same language as your SLOs, or your tests certify the wrong promise.
+****
+
+[.fieldcard]
+.Field Card — Performance Vocabulary in Anger
+****
+When a number looks too good or two people are arguing past each other, reach for these.
+
+Sanity-checking any result:: `concurrency = throughput × response time` (Little's Law). Multiply two, check the third — a 10-VU closed loop can't have 100 requests in flight.
+Measuring under stress:: use an open model (`constant-arrival-rate`); closed VUs back off exactly when the system struggles, hiding the stall (coordinated omission).
+Combining percentiles:: you can't average them — merge histograms and recompute. Ask *where* the p99 was computed and *what* got merged.
+Sizing an open test:: `pre_allocated_vus` ≈ rate × healthy-iteration-time; `max_vus` gives degradation headroom.
+
+[source,console]
+----
+# Step load to find the knee (70–85% util), one row per level
+$ loadr sweep capacity.yaml --var vus=10,25,50,100,200 --duration 5m
+----
+
+[source,yaml]
+----
+thresholds:
+  http_req_duration: [ "slo(99%) < 300ms" ]  # same gate as p(99)<300
+  dropped_iterations: [ "count<10" ]           # open-model saturation canary
+  http_req_failed:    [ "rate<0.001" ]
+----
+
+*Remember:* nonzero `dropped_iterations` = `max_vus` too small OR system drowning — either way the latencies understate reality. Goodput = throughput − errors; a 2ms `503` still posts great RPS. Errors also hide inside `200`s — add body `checks`.
 ****

@@ -681,3 +681,24 @@ the systematic hunt <<ch13>> takes up.
   accidental IdP load test, and beware the refresh storm your own
   synchronized VUs manufacture.
 ****
+
+[.fieldcard]
+.Field Card — Testing non-HTTP protocols
+****
+Match the workload model to the protocol, and change your metric with it — REST habits lie off-HTTP.
+
+Request/response (HTTP, gRPC unary):: open model, `constant-arrival-rate`.
+Held-open (WebSocket, SSE, gRPC streams):: closed model, `constant-vus`; gate on `ws_session_duration` / `ws_msgs_received`, never `http_req_duration`.
+gRPC / GraphQL verdict:: HTTP 200 is not success — assert gRPC `status: 0` (trailers); for GraphQL check for data / absence of an `errors` array.
+Event-driven (Kafka, AMQP):: the SLO is end-to-end propagation + backlog drain, not produce-ack latency; watch consumer lag.
+"Is it the database?":: test the data layer directly for a clean baseline; watch the connection pool and hot keys first.
+
+[source,console]
+----
+loadr plugin install kafka        # brokers/DBs are runtime plugins
+loadr plugin install postgres
+loadr run ws-chat.yaml            # pin http version in defaults.http
+----
+
+*Remember:* GraphQL returns 200 for almost everything — check inside the body. Browsers are the instrument, not the load: 5 real Chrome VUs (tens–hundreds of MB each) ride on a protocol-level crowd. Jitter token TTLs or synchronized VUs manufacture an hourly refresh storm; and holding 50k idle sockets exhausts *your* file descriptors and ephemeral ports before the server's.
+****

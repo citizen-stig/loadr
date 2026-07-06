@@ -215,13 +215,13 @@ flow:
 |===
 
 Exit codes are the contract that makes any of this automatable
-(<<ch14>>). loadr and k6 share the convention deliberately: `0` all gates
+(<<ch15>>). loadr and k6 share the convention deliberately: `0` all gates
 passed, `99` the run finished but a threshold failed, other codes mean the
 test itself broke. Wire your pipeline to distinguish "the system is too slow"
 (99 — page the service owner) from "the test is broken" (1 — page whoever owns
 the test), because the two failures have different on-call rotations.
 
-Finally, the regression-gate one-liner that <<ch14>> builds a whole pipeline
+Finally, the regression-gate one-liner that <<ch15>> builds a whole pipeline
 around — run the same plan against baseline and candidate, then let the diff
 fail the build:
 

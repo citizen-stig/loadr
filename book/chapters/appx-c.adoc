@@ -95,7 +95,7 @@ same name; watch it there too.
 * [ ] *Blast radius bounded.* You know what shares infrastructure with the
   target — databases, rate limiters, third-party APIs with billing meters — and
   the people who own it know you're running. For anything near production,
-  <<ch15>> applies.
+  <<ch16>> applies.
 * [ ] *A circuit breaker is armed.* The test aborts itself when the target is
   clearly in distress, instead of kicking it for another 55 minutes:
 
@@ -145,7 +145,7 @@ $ loadr compare baseline.json current.json --assert --max-regression p95=10%
 `compare --assert` fails on direction-aware deltas — a p95 that got 33 percent
 worse fails even when every absolute threshold still passes. That gap between
 "thresholds passed" and "we just got 20 percent slower" is where regressions
-hide in CI (<<ch14>>).
+hide in CI (<<ch15>>).
 
 * [ ] *The result is reproducible.* If it drives a real decision, you ran it at
   least twice and the runs agree within the noise floor.

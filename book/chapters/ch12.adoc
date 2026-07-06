@@ -85,7 +85,7 @@ treat it as a measurement rather than an anecdote. That means:
 
 At 100 rps, that's 20 seconds, 100 seconds, and about 17 minutes of steady
 load respectively. This is one of the quiet reasons soak-length runs exist,
-and it's why a CI smoke test (<<ch14>>) should gate on p95, not p99.9: not
+and it's why a CI smoke test (<<ch15>>) should gate on p95, not p99.9: not
 because the deep tail doesn't matter, but because a two-minute run doesn't
 contain enough information to measure it. Gating on a percentile your run
 can't support doesn't make the gate stricter. It makes it random.
@@ -415,7 +415,7 @@ field's unit (`p99=25` allows +25ms, `error_rate=0.5` allows half a
 percentage point). With `--assert`, any regression beyond tolerance exits
 with code 99 — the same exit code as a threshold failure in `loadr run`, so
 your existing CI wiring treats both identically — and `--markdown` produces a
-paste-ready table for a PR comment. <<ch14>> builds the full pipeline around
+paste-ready table for a PR comment. <<ch15>> builds the full pipeline around
 this: where the baseline lives, how often it refreshes, and how to trend
 results across weeks instead of only pairs of runs.
 
@@ -511,4 +511,28 @@ better one.
   your stack). Then run the five-question checklist before believing any
   alarm: magnitude vs noise floor, consistency across percentiles,
   consistency across endpoints, reproducibility, server-side corroboration.
+****
+
+[.fieldcard]
+.Field Card — Reading Results Honestly
+****
+Before you quote a number, know which question it actually answers — and whether your run had the samples to ask it.
+
+Reporting latency:: never a lone mean; report p50/p95/p99 + error rate. The mean of a bimodal system describes a request no user made.
+Trusting a percentile:: want ~100 samples *beyond* it — p95 wants ~2,000, p99 ~10,000, p99.9 ~100,000. Below that it's an anecdote.
+Merging agents/windows:: never average percentiles — merge HDR histograms or raw samples. Averaging them makes a number with no definition.
+Open system:: use `constant-arrival-rate` and gate `dropped_iterations`; a closed loop hides the stall as a throughput dip.
+Comparing two runs:: same plan, same load shape, differing in exactly one thing — the build.
+
+[source,console]
+----
+# measure the noise floor first: A/A, identical build
+$ loadr run perf/api.yaml --summary-export baseline.json
+$ loadr run perf/api.yaml --summary-export current.json
+$ loadr compare baseline.json current.json --assert \
+    --max-regression p95=10% --max-regression error_rate=0.5 \
+    --markdown compare.md
+----
+
+*Remember:* set tolerance at 1.5–2x your A/A floor; `--assert` exits 99 past it. "Thresholds passed" and "p95 up 33%" are both true at once. Look at the shape (histogram, CDF, latency-over-time, heatmap) before quoting any aggregate.
 ****

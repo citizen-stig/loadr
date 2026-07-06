@@ -167,7 +167,7 @@ Gatling has `group("cart") { ... }`, Locust names each request explicitly via
 Naming rules that pay off later: low cardinality (a few dozen names, not
 thousands); business vocabulary at the group level (`checkout`, not
 `post_txn_v2`); stable across releases, because <<ch12>>'s regression
-comparisons and <<ch14>>'s CI gates join on these names, and renaming one
+comparisons and <<ch15>>'s CI gates join on these names, and renaming one
 silently breaks the comparison's memory.
 
 === Weighting the mix
@@ -510,7 +510,7 @@ $ loadr run scenarios/shop.yaml                        # the whole population
 
 with each scenario carrying tags like `tags: { suite: smoke, kind: read }`.
 One reviewed artifact, many runs — instead of four drifting copies that agree
-in January and diverge by June. This is the seam <<ch14>> hangs CI on.
+in January and diverge by June. This is the seam <<ch15>> hangs CI on.
 
 *Review the claims, not just the syntax.* A scenario PR review should ask:
 where did the weights come from, and are they dated and sourced in a comment?
@@ -549,4 +549,25 @@ execution, live observation, and the first honest read of the results.
 * A scenario is code that makes empirical claims. Factor out repetition, tag
   for selective runs, and review the claims — weights, names, checks, ramps —
   not just the YAML.
+****
+
+[.fieldcard]
+.Field Card — Building believable scenarios
+****
+Reach for this when a passing test doesn't move under real traffic: a journey is *sequence + think time + state*, not a list of URLs.
+
+One population, varied behavior:: weighted `random` branch inside one scenario.
+Genuinely different populations:: separate concurrent scenarios, each its own executor + threshold.
+Humans:: `ramping-vus` (closed) with `think_time: { type: gaussian, mean: 2s }`.
+Machines / spikes:: `constant-arrival-rate` or `ramping-arrival-rate` (open) — watch `dropped_iterations`.
+State's lifetime:: request → `extract`; user identity → per_vu feeder; login → `on_start` hook.
+
+[source,console]
+----
+loadr run --tags smoke scenarios/shop.yaml                       # 30s PR gate
+loadr run --tags full --exclude-tags write scenarios/shop.yaml   # read-only soak
+loadr run scenarios/shop.yaml                                    # full mix
+----
+
+*Remember:* name every parameterized request (`product page`, not `/products/17`) or cardinality explodes. Failure is faster than success — check semantics (`jsonpath ... exists: true`), not just `status: 200`. Ramp minutes, not seconds. Date your weights in a comment: `# mix from prod logs 2026-05, checkout=8.4%`.
 ****

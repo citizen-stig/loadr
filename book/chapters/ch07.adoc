@@ -71,7 +71,7 @@ the result and fail a build with it?
 *6. CI citizenship.* Can it run headless from one command, exit nonzero when a
 threshold fails, and live in a container without dragging a runtime along? A
 tool you can't put in a pipeline gives you performance testing as an event, not
-a practice — and <<ch14>> will argue that the practice is the whole point.
+a practice — and <<ch15>> will argue that the practice is the whole point.
 
 *7. Cost and skills.* Almost every tool below is open source at the core, with
 a paid cloud for distributed execution and dashboards. The real cost is rarely
@@ -138,7 +138,7 @@ chapter. The tax is operational:
 
 * *Startup and warm-up.* JVM start plus JIT warm-up adds tens of seconds
   before measurements stabilize. In a long soak test, irrelevant. In a
-  90-second CI smoke test (<<ch14>>), it's a meaningful slice of the budget,
+  90-second CI smoke test (<<ch15>>), it's a meaningful slice of the budget,
   and the un-warmed early samples can pollute your numbers.
 * *Memory floor.* A JVM generator wants hundreds of megabytes before it does
   anything. Ten containerized agents at 1 GB each is a real bill; the same
@@ -288,7 +288,7 @@ k6's executor vocabulary so the concepts transfer); latency is recorded in HDR
 histograms end to end; and distribution is built in and free — a controller
 partitions rates across agents and merges histograms centrally rather than
 averaging percentiles. Comparison of runs (`loadr compare`) and threshold
-gates are first-class because <<ch12>> and <<ch14>> argue you should demand
+gates are first-class because <<ch12>> and <<ch15>> argue you should demand
 them from any tool.
 
 The honest costs: it's young, so the community, Stack Overflow answer supply,
@@ -453,7 +453,7 @@ has you launching twenty ephemeral generator pods.
 Containerization flattens some of this — `docker run` makes even JMeter a
 one-liner — but it doesn't flatten image size, startup time, or memory floor,
 and in a pipeline you pay those on every single run. The practical CI
-checklist, previewing <<ch14>>: one command to run headless, thresholds
+checklist, previewing <<ch15>>: one command to run headless, thresholds
 evaluated in-process, nonzero exit on failure, machine-readable results out.
 Every tool in this chapter can be made to do this; the single binaries do it
 without ceremony, and ceremony is what erodes practices.
@@ -524,4 +524,27 @@ forgive you; the model won't.
 * Sometimes the "worse" tool is right: team fluency, existing test
   investment, protocol reach, and organizational reality are legitimate,
   decisive inputs.
+****
+
+[.fieldcard]
+.Field Card — Choosing a Load Tool
+****
+Reach for the seven-question screen, weighted by your bottleneck — not the thirty-one-criterion scoring matrix.
+
+Bake-off paralysis:: Score against the seven questions (protocols, scripting, load-model fidelity, scale-out, reporting, CI, cost); most decisions are settled by *one* — usually protocol or scripting language.
+Two non-negotiables:: An open (arrival-rate) load model *and* honest latency — full distributions, merged never averaged across machines.
+HTTP + CI-first:: Pick a single static binary (k6, loadr, Vegeta) — no JVM, `node_modules`, or Python env to rebuild every pipeline run.
+The "worse" tool wins when:: the team's already fluent, the tests already exist, the protocol demands it (JMS/JDBC → JMeter), or the org mandates it.
+
+[source,console]
+----
+# loadr: 50 rps open model, gate p99<300ms and <1% errors
+loadr run products-baseline.yaml
+# quick floor / calibration with a small sharp knife
+echo "GET https://api.example.com/products" | vegeta attack -rate=50 -duration=2m | vegeta report
+# JMeter headless — runs fine, but the .jmx artifact is unreviewable XML
+jmeter -n -t plan.jmx
+----
+
+*Remember:* the JVM tax is operational — tens-of-seconds startup, hundreds-of-MB memory floor, GC pauses that stop the clock mid-measurement — not throughput. Classic `wrk` under-reports latency (coordinated omission); use `wrk2 -R`. Averaged cross-machine percentiles are fiction — merge the histograms.
 ****

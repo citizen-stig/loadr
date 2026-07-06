@@ -275,7 +275,7 @@ A baseline is defensible when you can answer four questions about it:
   last" ratchets in every regression the moment it lands. A baseline frozen
   forever drifts out of relevance. The workable policy: baselines advance
   automatically when the run passes all gates _and_ someone can see the trend
-  (<<ch14>> shows the CI wiring; <<ch17>> the habit).
+  (<<ch15>> shows the CI wiring; <<ch18>> the habit).
 
 Mechanically, this is a diff of two summary exports. In loadr:
 
@@ -348,7 +348,7 @@ promise: functional tests gate at 100 percent; load tests gate at the SLO.
 Second, the budget frame sets *testing priorities*. A team burning its
 production error budget every month has no business adding chaos experiments
 to CI — the budget is spoken for. A team with months of unspent budget can
-afford aggressive testing in and against production (<<ch15>>), because the
+afford aggressive testing in and against production (<<ch16>>), because the
 budget is exactly the license to take that risk. The budget converts "should
 we run this scary test?" from a debate about courage into a query against a
 number.
@@ -360,7 +360,7 @@ meeting the SLO cost?* A service that holds p99 under 400ms by running on
 sixteen oversized instances has passed your gate and failed your CFO. The
 criteria that catch this are resource-shaped: requests per second per core,
 memory per instance at target load, and — once you can price your
-infrastructure — cost per million requests. <<ch16>> turns these into
+infrastructure — cost per million requests. <<ch17>> turns these into
 capacity models; here the point is only that they belong _in the success
 criteria_, because "meets the SLO at a cost we can afford" is the actual
 requirement and "meets the SLO" is the abridged version that gets
@@ -416,7 +416,7 @@ panel next to the unit tests; `loadr compare --markdown compare.md` produces
 a diff table ready to paste as a PR comment, regressed cells bolded. The
 reviewer should see "p95 +33.3%, regression" in the same pane where they'd
 see a failing assertion — performance results that live in a separate
-dashboard are results the reviewer never sees. <<ch14>> assembles the full
+dashboard are results the reviewer never sees. <<ch15>> assembles the full
 pipeline.
 
 *Runaway tests stop themselves.* A gate evaluated only at the end of the run
@@ -472,4 +472,33 @@ machine, compared against yesterday, and allowed to say no.
 * Failure must be an exit code that blocks a pipeline, delivered where
   decisions happen, with criteria versioned in the repo. Report-only jobs
   are science-fair projects with extra steps.
+****
+
+[.fieldcard]
+.Field Card — Gates That Say No
+****
+A test with no pass/fail line is a science-fair project. Reach for these to draw the line and make a machine enforce it.
+
+Writing the objective:: _N% of which requests, measured where, succeed within bound, over window_ — every clause load-bearing. Write the derivation as a comment next to the number.
+Choosing the percentile:: fan-out pushes it up (p95/page ≈ p99.9/call at 40 calls); sample count pushes back — p99 wants 30k+ requests, p99.9 wants 300k+. Never gate on `max`.
+Gating:: latency, error rate, AND throughput together, or you have no gate — each covers the others' escape route (fast 503s, slow 200s, collapsing rps).
+Catching erosion:: absolute gates miss slow drift; diff against a same-plan, same-env, machine-made baseline with tolerance set ABOVE your measured noise floor.
+
+[source,yaml]
+----
+thresholds:
+  http_req_duration: [ "slo(99%) < 400ms", "slo(99.9%) < 1s" ]
+  "http_req_duration{name:checkout}": [ "slo(95%) < 250ms" ]
+  http_req_failed: [ "rate<0.001" ]        # the SLO, not zero
+  dropped_iterations: [ "count<10" ]       # open-model throughput collapse
+----
+
+[source,console]
+----
+loadr run perf/checkout.yaml --summary-export current.json --junit junit.xml
+loadr compare baseline.json current.json --assert \
+  --max-regression p95=10% --max-regression error_rate=0.5 --max-regression rps=5%
+----
+
+*Remember:* threshold failure exits `99`, a broken test exits `1` — page different people. `%` limits are relative, bare numbers absolute (ms / points). Measure noise: run the same plan 5× before picking a tolerance. `abort_on_fail` needs `delay_abort_eval` so warmup blips don't kill the run.
 ****

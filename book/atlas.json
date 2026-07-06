@@ -24,12 +24,16 @@
     "chapters/ch15.adoc",
     "chapters/ch16.adoc",
     "chapters/ch17.adoc",
+    "chapters/ch18.adoc",
     "chapters/appx-a.adoc",
     "chapters/appx-b.adoc",
     "chapters/appx-c.adoc"
   ],
   "formats": {
-    "pdf": { "version": "print", "color_count": "1" },
+    "pdf": {
+      "version": "print",
+      "color_count": "1"
+    },
     "epub": {},
     "mobi": {},
     "html": {}

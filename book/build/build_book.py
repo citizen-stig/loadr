@@ -133,6 +133,23 @@ code{ font-family:var(--mono); font-size:0.84em; background:#f1f1f4; color:#b91c
 .sidebarblock strong{ color:#fff; }
 .sidebarblock code{ background:#22222b; color:var(--flare); }
 
+/* ---- field card: the recurring, tangible cheat-sheet (light, distinct from takeaways) ---- */
+.sidebarblock.fieldcard{ background:#fbfaf7; border:1px solid var(--edge); border-top:3px solid var(--ember);
+  border-radius:9px; padding:0; }
+.sidebarblock.fieldcard > .content{ padding:15px 18px; }
+.sidebarblock.fieldcard .title{ color:var(--ember); font-family:var(--mono); font-weight:800; font-size:8.5pt;
+  letter-spacing:3px; text-transform:uppercase; margin:0 0 10px; }
+.sidebarblock.fieldcard .title::before{ content:"\26A1  "; }
+.sidebarblock.fieldcard p, .sidebarblock.fieldcard li{ color:var(--body); font-size:8.8pt; line-height:1.45; }
+.sidebarblock.fieldcard strong{ color:#000; }
+.sidebarblock.fieldcard code{ background:#efe7e7; color:#b91c1c; }
+.sidebarblock.fieldcard .dlist dt{ color:var(--ink); font-family:var(--mono); font-weight:700;
+  font-size:8.3pt; margin-top:7px; }
+.sidebarblock.fieldcard .dlist dt::before{ content:"\25B8  "; color:var(--ember); }
+.sidebarblock.fieldcard .dlist dd{ margin:1px 0 0 1.15em; font-size:8.6pt; color:#33333a; }
+.sidebarblock.fieldcard .listingblock pre.highlight{ font-size:7.6pt; padding:12px 13px 10px; margin:9px 0; }
+.sidebarblock.fieldcard ul{ padding-left:14px; } .sidebarblock.fieldcard li{ margin:3px 0; }
+
 /* ---- content tables ---- */
 table.tableblock{ border-collapse:collapse; width:100%; margin:1.05em 0; font-size:8.8pt; break-inside:avoid; }
 table.tableblock caption{ caption-side:bottom; font-size:7.6pt; color:var(--smoke); font-family:var(--mono);
@@ -215,7 +232,7 @@ PARTS = {
  3:("Part II","Designing the Test","Making the test reflect reality"),
  7:("Part III","Executing Tests","Tools, protocols, and scale"),
  11:("Part IV","Observing & Analyzing","Reading the truth in the numbers"),
- 14:("Part V","Operationalizing","Making performance continuous"),
+ 15:("Part V","Operationalizing","Making performance continuous"),
 }
 
 sect_re = re.compile(r'<div class="sect1">\s*<h2 id="([^"]+)">(.*?)</h2>', re.S)

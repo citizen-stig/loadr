@@ -294,9 +294,9 @@ slow number to its root cause (<<ch13>>), including how a super-linear code path
 quietly becomes a denial-of-service.
 
 *Part V (Operationalizing)* — making performance continuous: gating it in CI/CD
-(<<ch14>>), validating it in and against production (<<ch15>>), turning results
-into capacity and cost decisions (<<ch16>>), and building the organizational
-habits that keep all of it alive (<<ch17>>).
+(<<ch15>>), validating it in and against production (<<ch16>>), turning results
+into capacity and cost decisions (<<ch17>>), and building the organizational
+habits that keep all of it alive (<<ch18>>).
 
 By the end you should be able to walk into a room, put a distribution on the
 screen, and say — with evidence you'd stake your reputation on — exactly how the
@@ -315,4 +315,36 @@ better. That's the job. Let's learn to do it honestly.
 * There isn't one "performance test." There's a family of them — load, stress,
   spike, soak, capacity, breakpoint, scalability — each answering a different
   question. Know which one you're running.
+****
+
+[.fieldcard]
+.Field Card — Framing a Performance Test
+****
+Before you generate a single request, answer two things: which test is this, and what number makes it fail?
+
+Picking the test type:: match the question to the shape — SLOs at peak = *load*; where it breaks = *stress*; sudden surge then recovery = *spike*; leaks over hours = *soak*; the SLO knee = *capacity*. Running one and reading it as another is the classic expensive mistake.
+Reporting a result:: never a lone average — it hides the users you most need to see. Report the distribution and p95/p99/p99.9.
+Modeling the load:: use an *open* model — arrival rate in requests/sec, not concurrent users. VUs only cap concurrency; they don't set demand.
+Making it a test:: attach a machine-checkable gate. No pass/fail gate and it's a number generator, not a test.
+
+[source,yaml]
+----
+scenarios:
+  steady:
+    executor: constant-arrival-rate
+    rate: 200            # req/s — open model, not VUs
+    time_unit: 1s
+    duration: 2m
+    pre_allocated_vus: 50
+    max_vus: 200
+thresholds:
+  http_req_duration: [ "p(99)<300" ]   # the gate
+----
+
+[source,console]
+----
+$ loadr run smoke.yaml
+----
+
+*Remember:* perception cliffs — <100ms feels instant, ~1s breaks flow, ~10s loses them. Fan-out tail: 1 − 0.99^100 ≈ 63% of pages hit that slow 1%. Slow is the on-ramp to down.
 ****

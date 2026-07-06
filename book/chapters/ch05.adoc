@@ -445,10 +445,10 @@ What to do instead, in order of preference: build the stateful spine
 where the money already went and where the surprises live; run short-lived
 full-scale environments on demand (an hour of a production-sized environment
 during a test window costs a fraction of a permanently idle replica, and
-<<ch14>> automates exactly this); or test carefully against production
-itself, which sounds reckless and is by <<ch15>> a mainstream, guard-railed
+<<ch15>> automates exactly this); or test carefully against production
+itself, which sounds reckless and is by <<ch16>> a mainstream, guard-railed
 practice. What you should not do is run the one-tenth test, multiply by ten,
-and put the product of those two fictions in a capacity plan (<<ch16>>).
+and put the product of those two fictions in a capacity plan (<<ch17>>).
 
 === Seeding and teardown: tests that mutate the world
 
@@ -468,7 +468,7 @@ throws the environment away.* The mechanisms, roughly in order of robustness:
   before each run. Slowest to set up, most trustworthy, and it doubles as a
   rehearsal of your backup restore.
 * *Ephemeral environments.* Create, seed, test, destroy — the natural fit
-  for the CI-gated tests of <<ch14>>.
+  for the CI-gated tests of <<ch15>>.
 * *Idempotent seed plus scripted cleanup.* A seed script that converges the
   environment to the fixture state, and teardown that removes what the run
   created. Namespace everything the test writes (a run-ID prefix on emails,
@@ -646,4 +646,24 @@ step before Part III finally lets you press the button.
 * Production traffic includes garbage, and error paths are expensive. Put a
   realistic slice of malformed, oversized, and adversarial input in the mix,
   and require it to fail *cheaply*.
+****
+
+[.fieldcard]
+.Field Card — Realistic Data and Environment
+****
+Before you trust a latency number, make the data look like production's and the target behave like production's — otherwise you measured your caches.
+
+Row is a unit of work vs an identity:: `mode: shared` (one cursor, each row used once) vs `mode: per_vu` (each VU its own pass — a row *is* a user).
+Reproduce production's key skew:: set `pick:` (`sequential`/`random`/`shuffle`) to match measured cardinality; uniform `random` is usually too cruel.
+Dynamic values (tokens, cart IDs, order numbers):: `extract:` them; a match-nothing extraction with no `default:` *fails the request* — keep that.
+One scenario, many targets:: `env:` overlays deep-merge; change only `base_url`, run with `-e`.
+
+[source,console]
+----
+loadr run -e staging test.yaml     # same scenario, only the target differs
+# seed fixtures exactly once: shared feeder + on_eof: stop
+EXPLAIN <hot query>                # test and prod must pick the same plan
+----
+
+*Remember:* if test cache-hit-rate (say 99%) doesn't match a production hour (say 85%), the numbers are fiction. A latency figure without its error rate is meaningless. One-tenth environment != one-tenth behavior — knees live at absolute thresholds. Never load-test with real PII; keep secrets in `secrets:` (redacted).
 ****

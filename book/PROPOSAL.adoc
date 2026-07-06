@@ -79,8 +79,9 @@ fills exactly that gap.
 == Specifications
 
 * *Estimated length:* ~350 print pages / ~110,000 words.
-* *Chapters:* 17 across five parts, plus three appendices.
+* *Chapters:* 18 across five parts, plus three appendices.
 * *Format:* AsciiDoc (O'Reilly Atlas).
+* *Recurring feature:* every chapter ends with a *Field Card* — a one-box, tangible cheat-sheet (decision rules, the key commands, numbers to remember) that turns the chapter into a reference readers return to.
 * *Code:* every runnable example in an accompanying Git repo, CI-tested so the
   listings can't rot. Primary examples in loadr; comparison snippets in
   k6/JMeter/Gatling/Locust.
@@ -224,9 +225,23 @@ adversarial input and watching response time bend (worked example using loadr's
 payload generator and complexity assertion, plus how to reason about it in any tool);
 turning a finding into a fix and proving the fix with a re-test.
 
+==== Chapter 14. Performance Under Attack: Security and Resilience Testing
+*Abstract:* Load and attack are the same physics from different intent. Turning the
+load tester into a tool for finding where a system falls over on purpose — and for
+proving the controls meant to stop it actually hold under pressure.
+Topics: the load-vs-attack overlap and responsible-use rules of engagement;
+algorithmic-complexity attacks as a weapon; the adversarial-input catalog (ReDoS,
+billion-laughs, YAML bombs, HashDoS, decompression/nesting blowups) and generating
+them safely with loadr's payload generator + complexity assertion; finding the bend
+by scaling an input; resource exhaustion (connection/FD, memory amplification,
+thread-pool starvation, slowloris); validating defenses *under load* — rate limiters,
+WAFs, quotas, autoscaling-as-absorber, circuit breakers, load shedding; auth-storm
+and credential-stuffing-shaped load; amplification and fan-out; measuring graceful
+degradation and recovery, not just failure.
+
 === Part V — Operationalizing Performance
 
-==== Chapter 14. Performance Testing in CI/CD
+==== Chapter 15. Performance Testing in CI/CD
 *Abstract:* Moving from an occasional heroic effort to an automated property of
 every change.
 Topics: shift-left performance and the smoke-vs-full-run split; running a fast
@@ -235,7 +250,7 @@ builds; managing flakiness and noisy environments; ephemeral test environments;
 storing and trending results over time; failing a build on an SLO breach without
 crying wolf.
 
-==== Chapter 15. Continuous and Production Performance
+==== Chapter 16. Continuous and Production Performance
 *Abstract:* The test never really ends. Performance validation in and against
 production.
 Topics: canary and progressive-delivery performance checks; load testing *in*
@@ -244,7 +259,7 @@ testing under load; capacity planning and forecasting from test + production dat
 validating autoscaling and its lag; log/traffic replay for realistic production-shaped
 load.
 
-==== Chapter 16. Capacity, Cost, and Scalability
+==== Chapter 17. Capacity, Cost, and Scalability
 *Abstract:* Translating test results into infrastructure and money decisions.
 Topics: finding the knee — the point where latency degrades non-linearly; headroom
 and safety factors; scalability testing (does 2x the nodes give ~2x the throughput?);
@@ -252,7 +267,7 @@ Universal Scalability Law as a mental model for diminishing returns and retrogra
 scaling; cost-per-request and right-sizing; making the capacity argument to a budget
 owner with data.
 
-==== Chapter 17. Building a Performance Culture
+==== Chapter 18. Building a Performance Culture
 *Abstract:* The organizational chapter. Tools and tests fail without ownership,
 and this is how they succeed.
 Topics: who owns performance (and why "everyone" means "no one"); performance

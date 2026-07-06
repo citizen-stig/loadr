@@ -54,7 +54,7 @@ GUI.
 
 === A target worth testing
 
-You need something to aim at, and it should not be production (yet — <<ch15>>
+You need something to aim at, and it should not be production (yet — <<ch16>>
 covers testing in production deliberately, which is different from doing it by
 accident). The book's companion repository ships a small catalog service — a
 Go API in front of Postgres, with a product list, a product detail endpoint,
@@ -139,7 +139,7 @@ recorded.
 generator (<<ch04>>). This file asserts three things: 95 percent of requests
 complete under a second, fewer than 1 percent fail outright, and at least 95
 percent of checks pass. If any of these is false, the run *fails*, with a
-nonzero exit code a CI pipeline can act on (<<ch14>>).
+nonzero exit code a CI pipeline can act on (<<ch15>>).
 
 Validate before you run — a schema-checked config with line-precise errors is
 one of the cheapest quality gates in existence:
@@ -196,11 +196,11 @@ capacity. It's the arithmetic consequence of 10 users in a closed loop whose
 iterations took ~134ms each — Little's Law wearing a trench coat
 (<<ch02>>). Change nothing about the server and double the VUs, and
 throughput will roughly double. This number describes your test, not your
-system. Capacity is a different test with a different shape (<<ch16>>).
+system. Capacity is a different test with a different shape (<<ch17>>).
 
 *Note the exit code.* All thresholds passed, so the process exited `0`. Had
 any failed, it would exit `99`. That single convention is the seed of every
-automated performance gate you'll build in <<ch14>> — make sure whatever tool
+automated performance gate you'll build in <<ch15>> — make sure whatever tool
 you use has an equivalent, and that you've tested it fails when it should.
 
 === Making it realistic: think time, ramps, and a flow
@@ -518,4 +518,24 @@ turns into.
   to fail.
 * The concepts port cleanly across loadr, k6, and JMeter. Translate the load
   model first; the requests are the easy part.
+****
+
+[.fieldcard]
+.Field Card — Your First Real Load Test
+****
+Build the smallest honestly useful test, then read every line before you trust a number.
+
+Modeling internet traffic:: use an *open* model — `constant-arrival-rate` with `rate:` (arrivals, not users). `constant-vus`/`ramping-vus` is *closed*: load politely backs off exactly when the system starts failing.
+Reading the summary:: refuse the average. Read med/p95/p99/max spread and treat failed checks as leads — a 200 that took 4s is a perf failure `http_req_failed` never sees.
+Making it real:: add `think_time`, `ramping-vus` stages, and `extract` correlation. Expect rps to drop — 50 VUs at 1–4s think time ≈ 20–30 rps, not hundreds.
+
+[source,console]
+----
+loadr validate first.yaml
+loadr run first.yaml
+loadr run --summary-export results.json browse.yaml
+loadr report results.json -o report.html
+----
+
+*Remember:* exit `0` = pass, `99` = threshold failed (your CI gate). Watch `dropped_iterations` as the open-model saturation alarm. Never test localhost — 9,000 rps on loopback, 800 over a real network, both honest. Run-to-run variance is 5–15%; one run is an anecdote.
 ****

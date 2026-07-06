@@ -417,7 +417,7 @@ for "do we meet the SLO at design load?", and the hold must dominate the run:
 the same profile becomes a soak test hunting leaks and drift.)
 
 *Ramp* — climb through the target and beyond in stages, watching where latency
-leaves linearity. This is how you find the knee for capacity work (<<ch16>>).
+leaves linearity. This is how you find the knee for capacity work (<<ch17>>).
 A ramp that's too steep smears the answer: give each level time to settle or
 you'll never know which load level caused the degradation you're seeing.
 
@@ -488,4 +488,25 @@ can.
 * Steady, ramp, and spike profiles answer different questions from <<ch01>>'s
   taxonomy. Choose the shape for the question, and give every result its
   workload model as provenance.
+****
+
+[.fieldcard]
+.Field Card — Modeling the Workload
+****
+Before you argue tools or percentiles, pin down what demand actually looks like — the model is the part you'll defend in a year.
+
+Internet-facing, unbounded population:: use an arrival-rate executor (`constant-arrival-rate`/`ramping-arrival-rate`); it keeps arriving when the system slows. This is the default.
+Genuinely fixed concurrency (40 agents, 16 workers):: closed `constant-vus`/`ramping-vus` is honest; open would overstate demand.
+Asserting the *offered* rate:: threshold on `dropped_iterations` — nonzero means saturated, not "raise `max_vus`".
+Modeling a session:: jittered think time (`uniform`/`gaussian`), never a constant — zero think time makes one VU impersonate ~100 humans.
+
+[source,console]
+----
+# mine the busy hour, then the endpoint mix during it
+awk -F'[' '{ print substr($2,1,17) }' access.log | uniq -c | sort -rn | head
+# open-model spike with a recovery tail, errors gated
+loadr run examples/04-spike-test.yaml
+----
+
+*Remember:* busy hour is 2–4x the daily average — never test the average. Design peak = baseline x seasonal x growth; resilience target 2–3x that. A 100 rps average delivers 120+ rps seconds, so validate at 120–130. A spike profile MUST include the post-surge baseline stage — no recovery, no pass.
 ****

@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 loadr-config = { workspace = true }
+loadr-payload = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 futures = { workspace = true }

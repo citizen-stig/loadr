@@ -2844,6 +2844,7 @@ dependencies = [
  "loadr-core",
  "loadr-js",
  "loadr-outputs",
+ "loadr-payload",
  "loadr-plugin-api",
  "loadr-plugin-webui",
  "loadr-protocols",
@@ -2911,6 +2912,7 @@ dependencies = [
  "indexmap",
  "jmespath",
  "loadr-config",
+ "loadr-payload",
  "parking_lot",
  "rand 0.10.1",
  "rand_distr",
@@ -2982,6 +2984,13 @@ dependencies = [
  "tonic-prost",
  "tonic-prost-build",
  "tracing",
+]
+
+[[package]]
+name = "loadr-payload"
+version = "1.0.0"
+dependencies = [
+ "thiserror 2.0.18",
 ]
 
 [[package]]

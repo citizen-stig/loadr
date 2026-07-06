@@ -6,6 +6,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { Summary } from '../shared/results';
 import type { RunRecord } from '../shared/history';
 import type { InstalledPlugin } from '../shared/plugins';
+import type { ComplexityResult, PayloadInfo } from '../shared/payload';
 import { cleanIpcMessage } from '../shared/ipc';
 
 // Every IPC call goes through here so a rejected main-process handler reaches the
@@ -64,6 +65,9 @@ export interface LoadrApi {
   pluginInstall(spec: string, allowUntrusted: boolean): Promise<string>;
   pluginRemove(name: string): Promise<void>;
   pluginBrowseDir(): Promise<string | null>;
+  payloadCatalog(): Promise<PayloadInfo[]>;
+  payloadGenerate(kind: string, magnitude: number): Promise<{ bytes: number; preview: string }>;
+  payloadComplexity(planPath: string, axis: string, values: number[], maxExponent?: number): Promise<ComplexityResult>;
   ai: {
     hasKey(provider: string): Promise<boolean>;
     setKey(provider: string, key: string): Promise<void>;
@@ -108,6 +112,10 @@ const api: LoadrApi = {
   pluginInstall: (spec, allowUntrusted) => call('plugin:install', { spec, allowUntrusted }),
   pluginRemove: (name) => call('plugin:remove', name),
   pluginBrowseDir: () => call('plugin:browseDir'),
+  payloadCatalog: () => call('payload:catalog'),
+  payloadGenerate: (kind, magnitude) => call('payload:generate', { kind, magnitude }),
+  payloadComplexity: (planPath, axis, values, maxExponent) =>
+    call('payload:complexity', { planPath, axis, values, maxExponent }),
   ai: {
     hasKey: (provider) => call('ai:hasKey', provider),
     setKey: (provider, key) => call('ai:setKey', { provider, key }),

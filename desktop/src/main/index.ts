@@ -10,7 +10,8 @@ import { app, BrowserWindow, dialog, ipcMain, safeStorage, type IpcMainInvokeEve
 import type { ChildProcess } from 'node:child_process';
 
 import {
-  convert, doctor, pluginInstall, pluginList, pluginRemove, runPlan, schema, validate, version,
+  convert, doctor, generatePayload, listPayloads, pluginInstall, pluginList, pluginRemove,
+  runComplexity, runPlan, schema, validate, version,
 } from './loadr';
 import { generatePlan, providerChat, type ChatMessage } from './ai';
 import { gatherRepo } from './repo';
@@ -103,6 +104,17 @@ ipcMain.handle('plugin:browseDir', async () => {
   const r = await dialog.showOpenDialog({ properties: ['openDirectory'] });
   return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0];
 });
+
+// ---- IPC: Payload Lab -----------------------------------------------------
+ipcMain.handle('payload:catalog', () => listPayloads());
+ipcMain.handle('payload:generate', (_e: IpcMainInvokeEvent, a: { kind: string; magnitude: number }) =>
+  generatePayload(a.kind, a.magnitude),
+);
+ipcMain.handle(
+  'payload:complexity',
+  (_e: IpcMainInvokeEvent, a: { planPath: string; axis: string; values: number[]; maxExponent?: number }) =>
+    runComplexity(a.planPath, a.axis, a.values, a.maxExponent),
+);
 
 // ---- IPC: files -----------------------------------------------------------
 ipcMain.handle('plan:open', async () => {

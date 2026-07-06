@@ -4,14 +4,19 @@
 // never be interpreted by a shell.
 
 import { execFile, spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  closeSync, existsSync, mkdtempSync, openSync, readFileSync, readSync, rmSync, statSync, writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
 import { parseSummary, type Summary } from '../shared/results';
 import { parsePluginList, type InstalledPlugin } from '../shared/plugins';
-import { cliError } from './errors';
+import {
+  fitExponent, PAYLOAD_CATALOG, type ComplexityPoint, type ComplexityResult, type PayloadInfo,
+} from '../shared/payload';
+import { cliError, isSpawnError, type SpawnErrorLike } from './errors';
 
 const execFileP = promisify(execFile);
 
@@ -149,6 +154,106 @@ export async function pluginRemove(name: string): Promise<void> {
   } catch (e) {
     throw cliError(e, bin);
   }
+}
+
+// ---- Payload Lab ----------------------------------------------------------
+
+/**
+ * The adversarial-payload catalog. Hard-coded in shared/ (mirroring the CLI's
+ * authoritative list) rather than scraped from `loadr payload --list` — simpler
+ * and needs no subprocess. Async only to keep the IPC surface uniform.
+ */
+export async function listPayloads(): Promise<PayloadInfo[]> {
+  return PAYLOAD_CATALOG;
+}
+
+/**
+ * Generate one payload via `loadr payload <kind>:<magnitude> -o <tmpfile>`, then
+ * read back the file size and a bounded preview of the first ~2KB (payloads can
+ * be hundreds of MB, so we never slurp the whole file). The temp dir is removed
+ * afterwards regardless of outcome.
+ */
+export async function generatePayload(
+  kind: string,
+  magnitude: number,
+): Promise<{ bytes: number; preview: string }> {
+  const bin = resolveLoadr();
+  const dir = mkdtempSync(join(tmpdir(), 'loadr-payload-'));
+  const out = join(dir, 'payload.bin');
+  try {
+    await execFileP(bin, ['payload', `${kind}:${magnitude}`, '-o', out]);
+    const bytes = statSync(out).size;
+    const fd = openSync(out, 'r');
+    try {
+      const buf = Buffer.alloc(Math.min(2048, bytes));
+      const read = readSync(fd, buf, 0, buf.length, 0);
+      return { bytes, preview: buf.subarray(0, read).toString('utf8') };
+    } finally {
+      closeSync(fd);
+    }
+  } catch (e) {
+    throw cliError(e, bin);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** p95 of the busiest `*_req_duration` trend (mirrors deriveResults' latency). */
+function p95Duration(s: Summary): number | null {
+  const durations = s.metrics
+    .filter((m) => m.metric.endsWith('_req_duration'))
+    .sort((a, b) => b.agg.count - a.agg.count);
+  return durations[0]?.agg.p95 ?? null;
+}
+
+/**
+ * Run a complexity probe: `loadr sweep <plan> --var <axis>=<csv> --complexity
+ * <axis> [--max-exponent K] --out-dir <tmpdir>`. Rather than scrape the printed
+ * report we read the per-combo summary exports (`sweep-<axis>-<value>.json`),
+ * take p95 of http_req_duration per size, and fit the exponent in TS (so the
+ * renderer gets the raw points to chart). exit 99 means the fit exceeded K.
+ */
+export async function runComplexity(
+  planPath: string,
+  axis: string,
+  values: number[],
+  maxExponent?: number,
+): Promise<ComplexityResult> {
+  const bin = resolveLoadr();
+  const outDir = mkdtempSync(join(tmpdir(), 'loadr-sweep-'));
+  const args = ['sweep', planPath, '--var', `${axis}=${values.join(',')}`, '--complexity', axis, '--out-dir', outDir];
+  if (maxExponent != null) args.push('--max-exponent', String(maxExponent));
+
+  let exitCode = 0;
+  try {
+    await execFileP(bin, args, { maxBuffer: 16 * 1024 * 1024 });
+  } catch (e) {
+    const err = e as SpawnErrorLike & { code?: number | string };
+    // A spawn failure means the engine never ran — surface it in English.
+    if (isSpawnError(err)) throw cliError(err, bin);
+    // Otherwise the sweep ran and exited non-zero (e.g. 99 = exponent exceeded);
+    // the per-combo summaries were still written, so keep going.
+    exitCode = typeof err.code === 'number' ? err.code : 1;
+  }
+
+  const points: ComplexityPoint[] = [];
+  for (const size of values) {
+    // combo_slug for a single numeric axis is `<axis>-<value>` (see sweep.rs).
+    const file = join(outDir, `sweep-${axis}-${size}.json`);
+    try {
+      const summary = parseSummary(JSON.parse(readFileSync(file, 'utf8')));
+      const lat = p95Duration(summary);
+      if (lat != null) points.push({ size, latencyMs: lat });
+    } catch {
+      /* combo missing or unparseable — omit its point */
+    }
+  }
+  rmSync(outDir, { recursive: true, force: true });
+
+  points.sort((a, b) => a.size - b.size);
+  const exponent = fitExponent(points);
+  const passed = maxExponent == null || exponent == null ? null : exponent <= maxExponent;
+  return { points, exponent, passed, exitCode };
 }
 
 /** Import a JMeter/k6/HAR file via `loadr convert`; returns the YAML it emits. */

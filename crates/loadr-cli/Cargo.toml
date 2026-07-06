@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 loadr-config = { workspace = true }
 loadr-core = { workspace = true }
+loadr-payload = { workspace = true }
 loadr-convert = { workspace = true }
 loadr-protocols = { workspace = true }
 loadr-browser = { workspace = true }

@@ -131,7 +131,7 @@
             macOS <span class="text-edge-bright">·</span> Windows <span class="text-edge-bright">·</span> Linux
           </span>
         </div>
-        <p class="mt-3 text-xs text-smoke">Free · code-signed installers · verify the SHA-256 of every download</p>
+        <p class="mt-3 text-xs text-smoke">Free · SHA-256 checksums · SLSA build provenance on every download</p>
       </div>
 
       <!-- Screenshot (clickable → download) -->
@@ -279,6 +279,10 @@
       <a href="/docs/guides/sweep.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">Parameter sweeps</h3>
         <p class="mt-2 text-sm text-smoke"><code>loadr sweep plan.yaml --var vus=10,50,100</code> runs one plan across a matrix — repeat <code>--var</code> and the axes multiply — then tabulates p50/p95/p99, error rate and RPS per combination, on the terminal or as markdown.</p>
+      </a>
+      <a href="/docs/guides/payload.html" class="fcard rounded-xl border border-edge bg-panel p-6">
+        <h3 class="font-bold text-white">Payloads &amp; complexity testing</h3>
+        <p class="mt-2 text-sm text-smoke"><code>loadr payload</code> generates adversarial input — nested JSON/markdown, billion-laughs, ReDoS, hash-collision and more. Scale it with <code>sweep --complexity</code> and loadr fits the exponent: <code>O(n^1.6) ⚠</code> exits 99 when a parser scales super-linearly. A DoS finder in one command.</p>
       </a>
       <a href="/docs/yaml/assertions-checks.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">Checks + JMeter assertions</h3>

@@ -1910,6 +1910,21 @@ fn run_script(
     })
 }
 
+/// Replace a leading-`$` env reference in a payload magnitude with the env
+/// value, so `${payload:kind:$LOADR_SWEEP_DEPTH}` scales under `loadr sweep`.
+/// Only the magnitude (after the last `:`) is treated this way; the kind name
+/// is left untouched. Unknown env vars resolve to empty (a parse error follows,
+/// which is the honest signal that the sweep var wasn't exported).
+fn resolve_payload_env(spec: &str) -> String {
+    match spec.rsplit_once(':') {
+        Some((kind, mag)) if mag.starts_with('$') => {
+            let val = std::env::var(&mag[1..]).unwrap_or_default();
+            format!("{kind}:{val}")
+        }
+        _ => spec.to_string(),
+    }
+}
+
 fn render_template(
     runner: &FlowRunner,
     tpl: &Template,
@@ -1921,7 +1936,17 @@ fn render_template(
         match part {
             loadr_config::Part::Lit(l) => out.push_str(l),
             loadr_config::Part::Expr(expr) => {
-                if let Some(code) = expr.strip_prefix("js:") {
+                if let Some(spec) = expr.strip_prefix("payload:") {
+                    // `${payload:<kind>:<magnitude>}` generates an adversarial
+                    // body at request time (never materialised into VU state).
+                    // A `$NAME` magnitude reads an environment variable, so
+                    // `loadr sweep --var depth=…` can scale the payload via the
+                    // exported `LOADR_SWEEP_DEPTH` (or any env var).
+                    let resolved = resolve_payload_env(spec);
+                    let bytes = loadr_payload::generate_str(&resolved)
+                        .map_err(|e| PrepareError::Other(e.to_string()))?;
+                    out.push_str(&String::from_utf8_lossy(&bytes));
+                } else if let Some(code) = expr.strip_prefix("js:") {
                     let Some(vu_script) = script.as_mut() else {
                         return Err(PrepareError::Other(format!(
                             "`${{js: ...}}` needs a script engine: {expr}"

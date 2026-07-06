@@ -119,6 +119,7 @@
 
 - [Comparing runs (loadr compare)](guides/compare.md)
 - [Parameter sweeps (loadr sweep)](guides/sweep.md)
+- [Payload generation & complexity testing](guides/payload.md)
 - [Chaos testing (fault injection)](guides/chaos.md)
 
 # Continuous integration

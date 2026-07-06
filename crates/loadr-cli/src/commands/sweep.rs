@@ -39,6 +39,15 @@ pub struct SweepArgs {
     /// Duration override for combos that don't sweep `duration`, e.g. `30s`
     #[arg(long)]
     pub duration: Option<String>,
+    /// Treat this swept axis as an input size and report the fitted complexity
+    /// exponent k (response time ≈ size^k). Values on the axis must be numeric.
+    /// Pair with a `${payload:…}` body to catch super-linear parsers.
+    #[arg(long, value_name = "AXIS")]
+    pub complexity: Option<String>,
+    /// Fail (exit 99) if the fitted complexity exponent exceeds this bound —
+    /// e.g. `1.5` flags worse-than-quasilinear scaling. Implies `--complexity`.
+    #[arg(long, value_name = "K")]
+    pub max_exponent: Option<f64>,
 }
 
 /// One `--var` axis: a variable name and the values to sweep over.
@@ -124,7 +133,175 @@ pub fn execute(args: SweepArgs) -> anyhow::Result<i32> {
         );
         return Ok(loadr_core::EXIT_THRESHOLD_FAILED);
     }
+
+    // Complexity analysis (opt-in via --complexity / --max-exponent).
+    let axis = match (&args.complexity, args.max_exponent) {
+        (Some(a), _) => Some(a.clone()),
+        (None, Some(_)) => {
+            anyhow::bail!("--max-exponent requires --complexity <AXIS> naming the size axis");
+        }
+        (None, None) => None,
+    };
+    if let Some(axis) = axis {
+        if !args.vars.iter().any(|v| v.name == axis) {
+            anyhow::bail!("--complexity axis `{axis}` is not one of the swept --var axes");
+        }
+        println!();
+        let fits = analyze_complexity(&combos, &results, &axis);
+        let worst = report_complexity(&fits, &axis);
+        if let (Some(bound), Some(k)) = (args.max_exponent, worst) {
+            if k > bound {
+                eprintln!(
+                    "{} fitted exponent O(n^{k:.2}) exceeds the --max-exponent {bound:.2} bound",
+                    "✗".red(),
+                );
+                return Ok(loadr_core::EXIT_THRESHOLD_FAILED);
+            }
+            eprintln!(
+                "{} O(n^{k:.2}) within the --max-exponent {bound:.2} bound",
+                "✓".green(),
+            );
+        }
+    }
     Ok(0)
+}
+
+/// One group of measurements sharing every axis except the size axis, with the
+/// complexity exponent fitted across its (size, latency) points.
+#[derive(Debug)]
+pub(crate) struct ComplexityFit {
+    /// The fixed non-size axes for this group (empty when size is the only axis).
+    pub group: String,
+    /// (size, latency-ms) points, ascending by size.
+    pub points: Vec<(f64, f64)>,
+    /// Fitted exponent k in latency ≈ c·size^k (log-log least squares).
+    pub exponent: Option<f64>,
+}
+
+/// Fit the complexity exponent of `latency ≈ c · size^k` via least-squares on
+/// log(size) vs log(latency). Needs ≥2 points with ≥2 distinct positive sizes.
+pub(crate) fn fit_exponent(points: &[(f64, f64)]) -> Option<f64> {
+    let pts: Vec<(f64, f64)> = points
+        .iter()
+        .filter(|(x, y)| *x > 0.0 && *y > 0.0)
+        .map(|(x, y)| (x.ln(), y.ln()))
+        .collect();
+    if pts.len() < 2 {
+        return None;
+    }
+    let n = pts.len() as f64;
+    let sx: f64 = pts.iter().map(|p| p.0).sum();
+    let sy: f64 = pts.iter().map(|p| p.1).sum();
+    let sxx: f64 = pts.iter().map(|p| p.0 * p.0).sum();
+    let sxy: f64 = pts.iter().map(|p| p.0 * p.1).sum();
+    let denom = n * sxx - sx * sx;
+    if denom.abs() < f64::EPSILON {
+        return None; // all sizes equal
+    }
+    Some((n * sxy - sx * sy) / denom)
+}
+
+/// Human verdict for a fitted exponent.
+pub(crate) fn classify_exponent(k: f64) -> &'static str {
+    match k {
+        k if k < 0.5 => "flat / sub-linear",
+        k if k < 1.2 => "≈ linear",
+        k if k < 1.6 => "super-linear",
+        k if k < 2.4 => "≈ quadratic ⚠ DoS risk",
+        _ => "super-quadratic ⚠⚠ DoS",
+    }
+}
+
+/// Build one [`ComplexityFit`] per group of combos that share all axes but
+/// `size_axis`. Latency is the p95 of `http_req_duration`.
+pub(crate) fn analyze_complexity(
+    combos: &[Vec<(String, String)>],
+    results: &[SweepResult],
+    size_axis: &str,
+) -> Vec<ComplexityFit> {
+    use std::collections::BTreeMap;
+    let mut groups: BTreeMap<String, Vec<(f64, f64)>> = BTreeMap::new();
+    for (combo, res) in combos.iter().zip(results) {
+        let Some(size) = combo
+            .iter()
+            .find(|(n, _)| n == size_axis)
+            .and_then(|(_, v)| v.parse::<f64>().ok())
+        else {
+            continue;
+        };
+        let Some(lat) = res
+            .summary
+            .as_ref()
+            .and_then(|s| find_metric(s, MetricKind::Trend, "http_req_duration", "_req_duration"))
+            .and_then(|m| m.agg.p95)
+        else {
+            continue;
+        };
+        let key = combo
+            .iter()
+            .filter(|(n, _)| n != size_axis)
+            .map(|(n, v)| format!("{n}={v}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        groups.entry(key).or_default().push((size, lat));
+    }
+    groups
+        .into_iter()
+        .map(|(group, mut points)| {
+            points.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let exponent = fit_exponent(&points);
+            ComplexityFit {
+                group,
+                points,
+                exponent,
+            }
+        })
+        .collect()
+}
+
+/// Print the complexity report and return the worst fitted exponent seen.
+fn report_complexity(fits: &[ComplexityFit], axis: &str) -> Option<f64> {
+    println!("{}", format!("complexity (response time vs {axis})").bold());
+    let mut worst: Option<f64> = None;
+    for fit in fits {
+        let scope = if fit.group.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", fit.group)
+        };
+        let trail = fit
+            .points
+            .iter()
+            .map(|(s, l)| format!("{}→{}", fmt_size(*s), fmt_latency(*l)))
+            .collect::<Vec<_>>()
+            .join("  ");
+        match fit.exponent {
+            Some(k) => {
+                worst = Some(worst.map_or(k, |w| w.max(k)));
+                let verdict = classify_exponent(k);
+                let line = format!("  O(n^{k:.2}){scope}  {verdict}");
+                if k >= 1.6 {
+                    println!("{}", line.yellow());
+                } else {
+                    println!("{}", line.green());
+                }
+                println!("    {}", trail.dimmed());
+            }
+            None => println!("  (not enough distinct points to fit){scope}"),
+        }
+    }
+    worst
+}
+
+/// Compact size formatting for the report (1000 → 1.0k, 1e6 → 1.0M).
+fn fmt_size(n: f64) -> String {
+    if n >= 1e6 {
+        format!("{:.1}M", n / 1e6)
+    } else if n >= 1e3 {
+        format!("{:.1}k", n / 1e3)
+    } else {
+        format!("{n:.0}")
+    }
 }
 
 /// Parse one `--var` spec (`vus=10,50,100`).
@@ -514,6 +691,49 @@ mod tests {
         assert!(results[0].summary.is_none());
         assert_eq!(results[1].exit_code, 0);
         assert!(results[1].summary.is_some());
+    }
+
+    #[test]
+    fn fit_exponent_recovers_known_orders() {
+        let quad: Vec<(f64, f64)> = [1.0, 2.0, 4.0, 8.0].iter().map(|&x| (x, x * x)).collect();
+        assert!((fit_exponent(&quad).unwrap() - 2.0).abs() < 1e-9);
+        let lin: Vec<(f64, f64)> = [1.0, 10.0, 100.0].iter().map(|&x| (x, 3.0 * x)).collect();
+        assert!((fit_exponent(&lin).unwrap() - 1.0).abs() < 1e-9);
+        assert!(fit_exponent(&[(5.0, 1.0), (5.0, 2.0)]).is_none());
+        assert!(fit_exponent(&[(4.0, 1.0)]).is_none());
+    }
+
+    #[test]
+    fn classify_exponent_labels_the_bands() {
+        assert_eq!(classify_exponent(1.0), "≈ linear");
+        assert_eq!(classify_exponent(1.5), "super-linear");
+        assert!(classify_exponent(2.1).contains("quadratic"));
+        assert!(classify_exponent(3.0).contains("super-quadratic"));
+    }
+
+    #[test]
+    fn analyze_complexity_groups_and_fits() {
+        let combos = vec![
+            vec![("depth".to_string(), "1000".to_string())],
+            vec![("depth".to_string(), "2000".to_string())],
+        ];
+        let results = vec![
+            SweepResult {
+                label: "depth=1000".into(),
+                export: PathBuf::from("a"),
+                exit_code: 0,
+                summary: Some(summary_with(0.0, 100.0, 0.0, 0.0, 0.0)),
+            },
+            SweepResult {
+                label: "depth=2000".into(),
+                export: PathBuf::from("b"),
+                exit_code: 0,
+                summary: Some(summary_with(0.0, 400.0, 0.0, 0.0, 0.0)),
+            },
+        ];
+        let fits = analyze_complexity(&combos, &results, "depth");
+        assert_eq!(fits.len(), 1);
+        assert!((fits[0].exponent.unwrap() - 2.0).abs() < 1e-6);
     }
 
     #[test]

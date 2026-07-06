@@ -2,12 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { AiPanel } from './AiPanel';
 import { Editor, type EditorState } from './Editor';
+import { PayloadLab } from './PayloadLab';
 import { PluginsPanel } from './PluginsPanel';
 import {
   activeTab, closeTab, emptyWorkspace, newTabId, openTab, selectTab, updateTab, type Workspace,
 } from './workspace/tabs';
 import { Badge, Button } from './ui/controls';
-import { Copy, FolderOpen, Import, Plus, Puzzle, Sparkles, X } from './ui/icons';
+import { Copy, FolderOpen, Import, Layers, Plus, Puzzle, Sparkles, X } from './ui/icons';
 
 const STARTER = `name: new plan
 scenarios:
@@ -41,6 +42,7 @@ export default function App() {
   const [version, setVersion] = useState('');
   const [engineProblem, setEngineProblem] = useState<string | null>(null);
   const [showPlugins, setShowPlugins] = useState(false);
+  const [showPayload, setShowPayload] = useState(false);
   const [showAi, setShowAi] = useState(false);
 
   useEffect(() => {
@@ -112,6 +114,7 @@ export default function App() {
           <Button icon={Copy} onClick={duplicate}>Duplicate</Button>
           <div className="mx-1 h-5 w-px bg-edge" />
           <Button icon={Puzzle} onClick={() => setShowPlugins(true)}>Plugins</Button>
+          <Button icon={Layers} onClick={() => setShowPayload(true)}>Payload Lab</Button>
         </div>
       </header>
 
@@ -129,6 +132,7 @@ export default function App() {
       )}
 
       {showPlugins && <PluginsPanel onClose={() => setShowPlugins(false)} />}
+      {showPayload && <PayloadLab onClose={() => setShowPayload(false)} />}
       {showAi && (
         <AiPanel
           onClose={() => setShowAi(false)}

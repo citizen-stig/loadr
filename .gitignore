@@ -12,3 +12,6 @@ node_modules
 .idea
 .vscode
 .claude/
+
+# generated sweep output (regenerable)
+loadr-sweep/

@@ -534,13 +534,13 @@ on the one PR that caused it, ten minutes after it was pushed.
 ****
 
 [.fieldcard]
-.Field Card — Performance gates in CI
+.Field Card — Performance Gates in CI
 ****
-Cost of a regression is detection latency. Reach for a *tiered* pipeline — each test sized to its trigger, each catching what the tier below can't.
+Cost of a regression is detection latency. Reach for a *tiered* pipeline — each test sized to its trigger, catching what the tier below can't.
 
-Grossly worse on a PR?:: 20-VU/30s smoke gate, thresholds *loose* vs SLO (`p(99)<800` for a `300ms` SLO). Exit 99 blocks the merge.
-Movement within bounds?:: fixed thresholds can't see it — `loadr compare` a machine-made `main` baseline, `--assert` on the delta.
-Knee moved but latency didn't?:: `loadr sweep` a VU matrix nightly; trend *where the knee is*, not any single latency.
+Grossly worse on a PR?:: 20-VU/30s smoke gate, thresholds *loose* vs SLO (`p(99)<800` guards a `300ms` SLO). Exit 99 blocks the merge.
+Movement within bounds?:: fixed thresholds miss it — `loadr compare` against a machine-made `main` baseline, `--assert` on the delta.
+Knee moved but latency didn't?:: `loadr sweep` a VU matrix nightly; trend *where the knee is*, not any single number.
 Setting a tolerance?:: measure the noise floor first — same build 5–10×; shared runners drift 5–15%.
 
 [source,console]
@@ -552,5 +552,5 @@ loadr compare baseline.json current.json \
 loadr sweep perf/api.yaml --var vus=25,50,100,200 --duration 10m
 ----
 
-*Remember:* exit 99 = "too slow" (notify author); exit 1 = "test broke" (page test owner) — never collapse them. Gate generator health (`system_cpu: max<0.90`) so a starved rig fails as invalid, not as regression. Quarantine new gates report-only *with an expiry date*. Drift trips nothing: 2%/week = ~67% in six months — only a trend line keyed by SHA + plan + env catches it.
+*Remember:* exit 99 = "too slow" (notify author); exit 1 = "test broke" (page the owner) — never collapse them. Gate generator health (`system_cpu: max<0.90`) so a starved rig fails as invalid, not as regression. Quarantine new gates report-only *with an expiry date*. Drift trips nothing — 2%/week is ~67% in six months; only a trend keyed by SHA + plan + env catches it.
 ****

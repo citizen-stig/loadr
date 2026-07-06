@@ -322,9 +322,9 @@ better. That's the job. Let's learn to do it honestly.
 ****
 Before you generate a single request, answer two things: which test is this, and what number makes it fail?
 
-Picking the test type:: match the question to the shape — SLOs at peak = *load*; where it breaks = *stress*; sudden surge then recovery = *spike*; leaks over hours = *soak*; the SLO knee = *capacity*. Running one and reading it as another is the classic expensive mistake.
+Picking the test type:: match the question to the shape — SLOs at peak = *load*; where it breaks = *stress*; sudden surge then recovery = *spike*; leaks over hours = *soak*; the SLO knee = *capacity*. Reading one as another is the classic expensive mistake.
 Reporting a result:: never a lone average — it hides the users you most need to see. Report the distribution and p95/p99/p99.9.
-Modeling the load:: use an *open* model — arrival rate in requests/sec, not concurrent users. VUs only cap concurrency; they don't set demand.
+Modeling the load:: use an *open* model — arrival rate in req/s, not concurrent users. VUs cap concurrency; they don't set demand.
 Making it a test:: attach a machine-checkable gate. No pass/fail gate and it's a number generator, not a test.
 
 [source,yaml]
@@ -339,11 +339,7 @@ scenarios:
     max_vus: 200
 thresholds:
   http_req_duration: [ "p(99)<300" ]   # the gate
-----
-
-[source,console]
-----
-$ loadr run smoke.yaml
+# loadr run smoke.yaml
 ----
 
 *Remember:* perception cliffs — <100ms feels instant, ~1s breaks flow, ~10s loses them. Fan-out tail: 1 − 0.99^100 ≈ 63% of pages hit that slow 1%. Slow is the on-ramp to down.

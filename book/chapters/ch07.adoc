@@ -531,20 +531,20 @@ forgive you; the model won't.
 ****
 Reach for the seven-question screen, weighted by your bottleneck — not the thirty-one-criterion scoring matrix.
 
-Bake-off paralysis:: Score against the seven questions (protocols, scripting, load-model fidelity, scale-out, reporting, CI, cost); most decisions are settled by *one* — usually protocol or scripting language.
+Bake-off paralysis:: Score against the seven questions (protocols, scripting, load-model fidelity, scale-out, reporting, CI, cost); most decisions settle on *one* — usually protocol or scripting language.
 Two non-negotiables:: An open (arrival-rate) load model *and* honest latency — full distributions, merged never averaged across machines.
-HTTP + CI-first:: Pick a single static binary (k6, loadr, Vegeta) — no JVM, `node_modules`, or Python env to rebuild every pipeline run.
+HTTP + CI-first:: Pick a single static binary (loadr, k6, Vegeta) — no JVM, `node_modules`, or Python env to rebuild each pipeline run.
 The "worse" tool wins when:: the team's already fluent, the tests already exist, the protocol demands it (JMS/JDBC → JMeter), or the org mandates it.
 
 [source,console]
 ----
 # loadr: 50 rps open model, gate p99<300ms and <1% errors
 loadr run products-baseline.yaml
-# quick floor / calibration with a small sharp knife
+# quick calibration floor with a small sharp knife
 echo "GET https://api.example.com/products" | vegeta attack -rate=50 -duration=2m | vegeta report
-# JMeter headless — runs fine, but the .jmx artifact is unreviewable XML
+# JMeter headless — runs fine, but the .jmx is unreviewable XML
 jmeter -n -t plan.jmx
 ----
 
-*Remember:* the JVM tax is operational — tens-of-seconds startup, hundreds-of-MB memory floor, GC pauses that stop the clock mid-measurement — not throughput. Classic `wrk` under-reports latency (coordinated omission); use `wrk2 -R`. Averaged cross-machine percentiles are fiction — merge the histograms.
+*Remember:* the JVM tax is operational — tens-of-seconds startup, hundreds-of-MB memory floor, GC pauses that stop the clock mid-measurement — not throughput. Classic `wrk` under-reports latency (coordinated omission); use `wrk2 -R`.
 ****

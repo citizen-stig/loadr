@@ -440,12 +440,12 @@ instead of an argument.
 [.fieldcard]
 .Field Card — One Time Axis, One Request
 ****
-When a run finishes ugly, don't argue about whose dashboard is right — put both clocks on the same axis and let the correlation do the first half of the diagnosis.
+When a run finishes ugly, don't argue about whose dashboard is right — put both clocks on one axis and let the correlation do the first half of the diagnosis.
 
-Client and server p99 disagree:: trust the client number as user truth; the *gap* is a finding — a queue between the clocks (LB, kernel backlog, pool), not handler code.
+Client and server p99 disagree:: trust the client number as user truth; the *gap* is the finding — a queue between the clocks (LB, kernel backlog, pool), not handler code.
 Watching a run live:: add a `prometheus` output and graph loadr's metrics in the *same* Grafana as the server's — one shared cursor.
-Gating in CI:: pull server metrics in with `observe` + `type: prometheus`, then threshold `target_cpu` — a latency pass at 90% CPU is a fail with no headroom.
-Chasing the slow request:: set `tracing: true`, then read metrics -> trace -> logs, in that order.
+Gating in CI:: pull server metrics in with `observe` + `type: prometheus` and threshold `target_cpu` — a latency pass at 90% CPU is a fail with no headroom.
+Chasing the slow request:: set `tracing: true` and read metrics -> trace -> logs, in that order.
 
 [source,console]
 ----
@@ -458,5 +458,5 @@ Chasing the slow request:: set `tracing: true`, then read metrics -> trace -> lo
 $ loadr run soak.yaml --summary-export results.json
 ----
 
-*Remember:* label by endpoint/status/scenario, never `user_id` (cardinality kills the backend first). A 10m/400rps run is 240k requests — sample traces *tail-based* or you discard the slow 1% you ran the test to find. NTP-discipline both clocks, or you'll "correlate" a spike with a deploy that happened after it.
+*Remember:* label by endpoint/status/scenario, never `user_id` — cardinality kills the backend first. A 10m/400rps run is 240k requests: sample traces *tail-based* or you throw away the slow 1% you ran the test to find. NTP-discipline both clocks, or you'll "correlate" a spike with a deploy that landed after it.
 ****

@@ -552,7 +552,7 @@ execution, live observation, and the first honest read of the results.
 ****
 
 [.fieldcard]
-.Field Card — Building believable scenarios
+.Field Card — Building Believable Scenarios
 ****
 Reach for this when a passing test doesn't move under real traffic: a journey is *sequence + think time + state*, not a list of URLs.
 

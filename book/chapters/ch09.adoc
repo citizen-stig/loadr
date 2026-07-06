@@ -683,7 +683,7 @@ the systematic hunt <<ch13>> takes up.
 ****
 
 [.fieldcard]
-.Field Card — Testing non-HTTP protocols
+.Field Card — Testing non-HTTP Protocols
 ****
 Match the workload model to the protocol, and change your metric with it — REST habits lie off-HTTP.
 

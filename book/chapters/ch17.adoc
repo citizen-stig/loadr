@@ -461,7 +461,7 @@ difference between capacity planning and capacity guessing. What remains, in
 ****
 
 [.fieldcard]
-.Field Card — Capacity, cost, and fleet sizing
+.Field Card — Capacity, Cost, and Fleet Sizing
 ****
 Turn load-test output into a fleet size and a cost per request a budget owner can act on. Answer three questions in order: knee of one unit, return on adding units, cost per request.
 

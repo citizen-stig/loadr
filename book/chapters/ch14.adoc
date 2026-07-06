@@ -85,6 +85,45 @@ $ loadr sweep examples/49-payload-complexity.yaml \
     --complexity depth --max-exponent 1.2
 ----
 
+Against a renderer that walks the blockquote nesting quadratically, every 2× in
+depth roughly 4×s the p95, and the fit is damning:
+
+[source,console]
+----
+→ sweeping 5 combination(s) of depth
+→ [1/5] depth=4000
+  ✓ exit 0 — loadr-sweep/sweep-depth-4000.json
+→ [2/5] depth=8000
+  ✓ exit 0 — loadr-sweep/sweep-depth-8000.json
+...
+→ [5/5] depth=64000
+  ✓ exit 0 — loadr-sweep/sweep-depth-64000.json
+
+  combo        p50      p95       p99       error rate  rps
+  -----------  -------  --------  --------  ----------  -------
+  depth=4000   41.20ms  52.90ms   61.00ms   0.00%       18.9/s
+  depth=8000   150.4ms  178.2ms   190.1ms   0.00%       5.4/s
+  depth=16000  590.7ms  651.0ms   690.4ms   0.00%       1.5/s
+  depth=32000  2.35s    2.61s     2.74s     0.00%       0.4/s
+  depth=64000  9.41s    10.30s    10.80s    0.00%       0.1/s
+
+complexity (response time vs depth)
+  O(n^1.99)  ≈ quadratic ⚠ DoS risk
+    4.0k→52.90ms  8.0k→178.20ms  16.0k→651.00ms  32.0k→2.61s  64.0k→10.30s
+✗ fitted exponent O(n^1.99) exceeds the --max-exponent 1.20 bound
+----
+
+Read the exit line, not the table. Every combo `✓ exit 0`; every error rate
+`0.00%`. Nothing _failed_ — the endpoint just got exponentially slower, which is
+precisely the DoS a count-based defense never sees coming. The gate fits a
+log-log least-squares line through the five p95 points, lands at `O(n^1.99)` —
+quadratic, past the `1.2` bound — and `loadr sweep` **exits 99**, blocking the
+merge. A healthy, linear-scaling renderer fits near `O(n^1.03)`, prints
+`≈ linear`, and passes. Swap the payload kind and the same gate guards a
+different path: a `billion-laughs` body against an XML endpoint fits flat
+(`≈ linear`) only if entity expansion is disabled — if it isn't, the exponent
+explodes and the exit-99 catches it before production does.
+
 The magic is that the body is generated per request and never held in VU memory, so scaling the magnitude doesn't scale your generator's footprint — a decompression bomb costs the _target_ everything and costs _you_ nothing to send. That asymmetry is the whole point of the attack, and the tooling puts it on your side of the table for once.
 
 The generic recipe is tool-agnostic, and you should hold it separately from any tool: run the same input at several sizes, plot response time against size on log-log axes, read the slope. Slope near 1, linear, safe. Slope near 2, quadratic, a latent DoS. You can do it by hand with a k6 scenario per size feeding a body of the right shape and a spreadsheet fitting the line; loadr just generates the nasty bodies for you and fits the slope so the gate is one command. The reasoning survives the change of tool — only the ergonomics differ.
@@ -156,6 +195,60 @@ thresholds:
   "http_req_failed{status:5xx}": [ "rate<0.001" ]
   http_req_duration:             [ "p(99)<200" ]
 ----
+
+Drive that at a limiter configured for 100 rps and read the summary. The two
+populations show up in one run — the ~100 rps that get through as `200`, and the
+~400 rps the limiter sheds as `429` — and every gate is green:
+
+[source,console]
+----
+$ loadr run flood.yaml
+
+  flood — 1 scenario(s), 2m0s
+
+  checks.....................: 100.00% — ✓ 118402 ✗ 0
+    ✓ status is 200 or 429 (59201 / 59201)
+    ✓ limiter stays fast (59201 / 59201)
+  http_req_duration..........: avg=8.10ms min=1.90ms med=6.40ms
+                               max=141.20ms p(90)=14ms p(95)=19ms p(99)=44ms
+  http_req_failed............: 0.00% — ✓ 0 ✗ 59201
+  http_reqs..................: 59201 (493.3/s)
+    ↳ 200: 12043 (100.4/s)   429: 47158 (392.9/s)
+  vus........................: value=100 min=100 max=214
+
+  thresholds:
+    ✓ http_req_failed{status:5xx}: rate<0.001 (observed: 0.00)
+    ✓ http_req_duration: p(99)<200 (observed: 44.10)
+----
+
+Two things make this a _pass_, and both are deliberate. The `429`s do not count
+as `http_req_failed` — a rejection the plan explicitly accepts (`one_of [200,
+429]`) is a check success, not a transport failure, so the error rate stays
+`0.00%` even though four out of five requests were turned away. And the
+`{status:5xx}` selector isolates the population that _would_ be a failure:
+`rate<0.001` fires only if the limiter starts returning 500s instead of shedding
+cleanly. The p99 of `44ms` is the third assertion earning its keep — the limiter
+is rejecting in tens of milliseconds, not holding connections.
+
+Now break the limiter — swap it for one that opens a database transaction on
+every request before deciding to reject — and the same plan turns red:
+
+[source,console]
+----
+  http_reqs..................: 21847 (182.1/s)
+    ↳ 200: 9204 (76.7/s)   429: 8971 (74.8/s)   503: 3672 (30.6/s)
+  http_req_duration..........: avg=1.42s ... p(99)=8.90s
+
+  thresholds:
+    ✗ http_req_failed{status:5xx}: rate<0.001 (observed: 0.168)
+    ✗ http_req_duration: p(99)<200 (observed: 8900.00)
+----
+
+Throughput collapsed from 493 rps to 182, the p99 ran to nine seconds, and 16.8%
+of requests are `503`s — the limiter became the bottleneck it was bought to
+prevent. Both gates fail, and the run exits non-zero. That is the whole test:
+the defense must reject the wrong traffic _cheaply_, and the two tag-scoped
+thresholds are what tell a healthy shield from one you can DoS through.
 
 If `429`s arrive in single-digit milliseconds while 5xx stays at zero, the limiter is shedding load correctly. If you see 500s or the p99 climbing into seconds, the limiter is _adding_ latency under attack — it's become a bottleneck instead of a shield, and you've found a way to DoS the thing that was supposed to prevent DoS.
 

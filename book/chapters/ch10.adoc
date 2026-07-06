@@ -472,12 +472,12 @@ where its honesty ends, beats it every time.
 [.fieldcard]
 .Field Card — Load at Scale, Honestly
 ****
-When the numbers get big, protect validity first: the generator is part of the experiment, so measure it like the target.
+When the numbers get big, protect validity first: the generator is part of the experiment — measure it like the target.
 
 Any result that matters:: run the *halving test* — same load, twice the generators. If latency improves, the rig was the bottleneck and every prior single-node number is suspect.
-Sizing a fleet:: measure the per-node ceiling with a sweep, then run each agent at *50–60%* of it. Headroom below 70% CPU is correctness; below 50% is budget on fire.
-Merging N agents:: merge HDR histograms, *never average percentiles*, and evaluate thresholds centrally — per-agent gates split-brain.
-Geo run:: report per region. A global percentile over a bimodal distribution describes no real user.
+Sizing a fleet:: sweep the per-node ceiling, then run each agent at *50–60%* of it. Below 70% CPU is correctness; below 50% is budget on fire.
+Merging N agents:: merge HDR histograms, *never average percentiles*, and gate thresholds centrally — per-agent gates split-brain.
+Geo run:: report per region — a global percentile over a bimodal distribution describes no real user.
 
 [source,console]
 ----
@@ -491,5 +491,5 @@ loadr agent --join controller-host:7625 --name agent-$(hostname)
 loadr run --controller controller-host:6464 distributed.yaml
 ----
 
-*Remember:* distrust any number from a generator above *70% CPU*; without keep-alive one box dies at ~*470 conn/s* (28k ports, 60s `TIME_WAIT`); default `ulimit -n` is a prehistoric *1024*; on k8s, CPU limits CFS-throttle agents into lying — gate `dropped_iterations: [ "count<10" ]` and watch it.
+*Remember:* distrust any number from a generator above *70% CPU*. Without keep-alive one box dies at ~*470 conn/s* (28k ports, 60s `TIME_WAIT`); default `ulimit -n` is a prehistoric *1024*; on k8s, CPU limits CFS-throttle agents into lying — gate `dropped_iterations: [ "count<10" ]` and watch it.
 ****

@@ -479,19 +479,10 @@ machine, compared against yesterday, and allowed to say no.
 ****
 A test with no pass/fail line is a science-fair project. Reach for these to draw the line and make a machine enforce it.
 
-Writing the objective:: _N% of which requests, measured where, succeed within bound, over window_ — every clause load-bearing. Write the derivation as a comment next to the number.
-Choosing the percentile:: fan-out pushes it up (p95/page ≈ p99.9/call at 40 calls); sample count pushes back — p99 wants 30k+ requests, p99.9 wants 300k+. Never gate on `max`.
-Gating:: latency, error rate, AND throughput together, or you have no gate — each covers the others' escape route (fast 503s, slow 200s, collapsing rps).
-Catching erosion:: absolute gates miss slow drift; diff against a same-plan, same-env, machine-made baseline with tolerance set ABOVE your measured noise floor.
-
-[source,yaml]
-----
-thresholds:
-  http_req_duration: [ "slo(99%) < 400ms", "slo(99.9%) < 1s" ]
-  "http_req_duration{name:checkout}": [ "slo(95%) < 250ms" ]
-  http_req_failed: [ "rate<0.001" ]        # the SLO, not zero
-  dropped_iterations: [ "count<10" ]       # open-model throughput collapse
-----
+Writing the objective:: _N% of which requests, measured where, succeed within bound, over window_ — every clause load-bearing. Write the derivation next to the number.
+Percentile and samples:: fan-out pushes it up (p95/page ≈ p99.9/call at 40 calls); sample count pushes back — p99 wants 30k+ requests, p99.9 wants 300k+. Never gate on `max`.
+Gate together:: latency, error rate AND throughput, or you have no gate — each covers the others' escape route (fast 503s, slow 200s, collapsing rps). In YAML: `slo(99%) < 400ms` and `slo(99.9%) < 1s`, per-endpoint `http_req_duration{name:checkout}: slo(95%) < 250ms`, `http_req_failed: rate<0.001` (the SLO, not zero), `dropped_iterations: count<10`.
+Catch erosion:: absolute gates miss slow drift; diff against a same-plan, same-env, machine-made baseline with tolerance set ABOVE your measured noise floor — run the plan 5× first.
 
 [source,console]
 ----
@@ -500,5 +491,5 @@ loadr compare baseline.json current.json --assert \
   --max-regression p95=10% --max-regression error_rate=0.5 --max-regression rps=5%
 ----
 
-*Remember:* threshold failure exits `99`, a broken test exits `1` — page different people. `%` limits are relative, bare numbers absolute (ms / points). Measure noise: run the same plan 5× before picking a tolerance. `abort_on_fail` needs `delay_abort_eval` so warmup blips don't kill the run.
+*Remember:* threshold failure exits `99`, a broken test exits `1` — page different people. `%` limits are relative, bare numbers absolute (ms / points). `abort_on_fail` needs `delay_abort_eval` so warmup blips don't kill the run.
 ****

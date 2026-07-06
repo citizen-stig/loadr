@@ -3,28 +3,28 @@
 class Loadr < Formula
   desc "Modern load-testing tool: declarative YAML, embedded JS, many protocols"
   homepage "https://loadr.io"
-  version "1.25.0"
+  version "1.26.0"
   license "Elastic-2.0"
 
   on_macos do
     on_arm do
-      url "https://github.com/levantar-ai/loadr/releases/download/v1.25.0/loadr-aarch64-apple-darwin.tar.gz"
-      sha256 "e9495b12069fd4f28544d5c1b35b607e436313d878462a6cb1a7605446c02b6f"
+      url "https://github.com/levantar-ai/loadr/releases/download/v1.26.0/loadr-aarch64-apple-darwin.tar.gz"
+      sha256 "8660b9a839720e08dd3b1fe270cd176d3be8f830ba37f9e6b5e295f6f5a2051f"
     end
     on_intel do
-      url "https://github.com/levantar-ai/loadr/releases/download/v1.25.0/loadr-x86_64-apple-darwin.tar.gz"
-      sha256 "18caf38ed0229fde5bd0a2789ede271c0896aeeb0d07d1d7cb52828098834072"
+      url "https://github.com/levantar-ai/loadr/releases/download/v1.26.0/loadr-x86_64-apple-darwin.tar.gz"
+      sha256 "46ab8713314d583810d7340d656ec3a35e486b05a5612b2ba242d1dca68d59b1"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/levantar-ai/loadr/releases/download/v1.25.0/loadr-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "6fef2c4e3eafa8004d3e404b4c50c1af59173645f5f2d76f19caf6e2b1dce56e"
+      url "https://github.com/levantar-ai/loadr/releases/download/v1.26.0/loadr-aarch64-unknown-linux-gnu.tar.gz"
+      sha256 "bc521c50d6298adf368cb8d0380f4c5ff02a80803cde87985f53c2cf9b63e9c3"
     end
     on_intel do
-      url "https://github.com/levantar-ai/loadr/releases/download/v1.25.0/loadr-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "94b9c3628d0f3ead08e0064cc28d19b331c02b6bb20f1f661cc4c247b45c6440"
+      url "https://github.com/levantar-ai/loadr/releases/download/v1.26.0/loadr-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "afea640cbd092bf4ac083928b4df2857fa75af86417f7c7fa86e92892dc5114c"
     end
   end
 

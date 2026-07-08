@@ -10,9 +10,9 @@ use loadr_gen::GenOptions;
 #[derive(Args)]
 pub struct GenArgs {
     /// Contract kind
-    #[arg(value_parser = ["openapi"])]
+    #[arg(value_parser = ["openapi", "postman"])]
     pub source: String,
-    /// Contract file (OpenAPI .yaml/.json)
+    /// Contract file (OpenAPI .yaml/.json, or a Postman collection .json)
     pub input: PathBuf,
     /// Output YAML path (default: stdout)
     #[arg(short, long)]
@@ -52,7 +52,8 @@ pub fn execute(args: GenArgs) -> anyhow::Result<i32> {
 
     let conversion = match args.source.as_str() {
         "openapi" => loadr_gen::gen_openapi(&source, &opts)?,
-        other => anyhow::bail!("unknown source `{other}` (supported: openapi)"),
+        "postman" => loadr_gen::gen_postman(&source, &opts)?,
+        other => anyhow::bail!("unknown source `{other}` (supported: openapi, postman)"),
     };
 
     for w in &conversion.warnings {

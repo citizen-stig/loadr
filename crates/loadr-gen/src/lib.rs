@@ -9,9 +9,11 @@
 pub mod example;
 pub mod fuzz;
 pub mod openapi;
+pub mod postman;
 
 pub use loadr_convert::{Conversion, ConversionWarning};
 pub use openapi::gen_openapi;
+pub use postman::gen_postman;
 
 use serde_json::Value;
 
@@ -21,6 +23,8 @@ pub enum GenError {
     Parse(String),
     #[error("openapi: {0}")]
     OpenApi(String),
+    #[error("postman: {0}")]
+    Postman(String),
 }
 
 /// Options shared by the generators.

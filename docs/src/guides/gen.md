@@ -1,7 +1,7 @@
 # Generating from a contract (loadr gen)
 
 `loadr convert` and `loadr record` start from *traffic*. `loadr gen` starts from
-a *contract*: point it at an OpenAPI document and it emits a runnable scenario
+a *contract*: point it at an OpenAPI document (or a Postman collection) and it emits a runnable scenario
 with one request per operation, every parameter and body filled from
 schema-derived example data.
 
@@ -62,6 +62,15 @@ scenarios:
 
 `--include`/`--exclude` accept simple `*` globs (`get*`, `*Pet`, `*/pets/*`) and
 keep the output tractable for large specs.
+
+## From a Postman collection
+
+```console
+$ loadr gen postman collection.json -o plan.yaml
+```
+
+Folders become groups, requests become steps, and Postman `{{var}}` placeholders
+become loadr `${var}` interpolation — set them via env or `--var` at run time.
 
 ## Fuzzing a contract (`--fuzz`)
 

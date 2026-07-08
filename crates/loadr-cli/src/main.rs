@@ -45,6 +45,8 @@ enum Command {
     Sweep(commands::sweep::SweepArgs),
     /// Generate adversarial payloads for algorithmic-complexity (DoS) testing
     Payload(commands::payload::PayloadArgs),
+    /// Record live HTTP(S) traffic through a proxy into an auto-correlated scenario
+    Record(commands::record::RecordArgs),
     /// Run the distributed-mode controller
     Controller(commands::controller::ControllerArgs),
     /// Run a load-generating agent
@@ -91,6 +93,7 @@ fn run(cli: Cli) -> anyhow::Result<i32> {
         Command::Compare(args) => commands::compare::execute(args),
         Command::Sweep(args) => commands::sweep::execute(args),
         Command::Payload(args) => commands::payload::execute(args),
+        Command::Record(args) => commands::record::execute(args),
         Command::Controller(args) => commands::controller::execute(args),
         Command::Agent(args) => commands::agent::execute(args),
         Command::Plugin(cmd) => commands::plugin::execute(cmd),

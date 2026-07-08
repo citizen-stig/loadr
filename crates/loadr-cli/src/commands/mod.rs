@@ -5,6 +5,7 @@ pub mod convert;
 pub mod download;
 pub mod payload;
 pub mod plugin;
+pub mod record;
 pub mod report;
 pub mod run;
 pub mod sweep;

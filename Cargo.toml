@@ -10,6 +10,7 @@ members = [
     "crates/loadr-agent",
     "crates/loadr-convert",
     "crates/loadr-payload",
+    "crates/loadr-record",
     "crates/loadr-browser",
     "crates/loadr-cli",
     "plugins/loadr-plugin-webui",
@@ -68,6 +69,7 @@ loadr-plugin-api = { path = "crates/loadr-plugin-api", version = "1.0.0" }
 loadr-agent = { path = "crates/loadr-agent", version = "1.0.0" }
 loadr-convert = { path = "crates/loadr-convert", version = "1.0.0" }
 loadr-payload = { path = "crates/loadr-payload", version = "1.0.0" }
+loadr-record = { path = "crates/loadr-record", version = "1.0.0" }
 loadr-browser = { path = "crates/loadr-browser", version = "1.0.0" }
 loadr-plugin-webui = { path = "plugins/loadr-plugin-webui", version = "1.0.0" }
 loadr-testserver = { path = "testsupport/loadr-testserver" }

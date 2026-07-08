@@ -2848,6 +2848,7 @@ dependencies = [
  "loadr-plugin-api",
  "loadr-plugin-webui",
  "loadr-protocols",
+ "loadr-record",
  "loadr-testserver",
  "owo-colors",
  "parking_lot",
@@ -3532,6 +3533,30 @@ dependencies = [
  "tracing",
  "url",
  "webpki-roots 0.26.11",
+]
+
+[[package]]
+name = "loadr-record"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "loadr-convert",
+ "rcgen",
+ "rustls",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
 ]
 
 [[package]]

@@ -7,6 +7,7 @@
 //! `har.rs` builds a `Conversion` around a `loadr_config::TestPlan`.
 
 pub mod example;
+pub mod fuzz;
 pub mod openapi;
 
 pub use loadr_convert::{Conversion, ConversionWarning};
@@ -33,6 +34,10 @@ pub struct GenOptions {
     pub include: Vec<String>,
     /// operationId/path globs to exclude.
     pub exclude: Vec<String>,
+    /// Also emit boundary/structural/adversarial fuzz variants with a no-5xx gate.
+    pub fuzz: bool,
+    /// Adversarial payload kinds to inject when fuzzing (empty = defaults).
+    pub fuzz_payloads: Vec<String>,
 }
 
 /// Parse a contract that may be JSON or YAML into a `serde_json::Value`.

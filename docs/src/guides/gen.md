@@ -63,6 +63,29 @@ scenarios:
 `--include`/`--exclude` accept simple `*` globs (`get*`, `*Pet`, `*/pets/*`) and
 keep the output tractable for large specs.
 
+## Fuzzing a contract (`--fuzz`)
+
+A contract promises to *reject* bad input — not crash on it. `--fuzz` turns that
+promise into a test. For every operation with a JSON body it appends variant
+requests beside the valid one, each asserting the status is **2xx–4xx (never a
+5xx)**:
+
+```console
+$ loadr gen openapi openapi.yaml --fuzz -o fuzz.yaml
+$ loadr run fuzz.yaml     # a 5xx on any variant fails the run
+```
+
+Three variant families:
+
+- **Structural** — drop a `required` key; swap a field to the wrong type.
+- **Boundary** — values that violate the schema's bounds.
+- **Adversarial** — the body replaced with a [`loadr payload`](payload.md) entry
+  (`nested-json`, `long-string`, …), reusing the algorithmic-complexity catalog.
+  Choose kinds with `--fuzz-payloads nested-json,billion-laughs`.
+
+Each variant is named `... [fuzz: <what>]` and carries a `status` assertion
+matching `^[234]..$`, so a crash (5xx) is a test failure.
+
 ## Next steps
 
 - Set a real `executor`, `vus`/`rate` and `duration`

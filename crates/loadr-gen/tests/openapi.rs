@@ -109,3 +109,29 @@ fn missing_paths_is_an_error_not_a_panic() {
     );
     assert!(err.is_err());
 }
+
+#[test]
+fn fuzz_adds_gated_variants_and_stays_valid() {
+    let c = gen_openapi(
+        PETSTORE,
+        &GenOptions {
+            fuzz: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let s = c.plan.scenarios.get("api").unwrap();
+    // createPet has a JSON body → fuzz variants appended beside the 3 base ops.
+    assert!(
+        s.flow.len() > 3,
+        "fuzz should add variants, got {}",
+        s.flow.len()
+    );
+
+    let yaml = serde_yaml::to_string(&c.plan).unwrap();
+    assert!(yaml.contains("[fuzz:"), "variant names present:\n{yaml}");
+    assert!(yaml.contains("^[234]..$"), "no-5xx gate present:\n{yaml}");
+    // The fuzz plan is still a valid, runnable loadr plan.
+    loadr_config::load_str(&yaml, &loadr_config::LoadOptions::new())
+        .unwrap_or_else(|e| panic!("fuzz plan failed validation: {e}"));
+}

@@ -59,13 +59,24 @@ pub fn gen_openapi(source: &str, opts: &GenOptions) -> Result<Conversion, GenErr
             if !selected(&selector, path, opts) {
                 continue;
             }
-            flow.push(Step::Request(Box::new(build_op(
-                path,
-                m,
-                op,
-                &resolver,
-                &mut warnings,
-            ))));
+            let step = build_op(path, m, op, &resolver, &mut warnings);
+            if opts.fuzz {
+                let kinds: Vec<String> = if opts.fuzz_payloads.is_empty() {
+                    crate::fuzz::DEFAULT_PAYLOADS
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect()
+                } else {
+                    opts.fuzz_payloads.clone()
+                };
+                let variants = crate::fuzz::variants_for(op, &step, &resolver, &kinds);
+                flow.push(Step::Request(Box::new(step)));
+                for v in variants {
+                    flow.push(Step::Request(Box::new(v)));
+                }
+            } else {
+                flow.push(Step::Request(Box::new(step)));
+            }
         }
     }
 

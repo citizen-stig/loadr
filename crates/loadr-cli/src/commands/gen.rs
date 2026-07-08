@@ -29,6 +29,12 @@ pub struct GenArgs {
     /// operationId/path globs to exclude (repeatable)
     #[arg(long)]
     pub exclude: Vec<String>,
+    /// Also emit boundary + spec-invalid + adversarial variants with a "no 5xx" gate
+    #[arg(long)]
+    pub fuzz: bool,
+    /// Adversarial payload kinds to inject when fuzzing (comma-separated)
+    #[arg(long, value_delimiter = ',')]
+    pub fuzz_payloads: Vec<String>,
 }
 
 pub fn execute(args: GenArgs) -> anyhow::Result<i32> {
@@ -40,6 +46,8 @@ pub fn execute(args: GenArgs) -> anyhow::Result<i32> {
         base_url: args.base_url.clone(),
         include: args.include.clone(),
         exclude: args.exclude.clone(),
+        fuzz: args.fuzz,
+        fuzz_payloads: args.fuzz_payloads.clone(),
     };
 
     let conversion = match args.source.as_str() {

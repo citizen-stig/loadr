@@ -15,6 +15,9 @@ python3 "$ROOT/site/build-plugins.py"
 echo "==> generating demo pages"
 python3 "$ROOT/site/build-demos.py"
 
+echo "==> generating blog pages"
+python3 "$ROOT/site/build-blog.py"
+
 echo "==> building CSS"
 (cd "$ROOT/site" && npx @tailwindcss/cli -i src/input.css -o assets/site.css --minify)
 
@@ -31,6 +34,8 @@ mkdir -p "$DIST/download"
 cp "$ROOT/site/downloads.html" "$DIST/download/index.html"
 mkdir -p "$DIST/plugins"
 cp -r "$ROOT/site/plugins/." "$DIST/plugins/"
+mkdir -p "$DIST/blog"
+cp -r "$ROOT/site/blog/." "$DIST/blog/"
 mkdir -p "$DIST/privacy"
 cp "$ROOT/site/privacy.html" "$DIST/privacy/index.html"
 mkdir -p "$DIST/cookies"

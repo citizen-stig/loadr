@@ -22,7 +22,7 @@ pub(crate) fn live_payload(snap: &Snapshot, thresholds: &[ThresholdStatus], stat
         1.0
     };
     let latency = |pick: fn(&AggValues) -> Option<f64>| -> Value {
-        weighted(snap, "http_req_duration", None, pick)
+        weighted_request_latency(snap, None, pick)
             .map(|v| json!(v))
             .unwrap_or(Value::Null)
     };
@@ -33,7 +33,7 @@ pub(crate) fn live_payload(snap: &Snapshot, thresholds: &[ThresholdStatus], stat
         "elapsed": snap.elapsed_secs,
         "interval_secs": snap.interval_secs,
         "state": state,
-        "rps": interval_rps(snap, "http_reqs", None, interval),
+        "rps": interval_request_rps(snap, None, interval),
         "iterations_ps": interval_rps(snap, "iterations", None, interval),
         "error_rate": merged_rate(snap, "http_req_failed", None),
         "active_vus": gauge_sum(snap, "vus"),
@@ -50,6 +50,7 @@ pub(crate) fn live_payload(snap: &Snapshot, thresholds: &[ThresholdStatus], stat
         "checks": { "passes": check_passes, "fails": check_fails },
         "data_sent_ps": interval_bytes_per_sec(snap, "data_sent", interval),
         "data_received_ps": interval_bytes_per_sec(snap, "data_received", interval),
+        "reqs_total": request_counter_total(snap, None),
         "http_reqs_total": counter_total(snap, "http_reqs"),
         "failures": failures_breakdown(snap),
     })
@@ -207,6 +208,10 @@ fn series_matches(s: &loadr_core::SeriesSnapshot, metric: &str, scenario: Option
     if s.metric != metric {
         return false;
     }
+    scenario_matches(s, scenario)
+}
+
+fn scenario_matches(s: &loadr_core::SeriesSnapshot, scenario: Option<&str>) -> bool {
     match scenario {
         Some(name) => s.tags.get("scenario").map(String::as_str) == Some(name),
         None => true,
@@ -219,6 +224,30 @@ fn interval_rps(snap: &Snapshot, metric: &str, scenario: Option<&str>, interval:
         .series
         .iter()
         .filter(|s| series_matches(s, metric, scenario))
+        .map(|s| s.interval_count)
+        .sum();
+    count as f64 / interval
+}
+
+fn is_request_counter(metric: &str) -> bool {
+    metric.ends_with("_reqs")
+}
+
+fn is_request_duration(metric: &str) -> bool {
+    metric.ends_with("_req_duration")
+}
+
+// Request metrics are protocol-family specific (`http_reqs`, `grpc_reqs`,
+// `<plugin>_reqs`). The live dashboard headline is protocol-agnostic, so it
+// rolls those families up instead of treating HTTP as the only request source.
+
+/// Events recorded since the previous snapshot across all request families,
+/// per second.
+fn interval_request_rps(snap: &Snapshot, scenario: Option<&str>, interval: f64) -> f64 {
+    let count: u64 = snap
+        .series
+        .iter()
+        .filter(|s| is_request_counter(&s.metric) && scenario_matches(s, scenario))
         .map(|s| s.interval_count)
         .sum();
     count as f64 / interval
@@ -240,18 +269,25 @@ fn merged_rate(snap: &Snapshot, metric: &str, scenario: Option<&str>) -> Option<
     }
 }
 
-/// Count-weighted merge of a trend statistic across tag sets (approximate).
-fn weighted<F>(snap: &Snapshot, metric: &str, scenario: Option<&str>, pick: F) -> Option<f64>
+fn weighted_request_latency<F>(snap: &Snapshot, scenario: Option<&str>, pick: F) -> Option<f64>
 where
     F: Fn(&AggValues) -> Option<f64>,
 {
+    weighted_matching(
+        snap,
+        |s| is_request_duration(&s.metric) && scenario_matches(s, scenario),
+        pick,
+    )
+}
+
+fn weighted_matching<F, M>(snap: &Snapshot, matches: M, pick: F) -> Option<f64>
+where
+    F: Fn(&AggValues) -> Option<f64>,
+    M: Fn(&loadr_core::SeriesSnapshot) -> bool,
+{
     let mut acc = 0.0_f64;
     let mut total = 0_u64;
-    for s in snap
-        .series
-        .iter()
-        .filter(|s| series_matches(s, metric, scenario))
-    {
+    for s in snap.series.iter().filter(|s| matches(s)) {
         if s.agg.count == 0 {
             continue;
         }
@@ -280,6 +316,14 @@ fn counter_total(snap: &Snapshot, metric: &str) -> f64 {
     snap.series
         .iter()
         .filter(|s| s.metric == metric)
+        .map(|s| s.agg.sum)
+        .sum()
+}
+
+fn request_counter_total(snap: &Snapshot, scenario: Option<&str>) -> f64 {
+    snap.series
+        .iter()
+        .filter(|s| is_request_counter(&s.metric) && scenario_matches(s, scenario))
         .map(|s| s.agg.sum)
         .sum()
 }
@@ -317,10 +361,10 @@ fn per_scenario(snap: &Snapshot, interval: f64) -> Vec<Value> {
         .map(|name| {
             json!({
                 "scenario": name,
-                "rps": interval_rps(snap, "http_reqs", Some(name), interval),
+                "rps": interval_request_rps(snap, Some(name), interval),
                 "iterations_ps": interval_rps(snap, "iterations", Some(name), interval),
-                "p95": weighted(snap, "http_req_duration", Some(name), |a| a.p95),
-                "avg": weighted(snap, "http_req_duration", Some(name), |a| a.avg),
+                "p95": weighted_request_latency(snap, Some(name), |a| a.p95),
+                "avg": weighted_request_latency(snap, Some(name), |a| a.avg),
                 "error_rate": merged_rate(snap, "http_req_failed", Some(name)),
             })
         })
@@ -383,6 +427,108 @@ mod tests {
         let scenarios = payload["per_scenario"].as_array().expect("scenarios");
         assert_eq!(scenarios.len(), 1);
         assert_eq!(scenarios[0]["scenario"], "browse");
+    }
+
+    #[test]
+    fn live_payload_counts_grpc_request_family() {
+        let mut agg = Aggregator::new();
+        for i in 0..20 {
+            agg.record(&sample(
+                "grpc_reqs",
+                MetricKind::Counter,
+                1.0,
+                &[("scenario", "rpc")],
+            ));
+            agg.record(&sample(
+                "grpc_req_duration",
+                MetricKind::Trend,
+                5.0 + i as f64,
+                &[("scenario", "rpc")],
+            ));
+        }
+        let snap = agg.snapshot();
+        let payload = live_payload(&snap, &[], "running");
+
+        assert!(payload["rps"].as_f64().expect("rps") > 0.0);
+        assert_eq!(payload["reqs_total"], 20.0);
+        assert_eq!(payload["http_reqs_total"], 0.0);
+        assert!(payload["latency"]["p95"].as_f64().expect("p95") > 0.0);
+        let scenarios = payload["per_scenario"].as_array().expect("scenarios");
+        assert_eq!(scenarios[0]["scenario"], "rpc");
+        assert!(scenarios[0]["rps"].as_f64().expect("scenario rps") > 0.0);
+        assert!(scenarios[0]["p95"].as_f64().expect("scenario p95") > 0.0);
+    }
+
+    #[test]
+    fn live_payload_counts_plugin_request_family() {
+        let mut agg = Aggregator::new();
+        for i in 0..10 {
+            agg.record(&sample(
+                "risotto_reqs",
+                MetricKind::Counter,
+                1.0,
+                &[("scenario", "transfers")],
+            ));
+            agg.record(&sample(
+                "risotto_req_duration",
+                MetricKind::Trend,
+                1.0 + i as f64,
+                &[("scenario", "transfers")],
+            ));
+        }
+        let snap = agg.snapshot();
+        let payload = live_payload(&snap, &[], "running");
+
+        assert!(payload["rps"].as_f64().expect("rps") > 0.0);
+        assert_eq!(payload["reqs_total"], 10.0);
+        assert_eq!(payload["http_reqs_total"], 0.0);
+        assert!(payload["latency"]["p95"].as_f64().expect("p95") > 0.0);
+        let scenarios = payload["per_scenario"].as_array().expect("scenarios");
+        assert_eq!(scenarios[0]["scenario"], "transfers");
+        assert!(scenarios[0]["rps"].as_f64().expect("scenario rps") > 0.0);
+        assert!(scenarios[0]["p95"].as_f64().expect("scenario p95") > 0.0);
+    }
+
+    #[test]
+    fn live_payload_sums_mixed_request_families() {
+        let mut agg = Aggregator::new();
+        for _ in 0..7 {
+            agg.record(&sample(
+                "http_reqs",
+                MetricKind::Counter,
+                1.0,
+                &[("scenario", "mixed")],
+            ));
+            agg.record(&sample(
+                "http_req_duration",
+                MetricKind::Trend,
+                10.0,
+                &[("scenario", "mixed")],
+            ));
+        }
+        for _ in 0..3 {
+            agg.record(&sample(
+                "grpc_reqs",
+                MetricKind::Counter,
+                1.0,
+                &[("scenario", "mixed")],
+            ));
+            agg.record(&sample(
+                "grpc_req_duration",
+                MetricKind::Trend,
+                30.0,
+                &[("scenario", "mixed")],
+            ));
+        }
+        let snap = agg.snapshot();
+        let payload = live_payload(&snap, &[], "running");
+
+        assert_eq!(payload["reqs_total"], 10.0);
+        assert_eq!(payload["http_reqs_total"], 7.0);
+        assert!(payload["rps"].as_f64().expect("rps") > 0.0);
+        assert_eq!(payload["latency"]["avg"], 16.0);
+        let scenarios = payload["per_scenario"].as_array().expect("scenarios");
+        assert_eq!(scenarios[0]["avg"], 16.0);
     }
 
     /// Build a snapshot exercising every failure source, then assert the

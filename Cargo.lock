@@ -2842,6 +2842,7 @@ dependencies = [
  "loadr-config",
  "loadr-convert",
  "loadr-core",
+ "loadr-gen",
  "loadr-js",
  "loadr-outputs",
  "loadr-payload",
@@ -2932,6 +2933,19 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "loadr-gen"
+version = "1.0.0"
+dependencies = [
+ "indexmap",
+ "loadr-config",
+ "loadr-convert",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

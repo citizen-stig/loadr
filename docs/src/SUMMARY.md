@@ -118,6 +118,7 @@
 # Guides
 
 - [Recording a session (loadr record)](guides/record.md)
+- [Generating from a contract (loadr gen)](guides/gen.md)
 - [Comparing runs (loadr compare)](guides/compare.md)
 - [Parameter sweeps (loadr sweep)](guides/sweep.md)
 - [Payload generation & complexity testing](guides/payload.md)

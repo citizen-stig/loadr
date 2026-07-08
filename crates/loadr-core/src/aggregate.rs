@@ -68,6 +68,10 @@ fn new_histogram() -> Histogram<u64> {
     h
 }
 
+fn is_additive_gauge_metric(metric: &str) -> bool {
+    matches!(metric, "vus" | "vus_max")
+}
+
 impl Series {
     fn new(kind: MetricKind) -> Self {
         let data = match kind {
@@ -396,6 +400,45 @@ impl Aggregator {
         out
     }
 
+    fn additive_gauge_values(series: &[&Series]) -> AggValues {
+        let mut out = AggValues {
+            count: 1,
+            ..Default::default()
+        };
+        let mut last = 0.0;
+        let mut min = 0.0;
+        let mut max = 0.0;
+        let mut has_value = false;
+        let mut has_min = false;
+        let mut has_max = false;
+
+        for s in series {
+            if let SeriesData::Gauge {
+                last: l,
+                min: m,
+                max: x,
+                ..
+            } = &s.data
+            {
+                last += *l;
+                has_value = true;
+                if m.is_finite() {
+                    min += *m;
+                    has_min = true;
+                }
+                if x.is_finite() {
+                    max += *x;
+                    has_max = true;
+                }
+            }
+        }
+
+        out.last = has_value.then_some(last);
+        out.min = has_min.then_some(min);
+        out.max = has_max.then_some(max);
+        out
+    }
+
     /// Produce a snapshot and roll the interval window.
     pub fn snapshot(&mut self) -> Snapshot {
         let elapsed = self.start.elapsed().as_secs_f64();
@@ -461,6 +504,9 @@ impl Aggregator {
             return None;
         }
         let kind = matched[0].kind;
+        if kind == MetricKind::Gauge && is_additive_gauge_metric(metric) {
+            return Some((kind, Self::additive_gauge_values(&matched)));
+        }
         if matched.len() == 1 {
             return Some((kind, Self::agg_values(matched[0], elapsed)));
         }
@@ -815,6 +861,67 @@ mod tests {
         assert!((p42 - 84.0).abs() / 84.0 < 0.02, "p42={p42}");
     }
 
+    #[test]
+    fn selector_sums_vu_gauges_across_tagged_series() {
+        let mut agg = Aggregator::new();
+        for instance in ["a", "b", "c"] {
+            agg.record(&sample(
+                "vus",
+                MetricKind::Gauge,
+                685.0,
+                &[("instance", instance)],
+            ));
+            agg.record(&sample(
+                "vus",
+                MetricKind::Gauge,
+                3333.0,
+                &[("instance", instance)],
+            ));
+            agg.record(&sample(
+                "vus_max",
+                MetricKind::Gauge,
+                3333.0,
+                &[("instance", instance)],
+            ));
+        }
+
+        let (_, vus) = agg.aggregate_selector("vus", &[]).expect("merged vus");
+        assert_eq!(vus.last, Some(9999.0));
+        assert_eq!(vus.min, Some(2055.0));
+        assert_eq!(vus.max, Some(9999.0));
+
+        let (_, vus_max) = agg
+            .aggregate_selector("vus_max", &[])
+            .expect("merged vus_max");
+        assert_eq!(vus_max.last, Some(9999.0));
+        assert_eq!(vus_max.min, Some(9999.0));
+        assert_eq!(vus_max.max, Some(9999.0));
+    }
+
+    #[test]
+    fn selector_keeps_generic_gauge_latest_wins() {
+        let mut agg = Aggregator::new();
+        agg.record(&sample(
+            "queue_depth",
+            MetricKind::Gauge,
+            10.0,
+            &[("instance", "a")],
+        ));
+        agg.record(&sample(
+            "queue_depth",
+            MetricKind::Gauge,
+            20.0,
+            &[("instance", "b")],
+        ));
+
+        let (_, gauge) = agg
+            .aggregate_selector("queue_depth", &[])
+            .expect("merged generic gauge");
+        assert_eq!(gauge.last, Some(20.0));
+        assert_eq!(gauge.min, Some(10.0));
+        assert_eq!(gauge.max, Some(20.0));
+    }
+
     /// The critical distributed-mode property: merged percentiles equal the
     /// percentiles of the union, not the average of per-agent percentiles.
     #[test]
@@ -837,6 +944,36 @@ mod tests {
         assert!((p99 - 1980.0).abs() / 1980.0 < 0.01, "p99={p99}");
         assert_eq!(a.max, Some(2000.0));
         assert_eq!(a.min, Some(1.0));
+    }
+
+    #[test]
+    fn delta_merge_sums_vu_gauges_across_agents() {
+        let mut controller = Aggregator::new();
+        for instance in ["a", "b", "c"] {
+            let mut agent = Aggregator::new();
+            agent.record(&sample(
+                "vus",
+                MetricKind::Gauge,
+                3333.0,
+                &[("instance", instance)],
+            ));
+            agent.record(&sample(
+                "vus_max",
+                MetricKind::Gauge,
+                3333.0,
+                &[("instance", instance)],
+            ));
+            controller.merge_delta(&agent.take_delta());
+        }
+
+        let (_, vus) = controller
+            .aggregate_selector("vus", &[])
+            .expect("controller vus");
+        assert_eq!(vus.last, Some(9999.0));
+        let (_, vus_max) = controller
+            .aggregate_selector("vus_max", &[])
+            .expect("controller vus_max");
+        assert_eq!(vus_max.last, Some(9999.0));
     }
 
     #[test]

@@ -385,6 +385,30 @@ mod tests {
         assert_eq!(scenarios[0]["scenario"], "browse");
     }
 
+    #[test]
+    fn live_payload_sums_distributed_vus() {
+        let mut agg = Aggregator::new();
+        for instance in ["a", "b", "c"] {
+            agg.record(&sample(
+                "vus",
+                MetricKind::Gauge,
+                3333.0,
+                &[("instance", instance)],
+            ));
+            agg.record(&sample(
+                "vus_max",
+                MetricKind::Gauge,
+                3333.0,
+                &[("instance", instance)],
+            ));
+        }
+
+        let snap = agg.snapshot();
+        let payload = live_payload(&snap, &[], "running");
+        assert_eq!(payload["active_vus"], 9999.0);
+        assert_eq!(payload["max_vus"], 9999.0);
+    }
+
     /// Build a snapshot exercising every failure source, then assert the
     /// breakdown groups by cause with correct counts and shares.
     #[test]

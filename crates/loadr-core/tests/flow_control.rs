@@ -9,7 +9,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use loadr_core::{
     Engine, EngineOptions, PreparedRequest, ProtocolError, ProtocolHandler, ProtocolRegistry,
-    ProtocolResponse, VuContext,
+    ProtocolResponse, Tags, VuContext,
 };
 
 /// A protocol handler that records every request URL and returns 200.
@@ -433,4 +433,56 @@ scenarios:
         tl.iter().any(|p| p.latency_p95.is_some()),
         "no latency percentiles recorded"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn vu_gauges_include_extra_tags() {
+    use std::time::Duration;
+
+    let handler = Arc::new(RecordingHandler::default());
+    let yaml = r#"
+scenarios:
+  s:
+    executor: constant-vus
+    vus: 2
+    duration: 1200ms
+    flow:
+      - request: { url: "http://x/ping" }
+      - think_time: { type: constant, duration: 50ms }
+"#;
+    let loaded = loadr_config::load_str(yaml, &loadr_config::LoadOptions::new()).expect("parse");
+    let extra_tags: Tags = [("instance".to_string(), "a1".to_string())]
+        .into_iter()
+        .collect();
+    let engine = Engine::new(
+        loaded.plan,
+        std::path::PathBuf::from("."),
+        EngineOptions {
+            protocols: registry(handler),
+            extra_tags,
+            snapshot_interval: Duration::from_millis(250),
+            ..Default::default()
+        },
+    )
+    .expect("engine");
+    let result = engine.run().await.expect("run");
+
+    for metric in ["vus", "vus_max"] {
+        let series: Vec<_> = result
+            .summary
+            .snapshot
+            .series
+            .iter()
+            .filter(|s| s.metric == metric)
+            .collect();
+        assert_eq!(series.len(), 1, "expected one {metric} series");
+        assert_eq!(
+            series[0].tags.get("instance").map(String::as_str),
+            Some("a1")
+        );
+        assert!(
+            !series[0].tags.contains_key("scenario"),
+            "{metric} should stay run-scoped"
+        );
+    }
 }

@@ -249,6 +249,73 @@ thresholds:
 }
 
 // ---------------------------------------------------------------------------
+// Live gauges: active VUs are summed across agents for UI snapshots
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn constant_vus_live_snapshot_sums_agent_vus() {
+    let handle = start_controller(Duration::from_secs(6)).await;
+    let addr = format!("http://{}", handle.addr());
+    let _a1 = spawn_agent(addr.clone(), "v1", None, None);
+    let _a2 = spawn_agent(addr.clone(), "v2", None, None);
+    let _a3 = spawn_agent(addr.clone(), "v3", None, None);
+    wait_until(
+        || handle.agents().iter().filter(|a| a.healthy).count() == 3,
+        Duration::from_secs(10),
+        "3 agents registered",
+    )
+    .await;
+
+    let plan = r#"
+name: vus-e2e
+scenarios:
+  closed:
+    executor: constant-vus
+    vus: 6
+    duration: 2s
+    flow:
+      - request: { url: "http://mock.local/vus" }
+"#;
+    let run_id = handle
+        .submit(plan.to_string(), quick_submit())
+        .await
+        .expect("submit");
+    let rx = handle.watch_run(&run_id).expect("snapshot receiver");
+    wait_until(
+        || {
+            let snap = rx.borrow();
+            let vus: f64 = snap
+                .series
+                .iter()
+                .filter(|s| s.metric == "vus")
+                .filter_map(|s| s.agg.last)
+                .sum();
+            let series = snap.series.iter().filter(|s| s.metric == "vus").count();
+            series == 3 && vus >= 6.0
+        },
+        Duration::from_secs(10),
+        "fleet active VUs in snapshot",
+    )
+    .await;
+
+    wait_until(
+        || is_terminal(&run_state(&handle, &run_id)),
+        Duration::from_secs(30),
+        "run completion",
+    )
+    .await;
+    let summary = handle.run_summary(&run_id).expect("summary");
+    let vus_max = summary
+        .metrics
+        .iter()
+        .find(|m| m.metric == "vus_max")
+        .expect("vus_max metric");
+    assert_eq!(vus_max.agg.last, Some(6.0));
+
+    handle.shutdown();
+}
+
+// ---------------------------------------------------------------------------
 // Open-model rate split: total arrival rate is preserved across agents
 // ---------------------------------------------------------------------------
 

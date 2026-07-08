@@ -63,14 +63,35 @@ pub fn execute(args: AgentArgs) -> anyhow::Result<i32> {
         });
 
         // Real protocol and JS factories.
-        let protocols: loadr_agent::ProtocolFactory = Arc::new(|http_defaults, base_dir| {
-            let mut registry = loadr_protocols::builtin_registry(http_defaults, base_dir)
+        let protocols: loadr_agent::ProtocolFactory = Arc::new(|plan, base_dir| {
+            let mut registry = loadr_protocols::builtin_registry(&plan.defaults.http, base_dir)
                 .map_err(|e| e.to_string())?;
             // Browser protocol (headless Chrome via CDP); lazy until first use.
             registry.register(Arc::new(
-                loadr_browser::BrowserHandler::from_config(http_defaults)
+                loadr_browser::BrowserHandler::from_config(&plan.defaults.http)
                     .map_err(|e| e.to_string())?,
             ));
+            // Protocol plugins declared in the plan. The controller ships no
+            // plugin binaries: they resolve on this host from LOADR_PLUGINS_DIR
+            // or ~/.loadr/plugins (or an explicit `path:` in the plan).
+            let plugins_dir = loadr_plugin_api::default_plugins_dir();
+            for plugin_ref in &plan.plugins {
+                if !plugin_ref.enabled {
+                    continue;
+                }
+                let loaded = loadr_plugin_api::PluginRegistry::load_ref(plugin_ref, &plugins_dir)
+                    .map_err(|e| format!("plugin `{}`: {e}", plugin_ref.name))?;
+                match loaded {
+                    loadr_plugin_api::LoadedPlugin::Protocol(handler) => {
+                        registry.register(handler)
+                    }
+                    other => tracing::warn!(
+                        plugin = %plugin_ref.name,
+                        kind = %other.kind(),
+                        "plugin kind has no agent-side plumbing; ignoring"
+                    ),
+                }
+            }
             Ok(registry)
         });
         let script: loadr_agent::ScriptFactory = Arc::new(|js_config, base_dir| {

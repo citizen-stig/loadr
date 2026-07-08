@@ -24,10 +24,11 @@ use crate::pb::controller_message::Msg as CtrlMsg;
 use crate::pb::coordination_client::CoordinationClient;
 use crate::{now_unix_ms, PROTOCOL_VERSION};
 
-/// Builds a [`ProtocolRegistry`] for one run from the plan's HTTP defaults and
-/// the run's base directory (where data files were materialized).
+/// Builds a [`ProtocolRegistry`] for one run from the parsed test plan (HTTP
+/// defaults, `plugins:` declarations) and the run's base directory (where
+/// data files were materialized).
 pub type ProtocolFactory = Arc<
-    dyn Fn(&loadr_config::HttpDefaults, &std::path::Path) -> Result<ProtocolRegistry, String>
+    dyn Fn(&loadr_config::TestPlan, &std::path::Path) -> Result<ProtocolRegistry, String>
         + Send
         + Sync,
 >;
@@ -377,7 +378,7 @@ fn handle_assignment(
         .map_err(|e| format!("invalid plan: {e}"))?;
     let plan = loaded.plan;
 
-    let protocols = (config.deps.protocols)(&plan.defaults.http, &run_dir)?;
+    let protocols = (config.deps.protocols)(&plan, &run_dir)?;
     let script = match (&plan.js, &config.deps.script) {
         (Some(js), Some(factory)) => Some(factory(js, &run_dir)?),
         (Some(_), None) => {

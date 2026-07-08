@@ -63,11 +63,62 @@ impl ProtocolHandler for MockHttpHandler {
 
 fn mock_deps() -> RunnerDeps {
     RunnerDeps {
-        protocols: Arc::new(|_defaults, _base_dir| {
+        protocols: Arc::new(|_plan, _base_dir| {
             let mut registry = ProtocolRegistry::new();
             registry.register(Arc::new(MockHttpHandler {
                 counter: AtomicU64::new(0),
             }));
+            Ok(registry)
+        }),
+        script: None,
+    }
+}
+
+/// A mock plugin-provided protocol handler named `custom`.
+struct MockCustomHandler;
+
+#[async_trait::async_trait]
+impl ProtocolHandler for MockCustomHandler {
+    fn name(&self) -> &str {
+        "custom"
+    }
+
+    async fn execute(
+        &self,
+        _ctx: &mut VuContext,
+        request: &PreparedRequest,
+    ) -> Result<ProtocolResponse, ProtocolError> {
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        Ok(ProtocolResponse {
+            status: 200,
+            status_text: "OK".to_string(),
+            protocol_version: "HTTP/1.1".to_string(),
+            timings: Timings {
+                waiting_ms: 1.0,
+                duration_ms: 1.0,
+                ..Default::default()
+            },
+            bytes_sent: 10,
+            bytes_received: 20,
+            url: request.url.clone(),
+            ..Default::default()
+        })
+    }
+}
+
+/// Deps whose factory registers the `custom` handler only when the assigned
+/// plan declares it under `plugins:` — proving the full plan (including the
+/// plugins section) reaches the agent-side protocol factory.
+fn plugin_gated_deps() -> RunnerDeps {
+    RunnerDeps {
+        protocols: Arc::new(|plan, _base_dir| {
+            let mut registry = ProtocolRegistry::new();
+            registry.register(Arc::new(MockHttpHandler {
+                counter: AtomicU64::new(0),
+            }));
+            if plan.plugins.iter().any(|p| p.enabled && p.name == "custom") {
+                registry.register(Arc::new(MockCustomHandler));
+            }
             Ok(registry)
         }),
         script: None,
@@ -82,11 +133,12 @@ fn temp_dir(tag: &str) -> PathBuf {
     std::env::temp_dir().join(format!("loadr-agent-test-{tag}-{}", uuid::Uuid::new_v4()))
 }
 
-fn spawn_agent(
+fn spawn_agent_with_deps(
     controller_addr: String,
     name: &str,
     agent_id: Option<String>,
     tls: Option<AgentTls>,
+    deps: RunnerDeps,
 ) -> CancellationToken {
     let token = CancellationToken::new();
     let config = AgentConfig {
@@ -96,13 +148,22 @@ fn spawn_agent(
         labels: HashMap::new(),
         tls,
         work_dir: temp_dir(name),
-        deps: mock_deps(),
+        deps,
     };
     let child = token.clone();
     tokio::spawn(async move {
         let _ = Agent::run(config, child).await;
     });
     token
+}
+
+fn spawn_agent(
+    controller_addr: String,
+    name: &str,
+    agent_id: Option<String>,
+    tls: Option<AgentTls>,
+) -> CancellationToken {
+    spawn_agent_with_deps(controller_addr, name, agent_id, tls, mock_deps())
 }
 
 async fn start_controller(liveness: Duration) -> ControllerHandle {
@@ -591,6 +652,68 @@ async fn mtls_agent_registers_and_plaintext_agent_is_rejected() {
         "plaintext agent must not register against a TLS controller"
     );
     plain.cancel();
+
+    handle.shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// Plugin protocols: the full plan (incl. `plugins:`) reaches the factory
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn plan_plugins_reach_agent_protocol_factory() {
+    let handle = start_controller(Duration::from_secs(6)).await;
+    let addr = format!("http://{}", handle.addr());
+    let _a1 = spawn_agent_with_deps(addr.clone(), "pl1", None, None, plugin_gated_deps());
+    wait_until(
+        || handle.agents().iter().filter(|a| a.healthy).count() == 1,
+        Duration::from_secs(10),
+        "agent registered",
+    )
+    .await;
+
+    let plan = r#"
+name: plugin-proto-e2e
+plugins:
+  - name: custom
+scenarios:
+  s:
+    executor: shared-iterations
+    vus: 2
+    iterations: 40
+    flow:
+      - request: { url: "custom://svc/x", protocol: custom }
+"#;
+    let run_id = handle
+        .submit(plan.to_string(), quick_submit())
+        .await
+        .expect("submit");
+    wait_until(
+        || is_terminal(&run_state(&handle, &run_id)),
+        Duration::from_secs(30),
+        "plugin run completion",
+    )
+    .await;
+    assert_eq!(run_state(&handle, &run_id), "finished");
+
+    let summary = handle.run_summary(&run_id).expect("summary");
+    // The plugin-provided handler executed every request: the missing-handler
+    // path emits no `custom_reqs` at all, only `http_req_failed=true`.
+    let custom_reqs = summary
+        .metrics
+        .iter()
+        .find(|m| m.metric == "custom_reqs")
+        .expect("custom_reqs metric present");
+    assert_eq!(
+        custom_reqs.agg.sum, 40.0,
+        "all requests hit the custom handler"
+    );
+    let failed = summary
+        .metrics
+        .iter()
+        .find(|m| m.metric == "http_req_failed")
+        .expect("http_req_failed metric present");
+    assert_eq!(failed.agg.sum, 0.0, "no `no handler registered` failures");
 
     handle.shutdown();
 }

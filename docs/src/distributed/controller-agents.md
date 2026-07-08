@@ -53,6 +53,12 @@ shipped inside the assignment and materialized in the agent's working
 directory. Paths are sanitized — anything containing `..` or absolute paths
 is rejected.
 
+Plugins are **not** shipped. Protocol plugins declared under `plugins:` are
+resolved on each agent host — install them on every agent beforehand, or make
+them discoverable via `LOADR_PLUGINS_DIR` (default `~/.loadr/plugins`). An
+agent that cannot resolve a declared plugin rejects its assignment and the
+controller reports the run as failed with the plugin error.
+
 ## Operating notes
 
 - Agents are stateless; scale them with your orchestrator

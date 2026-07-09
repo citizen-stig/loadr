@@ -431,9 +431,16 @@ impl Engine {
             .iter()
             .map(|_| Arc::new(AtomicU64::new(0)))
             .collect();
+        let requests_in_flight_metric = self
+            .run_ctx
+            .registry
+            .get("requests_in_flight")
+            .map(|d| d.name)
+            .unwrap_or_else(|| Arc::from("requests_in_flight"));
         let gauge_task = {
             let bus = bus.clone();
             let builtins = self.builtins.clone();
+            let requests_in_flight_metric = requests_in_flight_metric.clone();
             let tags = self.gauge_tags.clone();
             let counters = active_counters.clone();
             let stop = self.handle.hard_stop.clone();
@@ -452,6 +459,11 @@ impl Engine {
                     max_seen = max_seen.max(active);
                     bus.gauge(&builtins.vus, active as f64, &tags);
                     bus.gauge(&builtins.vus_max, max_seen as f64, &tags);
+                    bus.gauge(
+                        &requests_in_flight_metric,
+                        bus.requests_in_flight() as f64,
+                        &tags,
+                    );
                 }
             });
             (task, done)
@@ -550,6 +562,11 @@ impl Engine {
         // Stop gauge reporter, close the bus, finish aggregation.
         gauge_task.1.cancel();
         let _ = gauge_task.0.await;
+        bus.gauge(
+            &requests_in_flight_metric,
+            bus.requests_in_flight() as f64,
+            &Arc::new(Tags::new()),
+        );
         drop(bus);
         let (mut aggregator, mut outputs, threshold_statuses, timeline) = agg_task
             .await

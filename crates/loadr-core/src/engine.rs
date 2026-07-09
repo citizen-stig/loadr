@@ -163,6 +163,7 @@ pub struct Engine {
     script: Option<Arc<dyn ScriptEngine>>,
     outputs: Vec<Box<dyn Output>>,
     builtins: Arc<BuiltinMetrics>,
+    gauge_tags: Arc<Tags>,
     snapshot_interval: Duration,
     http_defaults: Arc<loadr_config::HttpDefaults>,
     // Handle plumbing.
@@ -236,6 +237,7 @@ impl Engine {
 
         // Data feeds.
         let data = crate::data::DataFeeds::load(&plan.data, &base_dir)?;
+        let gauge_tags = Arc::new(plan.defaults.tags.clone());
 
         let run_ctx = Arc::new(RunContext {
             variables,
@@ -325,6 +327,7 @@ impl Engine {
             script: opts.script,
             outputs: opts.outputs,
             builtins,
+            gauge_tags,
             snapshot_interval: opts.snapshot_interval,
             http_defaults: Arc::new(plan.defaults.http.clone()),
             handle,
@@ -431,12 +434,12 @@ impl Engine {
         let gauge_task = {
             let bus = bus.clone();
             let builtins = self.builtins.clone();
+            let tags = self.gauge_tags.clone();
             let counters = active_counters.clone();
             let stop = self.handle.hard_stop.clone();
             let done = CancellationToken::new();
             let done_child = done.clone();
             let task = tokio::spawn(async move {
-                let tags = Arc::new(Tags::new());
                 let mut max_seen = 0u64;
                 let mut ticker = tokio::time::interval(Duration::from_secs(1));
                 loop {

@@ -47,15 +47,13 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
-use base64::Engine as _;
-use bytes::Bytes;
 use libloading::{Library, Symbol};
 
 use loadr_core::error::ProtocolError;
 use loadr_core::{PreparedRequest, ProtocolHandler, ProtocolResponse, VuContext};
 
 use crate::error::PluginError;
-use crate::native::{FfiRequest, FfiResponse};
+use crate::native::{response_from_ffi, FfiResponse, OwnedFfiRequest};
 use crate::PluginInfo;
 
 /// The frozen C-ABI version. Bumped only on an incompatible change to the
@@ -287,29 +285,43 @@ impl std::fmt::Debug for CAbiProtocolAdapter {
 unsafe impl Send for CAbiProtocolAdapter {}
 unsafe impl Sync for CAbiProtocolAdapter {}
 
-impl CAbiProtocolAdapter {
-    /// Run one already-encoded request JSON through the plugin and return the
-    /// decoded response. Split out from `execute` so it can be unit-tested
-    /// without constructing a `VuContext`/`PreparedRequest`.
-    fn call(&self, request_json: &[u8]) -> Result<FfiResponse, PluginError> {
-        // SAFETY: contract-conformant call; we copy then free via the plugin's
-        // own deallocator (see `copy_and_free`).
-        let response_bytes = unsafe {
-            let mut len: usize = 0;
-            let ptr = (self.execute)(
-                request_json.as_ptr(),
-                request_json.len(),
-                &mut len as *mut usize,
-            );
-            copy_and_free(ptr, len, self.free, Path::new(&self.name))?
-        };
-        serde_json::from_slice(&response_bytes).map_err(|e| {
-            PluginError::Call(format!(
-                "plugin `{}` returned invalid response JSON: {e}",
-                self.name
-            ))
-        })
-    }
+fn call_execute(
+    name: &str,
+    execute: ExecuteFn,
+    free: FreeFn,
+    request_json: &[u8],
+) -> Result<FfiResponse, PluginError> {
+    // SAFETY: contract-conformant call; we copy then free via the plugin's
+    // own deallocator (see `copy_and_free`).
+    let response_bytes = unsafe {
+        let mut len: usize = 0;
+        let ptr = execute(
+            request_json.as_ptr(),
+            request_json.len(),
+            &mut len as *mut usize,
+        );
+        copy_and_free(ptr, len, free, Path::new(name))?
+    };
+    serde_json::from_slice(&response_bytes).map_err(|e| {
+        PluginError::Call(format!(
+            "plugin `{name}` returned invalid response JSON: {e}"
+        ))
+    })
+}
+
+fn call_c_abi_protocol(
+    plugin_name: &str,
+    execute: ExecuteFn,
+    free: FreeFn,
+    request: OwnedFfiRequest,
+    config: serde_json::Value,
+) -> Result<ProtocolResponse, ProtocolError> {
+    let (ffi_request, url, bytes_sent) = request.into_ffi_request(config);
+    let request_json = serde_json::to_vec(&ffi_request)
+        .map_err(|e| ProtocolError::InvalidRequest(format!("cannot encode request: {e}")))?;
+    let ffi = call_execute(plugin_name, execute, free, &request_json)
+        .map_err(|e| ProtocolError::Transport(e.to_string()))?;
+    response_from_ffi(plugin_name, ffi, url, bytes_sent)
 }
 
 #[async_trait]
@@ -323,46 +335,18 @@ impl ProtocolHandler for CAbiProtocolAdapter {
         _ctx: &mut VuContext,
         request: &PreparedRequest,
     ) -> Result<ProtocolResponse, ProtocolError> {
-        let ffi_request = FfiRequest {
-            name: request.name.clone(),
-            method: request.method.clone(),
-            url: request.url.clone(),
-            headers: request.headers.clone(),
-            body_b64: base64::engine::general_purpose::STANDARD.encode(&request.body),
-            timeout_ms: request.timeout.as_millis() as u64,
-            options: request.options.plugin.clone(),
-            config: self.config.clone(),
-        };
-        let request_json = serde_json::to_vec(&ffi_request)
-            .map_err(|e| ProtocolError::InvalidRequest(format!("cannot encode request: {e}")))?;
-        let bytes_sent = request.body.len() as u64;
-        let ffi = self
-            .call(&request_json)
-            .map_err(|e| ProtocolError::Transport(e.to_string()))?;
-        let body = base64::engine::general_purpose::STANDARD
-            .decode(&ffi.body_b64)
-            .map_err(|e| {
-                ProtocolError::Transport(format!(
-                    "plugin `{}` returned invalid body base64: {e}",
-                    self.name
-                ))
-            })?;
-        let mut response = ProtocolResponse {
-            status: ffi.status,
-            status_text: ffi.status_text,
-            headers: ffi.headers,
-            bytes_sent,
-            bytes_received: body.len() as u64,
-            body: Bytes::from(body),
-            protocol_version: self.name.clone(),
-            error: ffi.error,
-            url: request.url.clone(),
-            extras: ffi.extras,
-            ..Default::default()
-        };
-        response.timings.duration_ms = ffi.duration_ms;
-        response.timings.waiting_ms = ffi.duration_ms;
-        Ok(response)
+        let owned = OwnedFfiRequest::from_prepared(request);
+        let name = self.name.clone();
+        let execute = self.execute;
+        let free = self.free;
+        let config = self.config.clone();
+        tokio::task::spawn_blocking(move || {
+            call_c_abi_protocol(&name, execute, free, owned, config)
+        })
+        .await
+        .map_err(|e| {
+            ProtocolError::Transport(format!("plugin `{}` blocking task failed: {e}", self.name))
+        })?
     }
 }
 
@@ -481,7 +465,13 @@ int unrelated_symbol(void) { return 42; }
             .make_protocol(serde_json::json!({"some": "config"}))
             .expect("make protocol");
         assert_eq!(ProtocolHandler::name(&adapter), "fx");
-        let resp = adapter.call(b"{\"name\":\"t\"}").expect("execute");
+        let resp = call_execute(
+            &adapter.name,
+            adapter.execute,
+            adapter.free,
+            b"{\"name\":\"t\"}",
+        )
+        .expect("execute");
         assert_eq!(resp.status, 200);
         assert_eq!(resp.status_text, "OK");
         // "aGk=" is base64 for "hi".

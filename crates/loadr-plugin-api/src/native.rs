@@ -7,6 +7,7 @@
 //! trait objects stay valid for the process lifetime.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use abi_stable::library::lib_header_from_path;
 use abi_stable::std_types::{ROption, RResult, RString};
@@ -236,7 +237,7 @@ impl Output for NativeOutputAdapter {
 pub struct NativeProtocolAdapter {
     name: String,
     config: serde_json::Value,
-    inner: FfiProtocolBox,
+    inner: Arc<FfiProtocolBox>,
 }
 
 impl std::fmt::Debug for NativeProtocolAdapter {
@@ -253,9 +254,98 @@ impl NativeProtocolAdapter {
         NativeProtocolAdapter {
             name,
             config,
-            inner,
+            inner: Arc::new(inner),
         }
     }
+}
+
+pub(crate) struct OwnedFfiRequest {
+    name: String,
+    method: String,
+    url: String,
+    headers: Vec<(String, String)>,
+    body: Bytes,
+    timeout_ms: u64,
+    options: Option<serde_json::Value>,
+}
+
+impl OwnedFfiRequest {
+    pub(crate) fn from_prepared(request: &PreparedRequest) -> Self {
+        OwnedFfiRequest {
+            name: request.name.clone(),
+            method: request.method.clone(),
+            url: request.url.clone(),
+            headers: request.headers.clone(),
+            body: request.body.clone(),
+            timeout_ms: request.timeout.as_millis() as u64,
+            options: request.options.plugin.clone(),
+        }
+    }
+
+    pub(crate) fn into_ffi_request(self, config: serde_json::Value) -> (FfiRequest, String, u64) {
+        let url = self.url.clone();
+        let bytes_sent = self.body.len() as u64;
+        let request = FfiRequest {
+            name: self.name,
+            method: self.method,
+            url: self.url,
+            headers: self.headers,
+            body_b64: base64::engine::general_purpose::STANDARD.encode(&self.body),
+            timeout_ms: self.timeout_ms,
+            options: self.options,
+            config,
+        };
+        (request, url, bytes_sent)
+    }
+}
+
+fn call_v1_protocol(
+    plugin_name: &str,
+    inner: &FfiProtocolBox,
+    request: OwnedFfiRequest,
+    config: serde_json::Value,
+) -> Result<ProtocolResponse, ProtocolError> {
+    let (ffi_request, url, bytes_sent) = request.into_ffi_request(config);
+    let request_json = serde_json::to_string(&ffi_request)
+        .map_err(|e| ProtocolError::InvalidRequest(format!("cannot encode request: {e}")))?;
+    let response_json = inner.execute(RString::from(request_json));
+    let ffi = serde_json::from_str(response_json.as_str()).map_err(|e| {
+        ProtocolError::Transport(format!(
+            "plugin `{plugin_name}` returned invalid response JSON: {e}"
+        ))
+    })?;
+    response_from_ffi(plugin_name, ffi, url, bytes_sent)
+}
+
+pub(crate) fn response_from_ffi(
+    plugin_name: &str,
+    ffi: FfiResponse,
+    url: String,
+    bytes_sent: u64,
+) -> Result<ProtocolResponse, ProtocolError> {
+    let body = base64::engine::general_purpose::STANDARD
+        .decode(&ffi.body_b64)
+        .map_err(|e| {
+            ProtocolError::Transport(format!(
+                "plugin `{plugin_name}` returned invalid body base64: {e}"
+            ))
+        })?;
+    let mut response = ProtocolResponse {
+        status: ffi.status,
+        status_text: ffi.status_text,
+        headers: ffi.headers,
+        bytes_sent,
+        bytes_received: body.len() as u64,
+        body: Bytes::from(body),
+        protocol_version: plugin_name.to_string(),
+        error: ffi.error,
+        url,
+        extras: ffi.extras,
+        ..Default::default()
+    };
+    response.timings.duration_ms = ffi.duration_ms;
+    response.timings.waiting_ms = ffi.duration_ms;
+    Ok(response)
 }
 
 #[async_trait]
@@ -269,50 +359,18 @@ impl ProtocolHandler for NativeProtocolAdapter {
         _ctx: &mut VuContext,
         request: &PreparedRequest,
     ) -> Result<ProtocolResponse, ProtocolError> {
-        let ffi_request = FfiRequest {
-            name: request.name.clone(),
-            method: request.method.clone(),
-            url: request.url.clone(),
-            headers: request.headers.clone(),
-            body_b64: base64::engine::general_purpose::STANDARD.encode(&request.body),
-            timeout_ms: request.timeout.as_millis() as u64,
-            options: request.options.plugin.clone(),
-            config: self.config.clone(),
-        };
-        let request_json = serde_json::to_string(&ffi_request)
-            .map_err(|e| ProtocolError::InvalidRequest(format!("cannot encode request: {e}")))?;
-        let bytes_sent = request.body.len() as u64;
-        let response_json = self.inner.execute(RString::from(request_json));
-        let ffi: FfiResponse = serde_json::from_str(response_json.as_str()).map_err(|e| {
-            ProtocolError::Transport(format!(
-                "plugin `{}` returned invalid response JSON: {e}",
-                self.name
-            ))
-        })?;
-        let body = base64::engine::general_purpose::STANDARD
-            .decode(&ffi.body_b64)
-            .map_err(|e| {
-                ProtocolError::Transport(format!(
-                    "plugin `{}` returned invalid body base64: {e}",
-                    self.name
-                ))
-            })?;
-        let mut response = ProtocolResponse {
-            status: ffi.status,
-            status_text: ffi.status_text,
-            headers: ffi.headers,
-            bytes_sent,
-            bytes_received: body.len() as u64,
-            body: Bytes::from(body),
-            protocol_version: self.name.clone(),
-            error: ffi.error,
-            url: request.url.clone(),
-            extras: ffi.extras,
-            ..Default::default()
-        };
-        response.timings.duration_ms = ffi.duration_ms;
-        response.timings.waiting_ms = ffi.duration_ms;
-        Ok(response)
+        let owned = OwnedFfiRequest::from_prepared(request);
+        let plugin_name = self.name.clone();
+        let inner = Arc::clone(&self.inner);
+        let config = self.config.clone();
+        let call_plugin_name = plugin_name.clone();
+        tokio::task::spawn_blocking(move || {
+            call_v1_protocol(&call_plugin_name, &inner, owned, config)
+        })
+        .await
+        .map_err(|e| {
+            ProtocolError::Transport(format!("plugin `{plugin_name}` blocking task failed: {e}"))
+        })?
     }
 }
 
@@ -354,5 +412,87 @@ impl ServicePlugin for NativeServiceAdapter {
 
     fn stop(&mut self) {
         self.inner.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::time::Duration;
+
+    use loadr_core::metrics::{MetricRegistry, MetricsBus, Tags};
+    use loadr_core::vu::RunContext;
+    use loadr_core::RequestOptions;
+
+    use crate::abi::{FfiProtocol, FfiProtocol_TO};
+
+    struct SlowProtocol;
+
+    impl FfiProtocol for SlowProtocol {
+        fn name(&self) -> RString {
+            RString::from("slow")
+        }
+
+        fn execute(&self, _request_json: RString) -> RString {
+            std::thread::sleep(Duration::from_millis(300));
+            RString::from(r#"{"status":200,"status_text":"OK","body_b64":"","duration_ms":300}"#)
+        }
+    }
+
+    fn minimal_vu() -> VuContext {
+        let (bus, _rx) = MetricsBus::new();
+        let run = Arc::new(RunContext {
+            variables: serde_json::Map::new(),
+            secrets: HashMap::new(),
+            env: HashMap::new(),
+            data: Default::default(),
+            registry: Arc::new(MetricRegistry::with_builtins()),
+            base_dir: ".".into(),
+            setup_data: parking_lot::RwLock::new(serde_json::Value::Null),
+        });
+        VuContext::new(1, Arc::from("test"), Arc::new(Tags::new()), bus, run, true)
+    }
+
+    fn request() -> PreparedRequest {
+        PreparedRequest {
+            name: "slow".into(),
+            protocol: "slow".into(),
+            method: "GET".into(),
+            url: "slow://local".into(),
+            headers: Vec::new(),
+            body: Bytes::new(),
+            timeout: Duration::from_secs(5),
+            follow_redirects: false,
+            max_redirects: 0,
+            options: RequestOptions::default(),
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn v1_protocol_call_does_not_block_core_runtime_timer() {
+        let inner = FfiProtocol_TO::from_value(SlowProtocol, abi_stable::erased_types::TD_Opaque);
+        let adapter = NativeProtocolAdapter::new(inner, serde_json::Value::Null);
+        let mut vu = minimal_vu();
+        let request = request();
+        let started = std::time::Instant::now();
+        let execute = adapter.execute(&mut vu, &request);
+        tokio::pin!(execute);
+
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_millis(25)) => {
+                assert!(
+                    started.elapsed() < Duration::from_millis(200),
+                    "blocking plugin call stalled the core runtime for {:?}",
+                    started.elapsed(),
+                );
+            }
+            result = &mut execute => {
+                panic!("slow plugin finished before timer fired: {result:?}");
+            }
+        }
+
+        let response = execute.await.expect("slow plugin response");
+        assert_eq!(response.status, 200);
     }
 }

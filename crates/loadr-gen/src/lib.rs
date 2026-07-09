@@ -9,10 +9,12 @@
 pub mod example;
 pub mod fuzz;
 pub mod graphql;
+pub mod grpc;
 pub mod openapi;
 pub mod postman;
 
 pub use graphql::gen_graphql;
+pub use grpc::gen_grpc;
 pub use loadr_convert::{Conversion, ConversionWarning};
 pub use openapi::gen_openapi;
 pub use postman::gen_postman;
@@ -29,6 +31,8 @@ pub enum GenError {
     Postman(String),
     #[error("graphql: {0}")]
     GraphQl(String),
+    #[error("grpc: {0}")]
+    Grpc(String),
 }
 
 /// Options shared by the generators.

@@ -2943,6 +2943,8 @@ dependencies = [
  "loadr-config",
  "loadr-convert",
  "loadr-payload",
+ "prost-reflect",
+ "protox",
  "serde",
  "serde_json",
  "serde_yaml",

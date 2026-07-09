@@ -10,7 +10,7 @@ use loadr_gen::GenOptions;
 #[derive(Args)]
 pub struct GenArgs {
     /// Contract kind
-    #[arg(value_parser = ["openapi", "postman", "graphql"])]
+    #[arg(value_parser = ["openapi", "postman", "graphql", "grpc"])]
     pub source: String,
     /// Contract file (OpenAPI .yaml/.json, or a Postman collection .json)
     pub input: PathBuf,
@@ -38,9 +38,6 @@ pub struct GenArgs {
 }
 
 pub fn execute(args: GenArgs) -> anyhow::Result<i32> {
-    let source = std::fs::read_to_string(&args.input)
-        .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", args.input.display()))?;
-
     let opts = GenOptions {
         server: args.server,
         base_url: args.base_url.clone(),
@@ -51,10 +48,20 @@ pub fn execute(args: GenArgs) -> anyhow::Result<i32> {
     };
 
     let conversion = match args.source.as_str() {
-        "openapi" => loadr_gen::gen_openapi(&source, &opts)?,
-        "postman" => loadr_gen::gen_postman(&source, &opts)?,
-        "graphql" => loadr_gen::gen_graphql(&source, &opts)?,
-        other => anyhow::bail!("unknown source `{other}` (supported: openapi, postman, graphql)"),
+        // gRPC compiles the .proto from its path (imports need the filesystem).
+        "grpc" => loadr_gen::gen_grpc(&args.input, &opts)?,
+        other => {
+            let source = std::fs::read_to_string(&args.input)
+                .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", args.input.display()))?;
+            match other {
+                "openapi" => loadr_gen::gen_openapi(&source, &opts)?,
+                "postman" => loadr_gen::gen_postman(&source, &opts)?,
+                "graphql" => loadr_gen::gen_graphql(&source, &opts)?,
+                _ => anyhow::bail!(
+                    "unknown source `{other}` (supported: openapi, postman, graphql, grpc)"
+                ),
+            }
+        }
     };
 
     for w in &conversion.warnings {

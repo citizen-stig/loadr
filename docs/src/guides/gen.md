@@ -1,7 +1,7 @@
 # Generating from a contract (loadr gen)
 
 `loadr convert` and `loadr record` start from *traffic*. `loadr gen` starts from
-a *contract*: point it at an OpenAPI document, a Postman collection, or a GraphQL schema and it emits a runnable scenario
+a *contract*: point it at an OpenAPI document, a Postman collection, a GraphQL schema, or a gRPC .proto and it emits a runnable scenario
 with one request per operation, every parameter and body filled from
 schema-derived example data.
 
@@ -96,6 +96,24 @@ $ loadr gen postman collection.json -o plan.yaml
 
 Folders become groups, requests become steps, and Postman `{{var}}` placeholders
 become loadr `${var}` interpolation — set them via env or `--var` at run time.
+
+## From a gRPC `.proto`
+
+Point it at a `.proto` — compiled in-process (no `protoc` needed) — and it emits
+one call per service method with an example request message from the input type:
+
+```console
+$ loadr gen grpc greeter.proto --base-url grpc://localhost:50051 -o plan.yaml
+```
+
+```yaml
+grpc:
+  service: greet.Greeter
+  method: SayHello
+  message: { name: string, count: 0 }   # ← from the input descriptor
+```
+
+Set the server with `--base-url grpc://host:port`.
 
 ## Fuzzing a contract (`--fuzz`)
 

@@ -1,6 +1,7 @@
 //! Metric primitives: kinds, samples, the metric registry and the sample bus.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -72,6 +73,7 @@ pub const BUILTIN_METRIC_DEFS: &[(&str, MetricKind, bool)] = &[
     ("dropped_iterations", MetricKind::Counter, false),
     ("vus", MetricKind::Gauge, false),
     ("vus_max", MetricKind::Gauge, false),
+    ("requests_in_flight", MetricKind::Gauge, false),
     ("checks", MetricKind::Rate, false),
     // Script (JS) exceptions raised in hooks, exec functions, and js steps.
     // Tagged with `exception` (a normalised message) and `scenario`.
@@ -187,12 +189,19 @@ pub struct Sample {
 #[derive(Debug, Clone)]
 pub struct MetricsBus {
     tx: tokio::sync::mpsc::UnboundedSender<Sample>,
+    requests_in_flight: Arc<AtomicU64>,
 }
 
 impl MetricsBus {
     pub fn new() -> (Self, tokio::sync::mpsc::UnboundedReceiver<Sample>) {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        (MetricsBus { tx }, rx)
+        (
+            MetricsBus {
+                tx,
+                requests_in_flight: Arc::new(AtomicU64::new(0)),
+            },
+            rx,
+        )
     }
 
     pub fn emit(&self, sample: Sample) {
@@ -225,6 +234,18 @@ impl MetricsBus {
 
     pub fn trend(&self, metric: &Arc<str>, value: f64, tags: &Arc<Tags>) {
         self.emit_value(metric, MetricKind::Trend, value, tags);
+    }
+
+    pub(crate) fn begin_request(&self) {
+        self.requests_in_flight.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn end_request(&self) {
+        self.requests_in_flight.fetch_sub(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn requests_in_flight(&self) -> u64 {
+        self.requests_in_flight.load(Ordering::Relaxed)
     }
 }
 
@@ -295,6 +316,10 @@ mod tests {
         assert_eq!(def.kind, MetricKind::Trend);
         assert!(def.time);
         assert_eq!(reg.get("checks").map(|d| d.kind), Some(MetricKind::Rate));
+        assert_eq!(
+            reg.get("requests_in_flight").map(|d| d.kind),
+            Some(MetricKind::Gauge)
+        );
     }
 
     #[test]

@@ -12,11 +12,11 @@ use loadr_config::{
 use crate::conditions::{CompiledCondition, ConditionResult};
 use crate::error::EngineError;
 use crate::extract::{CompiledExtractor, ExtractError};
-use crate::metrics::{BuiltinMetrics, MetricKind, Tags};
+use crate::metrics::{BuiltinMetrics, MetricKind, MetricRegistry, MetricsBus, Tags};
 use crate::pacing::sample_think_time;
 use crate::protocol::{
     GrpcRequest, PreparedRequest, ProtocolRegistry, ProtocolResponse, RequestOptions,
-    SocketRequest, WsFrame, WsRequest,
+    SocketRequest, Timings, WsFrame, WsRequest,
 };
 use crate::script::{HostHttpRequest, HostHttpResponse, ScriptHost, ScriptLogLevel, VuScript};
 use crate::vu::{json_to_string, VuContext};
@@ -1066,6 +1066,8 @@ impl FlowRunner {
         let drop_before_send =
             drop_fault && faults.drop_mode.unwrap_or_default() == DropMode::BeforeSend;
 
+        let emitter = RequestMetricEmitter::from_vu(vu, self.builtins.clone());
+        let mut metrics_guard = RequestMetricsGuard::new(emitter, prepared.clone());
         let response = if drop_before_send {
             // Fail as a transport-class error without sending; mirrors the
             // handler-error shape below so it lands in `http_req_failed` and
@@ -1095,7 +1097,7 @@ impl FlowRunner {
         };
 
         // 4. Metrics.
-        self.emit_request_metrics(vu, &prepared, &response);
+        metrics_guard.record_completed(&response);
 
         // 5. Extraction (classic extractors and fused chains).
         let mut chain_flow = RequestFlow::Continue;
@@ -1240,166 +1242,6 @@ impl FlowRunner {
             }
         }
         result
-    }
-
-    /// Emit the standard metric families for a completed request.
-    fn emit_request_metrics(
-        &self,
-        vu: &mut VuContext,
-        request: &PreparedRequest,
-        response: &ProtocolResponse,
-    ) {
-        let b = &self.builtins;
-        let status = response.status.to_string();
-        // Transport errors get a coarse `error_kind` tag so the UI can group
-        // failures by cause (timeout / connection / dns / tls / ...).
-        let error_kind = response
-            .error
-            .as_deref()
-            .map(classify_transport_error)
-            .unwrap_or("");
-        let mut tag_pairs: Vec<(&str, &str)> = vec![
-            ("name", &request.name),
-            ("method", &request.method),
-            ("status", &status),
-            ("proto", &request.protocol),
-        ];
-        if !error_kind.is_empty() {
-            tag_pairs.push(("error_kind", error_kind));
-        }
-        let tags = vu.sample_tags(&tag_pairs);
-        let m = &vu.metrics;
-        let t = &response.timings;
-
-        m.counter(&b.data_sent, response.bytes_sent as f64, &tags);
-        m.counter(&b.data_received, response.bytes_received as f64, &tags);
-
-        match request.protocol.as_str() {
-            "http" | "graphql" => {
-                m.counter(&b.http_reqs, 1.0, &tags);
-                m.trend(&b.http_req_duration, t.duration_ms, &tags);
-                m.trend(&b.http_req_blocked, t.blocked_ms, &tags);
-                m.trend(&b.http_req_connecting, t.connect_ms, &tags);
-                m.trend(&b.http_req_tls_handshaking, t.tls_ms, &tags);
-                m.trend(&b.http_req_sending, t.sending_ms, &tags);
-                m.trend(&b.http_req_waiting, t.waiting_ms, &tags);
-                m.trend(&b.http_req_receiving, t.receiving_ms, &tags);
-                m.rate(&b.http_req_failed, response.failed(), &tags);
-                if request.protocol == "graphql" {
-                    self.emit_named(vu, "graphql_reqs", MetricKind::Counter, 1.0, &tags);
-                    self.emit_named(
-                        vu,
-                        "graphql_req_duration",
-                        MetricKind::Trend,
-                        t.duration_ms,
-                        &tags,
-                    );
-                }
-            }
-            "ws" => {
-                self.emit_named(vu, "ws_connecting", MetricKind::Trend, t.blocked_ms, &tags);
-                self.emit_named(
-                    vu,
-                    "ws_session_duration",
-                    MetricKind::Trend,
-                    t.duration_ms,
-                    &tags,
-                );
-                let sent = response
-                    .extras
-                    .get("msgs_sent")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0);
-                let received = response
-                    .extras
-                    .get("msgs_received")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0);
-                self.emit_named(vu, "ws_msgs_sent", MetricKind::Counter, sent, &tags);
-                self.emit_named(vu, "ws_msgs_received", MetricKind::Counter, received, &tags);
-                m.rate(&b.http_req_failed, response.error.is_some(), &tags);
-            }
-            other => {
-                // grpc/tcp/udp built-ins keep their own family name. The
-                // `sse`/`browser` built-ins historically share the generic
-                // `plugin` family — preserve that so existing dashboards and
-                // thresholds keep working. Everything else is a loaded protocol
-                // *plugin*, which gets a family derived from its own protocol
-                // name (so the `mongo` plugin emits `mongo_reqs` /
-                // `mongo_req_duration` / `mongo_docs`, the `postgres` / `mysql`
-                // plugins emit `postgres_reqs` / `mysql_reqs`, and the `redis`
-                // plugin emits `redis_reqs` / `redis_req_duration`).
-                let family = match other {
-                    "grpc" | "tcp" | "udp" => other.to_string(),
-                    "sse" | "browser" => "plugin".to_string(),
-                    name => metric_family(name),
-                };
-                self.emit_named(
-                    vu,
-                    &format!("{family}_reqs"),
-                    MetricKind::Counter,
-                    1.0,
-                    &tags,
-                );
-                self.emit_named(
-                    vu,
-                    &format!("{family}_req_duration"),
-                    MetricKind::Trend,
-                    t.duration_ms,
-                    &tags,
-                );
-                // Plugin protocols may report a count of affected/returned
-                // records: `extras.docs` (e.g. Mongo documents) is surfaced as
-                // `<family>_docs`, `extras.rows` (e.g. SQL rows returned or
-                // affected) as `<family>_rows`, and `extras.msgs` (e.g. Kafka
-                // messages produced or fetched) as `<family>_msgs`.
-                if let Some(docs) = response.extras.get("docs").and_then(|v| v.as_f64()) {
-                    self.emit_named(
-                        vu,
-                        &format!("{family}_docs"),
-                        MetricKind::Counter,
-                        docs,
-                        &tags,
-                    );
-                }
-                if let Some(rows) = response.extras.get("rows").and_then(|v| v.as_f64()) {
-                    self.emit_named(
-                        vu,
-                        &format!("{family}_rows"),
-                        MetricKind::Counter,
-                        rows,
-                        &tags,
-                    );
-                }
-                if let Some(msgs) = response.extras.get("msgs").and_then(|v| v.as_f64()) {
-                    self.emit_named(
-                        vu,
-                        &format!("{family}_msgs"),
-                        MetricKind::Counter,
-                        msgs,
-                        &tags,
-                    );
-                }
-                m.rate(&b.http_req_failed, response.failed(), &tags);
-            }
-        }
-    }
-
-    fn emit_named(
-        &self,
-        vu: &VuContext,
-        name: &str,
-        kind: MetricKind,
-        value: f64,
-        tags: &Arc<Tags>,
-    ) {
-        let metric = vu
-            .run
-            .registry
-            .get(name)
-            .map(|d| d.name)
-            .unwrap_or_else(|| Arc::from(name));
-        vu.metrics.emit_value(&metric, kind, value, tags);
     }
 
     /// Record an injected chaos fault on the `faults_injected` counter,
@@ -1736,6 +1578,209 @@ enum RequestFlow {
     AbortTest(String),
 }
 
+#[derive(Clone)]
+struct RequestMetricEmitter {
+    metrics: MetricsBus,
+    registry: Arc<MetricRegistry>,
+    builtins: Arc<BuiltinMetrics>,
+    base_tags: Arc<Tags>,
+    groups: Vec<String>,
+}
+
+impl RequestMetricEmitter {
+    fn from_vu(vu: &VuContext, builtins: Arc<BuiltinMetrics>) -> Self {
+        RequestMetricEmitter {
+            metrics: vu.metrics.clone(),
+            registry: vu.run.registry.clone(),
+            builtins,
+            base_tags: vu.base_tags.clone(),
+            groups: vu.groups.clone(),
+        }
+    }
+
+    fn sample_tags(&self, extras: &[(&str, &str)]) -> Arc<Tags> {
+        if extras.is_empty() && self.groups.is_empty() {
+            return self.base_tags.clone();
+        }
+        let mut tags = (*self.base_tags).clone();
+        if !self.groups.is_empty() {
+            tags.insert("group".to_string(), format!("::{}", self.groups.join("::")));
+        }
+        for (k, v) in extras {
+            tags.insert((*k).to_string(), (*v).to_string());
+        }
+        Arc::new(tags)
+    }
+
+    /// Emit the standard metric families for a completed or cancelled request.
+    fn emit_request_metrics(&self, request: &PreparedRequest, response: &ProtocolResponse) {
+        let b = &self.builtins;
+        let status = response.status.to_string();
+        // Transport errors get a coarse `error_kind` tag so the UI can group
+        // failures by cause (timeout / connection / dns / tls / ...).
+        let error_kind = response
+            .error
+            .as_deref()
+            .map(classify_transport_error)
+            .unwrap_or("");
+        let mut tag_pairs: Vec<(&str, &str)> = vec![
+            ("name", &request.name),
+            ("method", &request.method),
+            ("status", &status),
+            ("proto", &request.protocol),
+        ];
+        if !error_kind.is_empty() {
+            tag_pairs.push(("error_kind", error_kind));
+        }
+        let tags = self.sample_tags(&tag_pairs);
+        let m = &self.metrics;
+        let t = &response.timings;
+
+        m.counter(&b.data_sent, response.bytes_sent as f64, &tags);
+        m.counter(&b.data_received, response.bytes_received as f64, &tags);
+
+        match request.protocol.as_str() {
+            "http" | "graphql" => {
+                m.counter(&b.http_reqs, 1.0, &tags);
+                m.trend(&b.http_req_duration, t.duration_ms, &tags);
+                m.trend(&b.http_req_blocked, t.blocked_ms, &tags);
+                m.trend(&b.http_req_connecting, t.connect_ms, &tags);
+                m.trend(&b.http_req_tls_handshaking, t.tls_ms, &tags);
+                m.trend(&b.http_req_sending, t.sending_ms, &tags);
+                m.trend(&b.http_req_waiting, t.waiting_ms, &tags);
+                m.trend(&b.http_req_receiving, t.receiving_ms, &tags);
+                m.rate(&b.http_req_failed, response.failed(), &tags);
+                if request.protocol == "graphql" {
+                    self.emit_named("graphql_reqs", MetricKind::Counter, 1.0, &tags);
+                    self.emit_named(
+                        "graphql_req_duration",
+                        MetricKind::Trend,
+                        t.duration_ms,
+                        &tags,
+                    );
+                }
+            }
+            "ws" => {
+                self.emit_named("ws_connecting", MetricKind::Trend, t.blocked_ms, &tags);
+                self.emit_named(
+                    "ws_session_duration",
+                    MetricKind::Trend,
+                    t.duration_ms,
+                    &tags,
+                );
+                let sent = response
+                    .extras
+                    .get("msgs_sent")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                let received = response
+                    .extras
+                    .get("msgs_received")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                self.emit_named("ws_msgs_sent", MetricKind::Counter, sent, &tags);
+                self.emit_named("ws_msgs_received", MetricKind::Counter, received, &tags);
+                m.rate(&b.http_req_failed, response.error.is_some(), &tags);
+            }
+            other => {
+                // grpc/tcp/udp built-ins keep their own family name. The
+                // `sse`/`browser` built-ins historically share the generic
+                // `plugin` family — preserve that so existing dashboards and
+                // thresholds keep working. Everything else is a loaded protocol
+                // *plugin*, which gets a family derived from its own protocol
+                // name (so the `mongo` plugin emits `mongo_reqs` /
+                // `mongo_req_duration` / `mongo_docs`, the `postgres` / `mysql`
+                // plugins emit `postgres_reqs` / `mysql_reqs`, and the `redis`
+                // plugin emits `redis_reqs` / `redis_req_duration`).
+                let family = match other {
+                    "grpc" | "tcp" | "udp" => other.to_string(),
+                    "sse" | "browser" => "plugin".to_string(),
+                    name => metric_family(name),
+                };
+                self.emit_named(&format!("{family}_reqs"), MetricKind::Counter, 1.0, &tags);
+                self.emit_named(
+                    &format!("{family}_req_duration"),
+                    MetricKind::Trend,
+                    t.duration_ms,
+                    &tags,
+                );
+                // Plugin protocols may report a count of affected/returned
+                // records: `extras.docs` (e.g. Mongo documents) is surfaced as
+                // `<family>_docs`, `extras.rows` (e.g. SQL rows returned or
+                // affected) as `<family>_rows`, and `extras.msgs` (e.g. Kafka
+                // messages produced or fetched) as `<family>_msgs`.
+                if let Some(docs) = response.extras.get("docs").and_then(|v| v.as_f64()) {
+                    self.emit_named(&format!("{family}_docs"), MetricKind::Counter, docs, &tags);
+                }
+                if let Some(rows) = response.extras.get("rows").and_then(|v| v.as_f64()) {
+                    self.emit_named(&format!("{family}_rows"), MetricKind::Counter, rows, &tags);
+                }
+                if let Some(msgs) = response.extras.get("msgs").and_then(|v| v.as_f64()) {
+                    self.emit_named(&format!("{family}_msgs"), MetricKind::Counter, msgs, &tags);
+                }
+                m.rate(&b.http_req_failed, response.failed(), &tags);
+            }
+        }
+    }
+
+    fn emit_named(&self, name: &str, kind: MetricKind, value: f64, tags: &Arc<Tags>) {
+        let metric = self
+            .registry
+            .get(name)
+            .map(|d| d.name)
+            .unwrap_or_else(|| Arc::from(name));
+        self.metrics.emit_value(&metric, kind, value, tags);
+    }
+}
+
+struct RequestMetricsGuard {
+    emitter: RequestMetricEmitter,
+    request: PreparedRequest,
+    started: Instant,
+    active: bool,
+}
+
+impl RequestMetricsGuard {
+    fn new(emitter: RequestMetricEmitter, request: PreparedRequest) -> Self {
+        emitter.metrics.begin_request();
+        RequestMetricsGuard {
+            emitter,
+            request,
+            started: Instant::now(),
+            active: true,
+        }
+    }
+
+    fn record_completed(&mut self, response: &ProtocolResponse) {
+        if !self.active {
+            return;
+        }
+        self.emitter.emit_request_metrics(&self.request, response);
+        self.emitter.metrics.end_request();
+        self.active = false;
+    }
+}
+
+impl Drop for RequestMetricsGuard {
+    fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+        let response = ProtocolResponse {
+            error: Some(REQUEST_CANCELLED_ERROR.to_string()),
+            url: self.request.url.clone(),
+            timings: Timings {
+                duration_ms: self.started.elapsed().as_secs_f64() * 1000.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        self.emitter.emit_request_metrics(&self.request, &response);
+        self.emitter.metrics.end_request();
+        self.active = false;
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 enum PrepareError {
     #[error("data source exhausted")]
@@ -1798,6 +1843,8 @@ fn metric_family(protocol: &str) -> String {
 const FAULT_DROP_ERROR: &str = "fault injected: request dropped before send";
 /// Error message for a response discarded by `drop_mode: after_response`.
 const FAULT_DROP_RESPONSE_ERROR: &str = "fault injected: response dropped";
+/// Error message for a request future dropped by executor cancellation.
+const REQUEST_CANCELLED_ERROR: &str = "request cancelled";
 
 /// Sample the extra latency for a `faults.latency` spec from the VU's rng:
 /// `uniform(0..jitter)` or `gaussian(mean=0, std=jitter)` clamped at zero.
@@ -1828,6 +1875,8 @@ fn classify_transport_error(error: &str) -> &'static str {
     let e = error.to_ascii_lowercase();
     if e.contains("fault injected") {
         "fault_injected"
+    } else if e.contains("cancelled") || e.contains("canceled") {
+        "cancelled"
     } else if e.contains("timed out") || e.contains("timeout") {
         "timeout"
     } else if e.contains("dns") || e.contains("resolve") || e.contains("name or service") {
@@ -2348,6 +2397,8 @@ mod failure_grouping_tests {
             classify_transport_error("could not connect to upstream"),
             "connection"
         );
+        assert_eq!(classify_transport_error("request cancelled"), "cancelled");
+        assert_eq!(classify_transport_error("request canceled"), "cancelled");
         assert_eq!(classify_transport_error("something weird"), "transport");
     }
 

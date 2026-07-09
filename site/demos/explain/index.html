@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <script src="/assets/consent.js"></script>
-<title>The agent fleet, in the UI — loadr demo</title>
-<meta name="description" content="Watch a distributed controller + agents drive one run from the Web UI. A loadr demo.">
-<meta property="og:title" content="The agent fleet, in the UI — loadr demo">
-<meta property="og:description" content="Watch a distributed controller + agents drive one run from the Web UI. A loadr demo.">
-<meta property="og:url" content="https://loadr.io/demos/agent-fleet/">
+<title>Explain a run in plain language — loadr demo</title>
+<meta name="description" content="A deterministic root-cause read of any run — no model, no network. A loadr demo.">
+<meta property="og:title" content="Explain a run in plain language — loadr demo">
+<meta property="og:description" content="A deterministic root-cause read of any run — no model, no network. A loadr demo.">
+<meta property="og:url" content="https://loadr.io/demos/explain/">
 <meta property="og:type" content="website">
-<link rel="canonical" href="https://loadr.io/demos/agent-fleet/">
+<link rel="canonical" href="https://loadr.io/demos/explain/">
 <link rel="icon" type="image/png" sizes="64x64" href="/assets/favicon-64.png">
 <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 <link rel="stylesheet" href="/assets/site.css">
@@ -26,14 +26,14 @@
     <nav class="flex items-center gap-2 text-sm text-smoke">
       <a class="hover:text-flare" href="/demos/">Demos</a>
       <span class="text-edge-bright">/</span>
-      <span class="text-ash">The agent fleet, in the UI</span>
+      <span class="text-ash">Explain a run in plain language</span>
     </nav>
     <div class="mt-4 flex items-center gap-4">
       <span class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-edge bg-coal"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fd1e2e" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></span>
-      <h1 class="text-3xl font-black tracking-tight text-white sm:text-4xl">The agent fleet, in the UI</h1>
-      <span class="rounded-full border border-edge bg-coal px-3 py-1 text-xs text-ash">Adopt loadr</span>
+      <h1 class="text-3xl font-black tracking-tight text-white sm:text-4xl">Explain a run in plain language</h1>
+      <span class="rounded-full border border-edge bg-coal px-3 py-1 text-xs text-ash">Authoring &amp; analysis</span>
     </div>
-    <p class="mt-5 max-w-2xl text-lg text-smoke">Point the Web UI at a distributed run and watch the whole fleet at once — each agent's contribution and the merged, true-percentile result. The distributed engine with a live face.</p>
+    <p class="mt-5 max-w-2xl text-lg text-smoke"><code class="text-flare">loadr explain</code> reads a run's summary and reports the threshold verdict, error rate, latency tail, and a heuristic likely cause — saturation vs a slow path vs a healthy run.</p>
   </div>
 </section>
 
@@ -42,8 +42,8 @@
   <div class="mx-auto grid max-w-5xl gap-8 px-5 lg:grid-cols-2">
     <div>
       <div class="codebox">
-        <div class="codebar"><span>Run it</span><button data-copy="#agent-fleetRun" class="rounded border border-edge px-2 py-0.5 text-[10px] text-smoke hover:text-flare">copy</button></div>
-        <pre id="agent-fleetRun"><code data-lang="bash">$ loadr run examples/15-distributed.yaml --ui</code></pre>
+        <div class="codebar"><span>Run it</span><button data-copy="#explainRun" class="rounded border border-edge px-2 py-0.5 text-[10px] text-smoke hover:text-flare">copy</button></div>
+        <pre id="explainRun"><code data-lang="bash">$ loadr explain summary.json</code></pre>
       </div>
       
       
@@ -52,22 +52,22 @@
       <div class="rounded-2xl border border-edge bg-panel p-6">
         <h2 class="text-lg font-bold text-white">What it shows</h2>
         <ul class="mt-4 space-y-2.5 text-sm text-ash">
-          <li class="flex gap-2"><span class="mt-0.5 text-ember">▸</span><span>Controller + agents in one view</span></li>
-<li class="flex gap-2"><span class="mt-0.5 text-ember">▸</span><span>Merged HDR percentiles, live</span></li>
-<li class="flex gap-2"><span class="mt-0.5 text-ember">▸</span><span>Distributed load with a UI</span></li>
+          <li class="flex gap-2"><span class="mt-0.5 text-ember">▸</span><span>Latency tail: p99 vs the median</span></li>
+<li class="flex gap-2"><span class="mt-0.5 text-ember">▸</span><span>Saturation vs slow-path heuristic</span></li>
+<li class="flex gap-2"><span class="mt-0.5 text-ember">▸</span><span>The offline half of the AI copilot</span></li>
         </ul>
         
       </div>
       
       
       <div class="mt-6 overflow-hidden rounded-xl border border-edge bg-ink">
-        <video controls preload="none" aria-label="Demo: The agent fleet, in the UI" poster="/videos/10-agent-fleet-poster.jpg" class="aspect-video w-full bg-ink">
-          <source src="/videos/10-agent-fleet.mp4" type="video/mp4">
+        <video controls preload="none" aria-label="Demo: Explain a run in plain language" poster="/videos/52-explain-poster.jpg" class="aspect-video w-full bg-ink">
+          <source src="/videos/52-explain.mp4" type="video/mp4">
         </video>
       </div>
       <div class="mt-6 flex flex-wrap gap-4">
         <a href="/download/" class="glow rounded-xl bg-blood px-6 py-3 font-bold text-white">Download &amp; run →</a>
-        <a href="/docs/distributed/overview.html" class="rounded-xl border border-edge-bright bg-coal px-6 py-3 font-semibold text-ash hover:border-ember/60 hover:text-white">Read the docs →</a>
+        <a href="/docs/guides/explain.html" class="rounded-xl border border-edge-bright bg-coal px-6 py-3 font-semibold text-ash hover:border-ember/60 hover:text-white">Read the docs →</a>
       </div>
     </div>
   </div>
@@ -76,9 +76,9 @@
 <!-- ======================================================= PREV / NEXT -->
 <section class="border-t border-edge/60 bg-coal/40 py-10">
   <div class="mx-auto flex max-w-5xl items-center justify-between gap-4 px-5 text-sm">
-    <a class="text-smoke hover:text-flare" href="/demos/web-ui/">← The live Web UI</a>
+    <a class="text-smoke hover:text-flare" href="/demos/gen/">← Generate a test from an API contract</a>
     <a class="font-semibold text-flare hover:underline" href="/demos/">All demos</a>
-    <a class="text-smoke hover:text-flare" href="/demos/record/">Record a session into a scenario →</a>
+    <a class="text-smoke hover:text-flare" href="/demos/history/">Catch regressions statistically →</a>
   </div>
 </section>
 

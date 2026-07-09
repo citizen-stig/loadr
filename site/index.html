@@ -284,6 +284,22 @@
         <h3 class="font-bold text-white">Payloads &amp; complexity testing</h3>
         <p class="mt-2 text-sm text-smoke"><code>loadr payload</code> generates adversarial input — nested JSON/markdown, billion-laughs, ReDoS, hash-collision and more. Scale it with <code>sweep --complexity</code> and loadr fits the exponent: <code>O(n^1.6) ⚠</code> exits 99 when a parser scales super-linearly. A DoS finder in one command.</p>
       </a>
+      <a href="/docs/guides/record.html" class="fcard rounded-xl border border-edge bg-panel p-6">
+        <h3 class="font-bold text-white">Session recorder</h3>
+        <p class="mt-2 text-sm text-smoke"><code>loadr record</code> is a capturing HTTP(S) proxy — drive your app through it and it emits a ready-to-run scenario with tokens, CSRF and ids <strong class="text-ash">auto-correlated</strong>. HTTPS via an install-once local CA. No devtools HAR dance.</p>
+      </a>
+      <a href="/docs/guides/gen.html" class="fcard rounded-xl border border-edge bg-panel p-6">
+        <h3 class="font-bold text-white">Generate from a contract</h3>
+        <p class="mt-2 text-sm text-smoke"><code>loadr gen openapi|postman|graphql|grpc</code> turns an API contract into a runnable scenario — one request per operation, params and bodies from the schema. <code>--fuzz</code> adds spec-invalid &amp; adversarial variants gated on <em class="text-ash">never a 5xx</em>.</p>
+      </a>
+      <a href="/docs/guides/explain.html" class="fcard rounded-xl border border-edge bg-panel p-6">
+        <h3 class="font-bold text-white">AI copilot</h3>
+        <p class="mt-2 text-sm text-smoke"><code>loadr scenario "500 rps on /checkout for 10m"</code> generates a validated plan (Anthropic). And <code>loadr explain summary.json</code> gives a deterministic, no-model root-cause read — saturation vs a slow path vs healthy.</p>
+      </a>
+      <a href="/docs/guides/history.html" class="fcard rounded-xl border border-edge bg-panel p-6">
+        <h3 class="font-bold text-white">History &amp; regression detection</h3>
+        <p class="mt-2 text-sm text-smoke"><code>loadr history</code> records every run in a local SQLite store and flags <strong class="text-ash">statistical</strong> regressions — a robust median/MAD z-score against a window, so one noisy CI run can't false-alarm. Exit 99 gates the merge.</p>
+      </a>
       <a href="/docs/yaml/assertions-checks.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">Checks + JMeter assertions</h3>
         <p class="mt-2 text-sm text-smoke">k6-style checks that never fail requests, and JMeter-style assertions that do: status, body contains/regex, JSONPath, XPath, duration, size, headers, JS expressions — with abort actions.</p>

@@ -27,7 +27,26 @@ loadr explain  checkout load
   - tail latency **without** errors → a slow code path, not capacity;
   - clean → a healthy run.
 
-This is the offline path of loadr's copilot: deterministic, no model, no network.
+## Generating a scenario from a description
+
+The other half of the copilot goes the other way — natural language to a
+*validated* plan:
+
+```console
+$ export ANTHROPIC_API_KEY=sk-...
+$ loadr scenario "ramp to 500 rps on /checkout over 2m, hold 10m, p95 < 400ms" -o plan.yaml
+$ loadr run plan.yaml
+```
+
+It sends your request plus loadr's own JSON Schema to the model, extracts the
+YAML, and runs it through `loadr` validation — with one automatic **repair
+round** if the first attempt doesn't validate, so what you get back is a plan
+that actually loads. Pick the model with `--model`. (Provider-agnostic under the
+hood; Anthropic today, set `ANTHROPIC_API_KEY`.)
+
+## The deterministic reader
+
+`loadr explain` is the offline path of the copilot: deterministic, no model, no network.
 It works on any `loadr run --summary-export` file, including the ones your CI
 already produces — pipe a regression straight into `loadr explain` for a
 first-pass diagnosis in the PR.

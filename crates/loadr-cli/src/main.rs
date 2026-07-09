@@ -51,6 +51,8 @@ enum Command {
     Gen(commands::gen::GenArgs),
     /// Explain a run summary in plain language (root-cause read)
     Explain(commands::explain::ExplainArgs),
+    /// Generate a scenario from a natural-language description (LLM)
+    Scenario(commands::scenario::ScenarioArgs),
     /// Durable run history + statistical regression detection
     #[command(subcommand)]
     History(commands::history::HistoryCommand),
@@ -103,6 +105,7 @@ fn run(cli: Cli) -> anyhow::Result<i32> {
         Command::Record(args) => commands::record::execute(args),
         Command::Gen(args) => commands::gen::execute(args),
         Command::Explain(args) => commands::explain::execute(args),
+        Command::Scenario(args) => commands::scenario::execute(args),
         Command::History(cmd) => commands::history::execute(cmd),
         Command::Controller(args) => commands::controller::execute(args),
         Command::Agent(args) => commands::agent::execute(args),

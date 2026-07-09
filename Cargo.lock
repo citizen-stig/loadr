@@ -2831,6 +2831,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "loadr-ai"
+version = "1.0.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "loadr-config",
+ "rustls",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "loadr-browser"
 version = "1.0.0"
 dependencies = [
@@ -2869,6 +2887,7 @@ dependencies = [
  "hyper-util",
  "indicatif",
  "loadr-agent",
+ "loadr-ai",
  "loadr-browser",
  "loadr-config",
  "loadr-convert",

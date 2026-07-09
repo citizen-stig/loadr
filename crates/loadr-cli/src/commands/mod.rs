@@ -11,5 +11,6 @@ pub mod plugin;
 pub mod record;
 pub mod report;
 pub mod run;
+pub mod scenario;
 pub mod sweep;
 pub mod validate;

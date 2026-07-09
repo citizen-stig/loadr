@@ -667,6 +667,9 @@ impl Ctx<'_> {
                     "set `message` (unary) or `messages` (streaming), not both",
                 );
             }
+            if grpc.channel_pool_size == Some(0) {
+                self.error(format!("{rpath}.grpc"), "`channel_pool_size` must be >= 1");
+            }
         }
         if let Some(sock) = &req.socket {
             if sock.send_text.is_some() && sock.send_hex.is_some() {

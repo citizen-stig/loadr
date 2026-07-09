@@ -436,6 +436,7 @@ async fn grpc_unary_echo() {
     let response = within(client.unary_echo(EchoRequest {
         message: "hello grpc".to_string(),
         repeat: 0,
+        ..Default::default()
     }))
     .await
     .expect("unary")
@@ -455,6 +456,7 @@ async fn grpc_server_stream_echo() {
     let mut stream = within(client.server_stream_echo(EchoRequest {
         message: "s".to_string(),
         repeat: 4,
+        ..Default::default()
     }))
     .await
     .expect("server stream")
@@ -473,6 +475,7 @@ async fn grpc_server_stream_echo() {
     let mut stream = within(client.server_stream_echo(EchoRequest {
         message: "d".to_string(),
         repeat: 0,
+        ..Default::default()
     }))
     .await
     .expect("server stream")
@@ -495,14 +498,17 @@ async fn grpc_client_stream_echo() {
         EchoRequest {
             message: "a".to_string(),
             repeat: 0,
+            ..Default::default()
         },
         EchoRequest {
             message: "b".to_string(),
             repeat: 0,
+            ..Default::default()
         },
         EchoRequest {
             message: "c".to_string(),
             repeat: 0,
+            ..Default::default()
         },
     ]);
     let response = within(client.client_stream_echo(requests))
@@ -523,14 +529,17 @@ async fn grpc_bidi_echo() {
         EchoRequest {
             message: "x".to_string(),
             repeat: 0,
+            ..Default::default()
         },
         EchoRequest {
             message: "y".to_string(),
             repeat: 0,
+            ..Default::default()
         },
         EchoRequest {
             message: "z".to_string(),
             repeat: 0,
+            ..Default::default()
         },
     ]);
     let mut inbound = within(client.bidi_echo(requests))

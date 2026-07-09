@@ -12,9 +12,11 @@ service Echo {
 message EchoRequest {
   string message = 1;
   int32 repeat = 2;
+  bytes payload = 3;
 }
 
 message EchoResponse {
   string message = 1;
   int32 index = 2;
+  bytes payload = 3;
 }

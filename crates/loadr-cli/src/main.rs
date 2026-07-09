@@ -51,6 +51,9 @@ enum Command {
     Gen(commands::gen::GenArgs),
     /// Explain a run summary in plain language (root-cause read)
     Explain(commands::explain::ExplainArgs),
+    /// Durable run history + statistical regression detection
+    #[command(subcommand)]
+    History(commands::history::HistoryCommand),
     /// Run the distributed-mode controller
     Controller(commands::controller::ControllerArgs),
     /// Run a load-generating agent
@@ -100,6 +103,7 @@ fn run(cli: Cli) -> anyhow::Result<i32> {
         Command::Record(args) => commands::record::execute(args),
         Command::Gen(args) => commands::gen::execute(args),
         Command::Explain(args) => commands::explain::execute(args),
+        Command::History(cmd) => commands::history::execute(cmd),
         Command::Controller(args) => commands::controller::execute(args),
         Command::Agent(args) => commands::agent::execute(args),
         Command::Plugin(cmd) => commands::plugin::execute(cmd),

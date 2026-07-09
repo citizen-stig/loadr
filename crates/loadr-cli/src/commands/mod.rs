@@ -5,6 +5,7 @@ pub mod convert;
 pub mod download;
 pub mod explain;
 pub mod gen;
+pub mod history;
 pub mod payload;
 pub mod plugin;
 pub mod record;

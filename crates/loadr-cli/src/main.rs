@@ -49,6 +49,8 @@ enum Command {
     Record(commands::record::RecordArgs),
     /// Generate a scenario from an API contract (OpenAPI) with example data
     Gen(commands::gen::GenArgs),
+    /// Explain a run summary in plain language (root-cause read)
+    Explain(commands::explain::ExplainArgs),
     /// Run the distributed-mode controller
     Controller(commands::controller::ControllerArgs),
     /// Run a load-generating agent
@@ -97,6 +99,7 @@ fn run(cli: Cli) -> anyhow::Result<i32> {
         Command::Payload(args) => commands::payload::execute(args),
         Command::Record(args) => commands::record::execute(args),
         Command::Gen(args) => commands::gen::execute(args),
+        Command::Explain(args) => commands::explain::execute(args),
         Command::Controller(args) => commands::controller::execute(args),
         Command::Agent(args) => commands::agent::execute(args),
         Command::Plugin(cmd) => commands::plugin::execute(cmd),

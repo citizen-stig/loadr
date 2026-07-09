@@ -12,6 +12,49 @@ fn write_test(dir: &std::path::Path, name: &str, yaml: &str) -> std::path::PathB
     path
 }
 
+/// Platform-correct cdylib artifact filename for a `[lib] name = "<stem>"`.
+fn dylib_name(stem: &str) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        format!("{stem}.dll")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        format!("lib{stem}.dylib")
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        format!("lib{stem}.so")
+    }
+}
+
+/// Build a native example plugin (workspace member) and return the path to
+/// its dynamic-library artifact, for use as a `plugins: [{ path: ... }]`
+/// reference in a test plan.
+fn build_native_plugin(package: &str, lib_stem: &str) -> std::path::PathBuf {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root exists")
+        .to_path_buf();
+    let status = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+        .args(["build", "-p", package])
+        .current_dir(&root)
+        .status()
+        .unwrap_or_else(|e| panic!("cannot run cargo for {package}: {e}"));
+    assert!(status.success(), "building {package} failed");
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| root.join("target"));
+    let path = target.join("debug").join(dylib_name(lib_stem));
+    assert!(
+        path.is_file(),
+        "missing native artifact at {}",
+        path.display()
+    );
+    path
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn standalone_run_produces_metrics_and_passes() {
     let server = loadr_testserver::HttpTestServer::spawn()
@@ -534,5 +577,137 @@ thresholds:
     assert!(
         instances.len() >= 2,
         "expected both agents in series tags, got {instances:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn plugin_data_source_signs_grpc_payload_end_to_end() {
+    let server = loadr_testserver::GrpcEchoServer::spawn()
+        .await
+        .expect("grpc server");
+    let plugin_path = build_native_plugin(
+        "loadr-plugin-example-native-data-source",
+        "native_data_source",
+    );
+    let dir = tempfile::tempdir().expect("tmp");
+    let yaml = format!(
+        r#"
+name: e2e-plugin-data-source
+plugins:
+  - name: tx-signer
+    path: {plugin_path}
+    config: {{ seed: 1 }}
+data:
+  signed_tx:
+    type: plugin
+    source: tx-signer
+    config: {{ chain_id: testnet-1 }}
+scenarios:
+  submit:
+    executor: shared-iterations
+    vus: 2
+    iterations: 4
+    flow:
+      - request:
+          name: submit tx
+          protocol: grpc
+          url: grpc://{addr}
+          grpc:
+            reflection: true
+            service: loadr.test.Echo
+            method: UnaryEcho
+            message: {{ message: "sig", payload: "${{data.signed_tx.tx_b64}}" }}
+          checks:
+            - {{ type: status, equals: 0 }}
+"#,
+        plugin_path = plugin_path.display(),
+        addr = server.addr,
+    );
+    let test = write_test(dir.path(), "t.yaml", &yaml);
+    let summary_path = dir.path().join("summary.json");
+
+    let output = Command::new(BIN)
+        .args([
+            "run",
+            "--quiet",
+            "--summary-export",
+            summary_path.to_str().expect("path"),
+            test.to_str().expect("path"),
+        ])
+        .output()
+        .expect("run loadr");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "expected success.\nstdout: {stdout}\nstderr: {stderr}"
+    );
+
+    let summary: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&summary_path).expect("summary file"))
+            .expect("summary json");
+    let metric = |name: &str| {
+        summary["metrics"]
+            .as_array()
+            .expect("metrics")
+            .iter()
+            .find(|m| m["metric"] == name)
+            .unwrap_or_else(|| panic!("missing metric {name}: {summary}"))
+    };
+    let grpc_reqs = metric("grpc_reqs")["agg"]["sum"]
+        .as_f64()
+        .expect("grpc_reqs sum");
+    assert!(grpc_reqs > 0.0, "expected grpc_reqs > 0: {summary}");
+    let http_req_failed = metric("http_req_failed")["agg"]["rate"]
+        .as_f64()
+        .expect("http_req_failed rate");
+    assert_eq!(
+        http_req_failed, 0.0,
+        "expected zero failed requests: {summary}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn plugin_data_source_missing_capability_fails_before_vus_start() {
+    // hmac-signer is a real `kind = service` plugin that does not implement
+    // `data_source` -- referencing it from `data.*.source` must fail plan
+    // setup (before any VU starts), not silently no-op.
+    let plugin_path = build_native_plugin("loadr-plugin-hmac-signer", "loadr_plugin_hmac_signer");
+    let dir = tempfile::tempdir().expect("tmp");
+    let yaml = format!(
+        r#"
+name: e2e-plugin-data-source-missing-capability
+plugins:
+  - name: hmac-signer
+    path: {plugin_path}
+data:
+  signed_tx:
+    type: plugin
+    source: hmac-signer
+scenarios:
+  submit:
+    executor: shared-iterations
+    vus: 1
+    iterations: 1
+    flow:
+      - request:
+          url: "https://example.invalid/${{data.signed_tx.x}}"
+"#,
+        plugin_path = plugin_path.display(),
+    );
+    let test = write_test(dir.path(), "t.yaml", &yaml);
+
+    let output = Command::new(BIN)
+        .args(["run", "--quiet", test.to_str().expect("path")])
+        .output()
+        .expect("run loadr");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit; stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("not loaded or does not provide the data_source capability"),
+        "expected the capability-missing error, got: {stderr}"
     );
 }

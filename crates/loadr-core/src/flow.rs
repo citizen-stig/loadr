@@ -1007,8 +1007,15 @@ impl FlowRunner {
             }
         }
 
-        // 1. Render the request.
-        let mut prepared = match self.prepare(req, vu, script) {
+        // 1. Render the request. Plugin-backed rows are per-request: mark the
+        // request being prepared so `begin_request` evicts stale on-demand
+        // rows, then clear it on every outcome so a later step (e.g. a JS
+        // step reached via `RequestFlow::Continue`) never observes a stale
+        // request name.
+        vu.begin_request(&req.display_name);
+        let prepared_result = self.prepare(req, vu, script);
+        vu.current_request = None;
+        let mut prepared = match prepared_result {
             Ok(p) => p,
             Err(PrepareError::DataExhausted) => return RequestFlow::StopVu,
             Err(PrepareError::Other(e)) => {

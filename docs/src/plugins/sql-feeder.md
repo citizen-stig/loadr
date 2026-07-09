@@ -81,13 +81,11 @@ plugins:
 
 data:
   users:
-    service: sql-feeder       # this feeder is backed by the service plugin
+    type: plugin              # feeder backed by a data_source-capable plugin
+    source: sql-feeder        # the plugin that produces rows
     config:
       url: postgres://loadr:loadr@db.example.com:5432/loadr
       query: select id, email from users
-    mode: shared              # all VUs share one cursor (per_vu: each VU gets its own)
-    pick: sequential          # sequential | random | shuffle
-    on_eof: recycle           # wrap around (stop: retire the VU at end of set)
 
 scenarios:
   signup_replay:
@@ -124,10 +122,11 @@ Only row-producing statements make sense here: the query must return a result
 set, and an empty `query` is rejected. Column values are carried as text into
 the feeder, matching how CSV/JSON feeders present fields.
 
-Standard feeder controls apply on top of `config:` — `mode` (shared / per-VU),
-`pick` (`sequential` | `random` | `shuffle`) and `on_eof` (`recycle` | `stop`)
-behave exactly as they do for a local CSV/JSON source. See
-[Feeder strategies](../yaml/feeders.md).
+`mode`/`pick`/`on_eof` do not apply to `type: plugin` sources — those
+describe iterating a stored row set, and this feeder is expected to manage
+its own row order (sequential, wrapping around) over the set it cached at
+startup. See
+[Plugin-backed sources](../yaml/data.md#plugin-backed-on-demand-sources).
 
 ## Metrics
 

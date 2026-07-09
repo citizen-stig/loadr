@@ -3002,6 +3002,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "flate2",
+ "indexmap",
  "libloading 0.9.0",
  "loadr-config",
  "loadr-core",

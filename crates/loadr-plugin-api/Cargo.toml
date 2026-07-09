@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 loadr-core = { workspace = true }
 loadr-config = { workspace = true }
+indexmap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

@@ -13,8 +13,10 @@ use abi_stable::std_types::{ROption, RResult, RString};
 use async_trait::async_trait;
 use base64::Engine as _;
 use bytes::Bytes;
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
+use loadr_core::data::{DataSourcePlugin, PluginRowCtx, PluginRowResult, Row};
 use loadr_core::error::{EngineError, ProtocolError};
 use loadr_core::metrics::Sample;
 use loadr_core::{
@@ -22,7 +24,8 @@ use loadr_core::{
 };
 
 use crate::abi::{
-    FfiOutputBox, FfiProtocolBox, FfiServiceBox, PluginModRef, LOADR_PLUGIN_ABI_VERSION,
+    FfiDataSourceBox, FfiOutputBox, FfiProtocolBox, FfiServiceBox, PluginModRef,
+    LOADR_PLUGIN_ABI_VERSION,
 };
 use crate::error::PluginError;
 use crate::traits::ServicePlugin;
@@ -156,6 +159,26 @@ impl NativePlugin {
         match self.module.make_service() {
             ROption::RSome(ctor) => Ok(NativeServiceAdapter::new(ctor())),
             ROption::RNone => Err(self.missing("service")),
+        }
+    }
+
+    /// Instantiate the plugin's service, if it provides one. Unlike
+    /// [`NativePlugin::make_service`], `None` (not an error) means the
+    /// plugin simply doesn't implement the service lifecycle — used
+    /// alongside [`NativePlugin::make_data_source`] so a service-kind
+    /// plugin can be data-source-only.
+    pub fn maybe_service(&self) -> Option<NativeServiceAdapter> {
+        match self.module.make_service() {
+            ROption::RSome(ctor) => Some(NativeServiceAdapter::new(ctor())),
+            ROption::RNone => None,
+        }
+    }
+
+    /// Instantiate the plugin's `data_source` capability, if it provides one.
+    pub fn make_data_source(&self, config: serde_json::Value) -> Option<NativeDataSourceAdapter> {
+        match self.module.make_data_source() {
+            ROption::RSome(ctor) => Some(NativeDataSourceAdapter::new(ctor(), config)),
+            ROption::RNone => None,
         }
     }
 
@@ -354,5 +377,110 @@ impl ServicePlugin for NativeServiceAdapter {
 
     fn stop(&mut self) {
         self.inner.stop();
+    }
+}
+
+/// JSON payload handed to [`crate::abi::FfiDataSource::init`].
+#[derive(Serialize)]
+struct FfiDataSourceInit<'a> {
+    plugin_config: &'a serde_json::Value,
+    sources: &'a IndexMap<String, serde_json::Value>,
+}
+
+/// JSON payload handed to [`crate::abi::FfiDataSource::next_row`].
+#[derive(Serialize)]
+struct FfiRowCtx<'a> {
+    source: &'a str,
+    vu: u64,
+    iteration: u64,
+    seq: u64,
+    scenario: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request: Option<&'a str>,
+    ts_ms: u64,
+}
+
+/// JSON response from [`crate::abi::FfiDataSource::next_row`].
+#[derive(Default, Deserialize)]
+struct FfiRowResponse {
+    #[serde(default)]
+    row: Option<serde_json::Map<String, serde_json::Value>>,
+    #[serde(default)]
+    exhausted: bool,
+}
+
+/// Bridges an FFI data-source plugin to `loadr_core::data::DataSourcePlugin`.
+pub struct NativeDataSourceAdapter {
+    name: String,
+    config: serde_json::Value,
+    inner: FfiDataSourceBox,
+}
+
+impl std::fmt::Debug for NativeDataSourceAdapter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NativeDataSourceAdapter")
+            .field("name", &self.name)
+            .finish()
+    }
+}
+
+impl NativeDataSourceAdapter {
+    fn new(inner: FfiDataSourceBox, config: serde_json::Value) -> Self {
+        let name = inner.name().into_string();
+        NativeDataSourceAdapter {
+            name,
+            config,
+            inner,
+        }
+    }
+}
+
+impl DataSourcePlugin for NativeDataSourceAdapter {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn init(&mut self, source_configs: &IndexMap<String, serde_json::Value>) -> Result<(), String> {
+        let payload = FfiDataSourceInit {
+            plugin_config: &self.config,
+            sources: source_configs,
+        };
+        let json =
+            serde_json::to_string(&payload).map_err(|e| format!("cannot encode init: {e}"))?;
+        match self.inner.init(RString::from(json)) {
+            RResult::ROk(()) => Ok(()),
+            RResult::RErr(e) => Err(e.into_string()),
+        }
+    }
+
+    fn next_row(&self, ctx: &PluginRowCtx<'_>) -> Result<PluginRowResult, String> {
+        let ffi_ctx = FfiRowCtx {
+            source: ctx.source,
+            vu: ctx.vu,
+            iteration: ctx.iteration,
+            seq: ctx.seq,
+            scenario: ctx.scenario,
+            request: ctx.request,
+            ts_ms: ctx.ts_ms,
+        };
+        let json = serde_json::to_string(&ffi_ctx)
+            .map_err(|e| format!("cannot encode row context: {e}"))?;
+        let response_json = match self.inner.next_row(RString::from(json)) {
+            RResult::ROk(s) => s,
+            RResult::RErr(e) => return Err(e.into_string()),
+        };
+        let response: FfiRowResponse = serde_json::from_str(response_json.as_str())
+            .map_err(|e| format!("invalid row JSON: {e}"))?;
+        if response.exhausted {
+            return Ok(PluginRowResult::Exhausted);
+        }
+        let row_obj = response
+            .row
+            .ok_or_else(|| "plugin returned neither `row` nor `exhausted`".to_string())?;
+        let row: Row = row_obj
+            .iter()
+            .map(|(k, v)| (k.clone(), loadr_core::vu::json_to_string(v)))
+            .collect();
+        Ok(PluginRowResult::Row(row))
     }
 }

@@ -554,7 +554,12 @@
       );
 
       dataRates.textContent =
-        '↑ ' + fmt.bytes(m.data_sent_ps) + '/s    ↓ ' + fmt.bytes(m.data_received_ps) + '/s    total reqs ' + fmt.num(m.http_reqs_total, 0);
+        '↑ ' +
+        fmt.bytes(m.data_sent_ps) +
+        '/s    ↓ ' +
+        fmt.bytes(m.data_received_ps) +
+        '/s    total reqs ' +
+        fmt.num(m.reqs_total != null ? m.reqs_total : m.http_reqs_total, 0);
 
       updateFailures(m.failures);
     }
@@ -880,9 +885,9 @@
           'div',
           { class: 'stat-grid' },
           statCard('Duration', fmt.duration(summary.duration_secs)),
-          statCard('Requests', fmt.num(sumMetric(summary, 'http_reqs'), 0)),
-          statCard('Avg RPS', fmt.num(perSecMetric(summary, 'http_reqs'), 1)),
-          statCard('p95 latency', fmt.ms(aggOf(summary, 'http_req_duration', 'p95')))
+          statCard('Requests', fmt.num(sumReqMetrics(summary), 0)),
+          statCard('Avg RPS', fmt.num(perSecReqMetrics(summary), 1)),
+          statCard('p95 latency', fmt.ms(weightedReqDuration(summary, 'p95')))
         );
 
         const metricsTable = h(
@@ -976,20 +981,31 @@
           h('div', { class: 'stat-value mono' }, value)
         );
       }
-      function metric(summary, name) {
-        return (summary.metrics || []).find((m) => m.metric === name);
+      // Request metrics are protocol-family specific; summary cards are
+      // protocol-agnostic, matching the live dashboard rollup.
+      function reqMetrics(summary) {
+        return (summary.metrics || []).filter((m) => m.metric.endsWith('_reqs'));
       }
-      function sumMetric(summary, name) {
-        const m = metric(summary, name);
-        return m ? m.agg.sum : null;
+      function reqDurationMetrics(summary) {
+        return (summary.metrics || []).filter((m) => m.metric.endsWith('_req_duration'));
       }
-      function perSecMetric(summary, name) {
-        const m = metric(summary, name);
-        return m ? m.agg.per_second : null;
+      function sumReqMetrics(summary) {
+        return reqMetrics(summary).reduce((sum, m) => sum + ((m.agg && m.agg.sum) || 0), 0);
       }
-      function aggOf(summary, name, field) {
-        const m = metric(summary, name);
-        return m ? m.agg[field] : null;
+      function perSecReqMetrics(summary) {
+        return reqMetrics(summary).reduce((sum, m) => sum + ((m.agg && m.agg.per_second) || 0), 0);
+      }
+      function weightedReqDuration(summary, field) {
+        let total = 0;
+        let acc = 0;
+        for (const m of reqDurationMetrics(summary)) {
+          const a = m.agg || {};
+          const count = a.count || 0;
+          if (!count || a[field] == null) continue;
+          total += count;
+          acc += a[field] * count;
+        }
+        return total ? acc / total : null;
       }
 
       async function load() {

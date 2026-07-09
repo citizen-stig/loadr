@@ -1,7 +1,7 @@
 # Generating from a contract (loadr gen)
 
 `loadr convert` and `loadr record` start from *traffic*. `loadr gen` starts from
-a *contract*: point it at an OpenAPI document (or a Postman collection) and it emits a runnable scenario
+a *contract*: point it at an OpenAPI document, a Postman collection, or a GraphQL schema and it emits a runnable scenario
 with one request per operation, every parameter and body filled from
 schema-derived example data.
 
@@ -62,6 +62,31 @@ scenarios:
 
 `--include`/`--exclude` accept simple `*` globs (`get*`, `*Pet`, `*/pets/*`) and
 keep the output tractable for large specs.
+
+## From a GraphQL schema
+
+Point it at a GraphQL **introspection result** (the JSON from an introspection
+query) and it builds one operation per `Query`/`Mutation` field:
+
+```console
+$ loadr gen graphql introspection.json --base-url https://api.example.com/graphql -o plan.yaml
+```
+
+Each field's arguments are lifted to GraphQL variables (seeded with example
+values), and object return types are expanded into a selection set to a bounded
+depth (cycle-guarded):
+
+```yaml
+graphql:
+  query: |
+    query product($id: ID!) {
+      product(id: $id) { id name }
+    }
+  variables: { id: id }
+  operation_name: product
+```
+
+Pass the endpoint with `--base-url`.
 
 ## From a Postman collection
 

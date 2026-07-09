@@ -428,6 +428,41 @@ async fn grpc_unary_via_proto_files() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_unary_pooled_channels() {
+    let server = GrpcEchoServer::spawn().await.expect("grpc server");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let proto_path = dir.path().join("echo.proto");
+    std::fs::write(&proto_path, ECHO_PROTO).expect("write proto");
+
+    let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
+    let mut vu = vu();
+
+    let request = grpc_request(
+        &format!("grpc://{}", server.addr),
+        GrpcRequest {
+            proto_files: vec![proto_path],
+            service: "loadr.test.Echo".to_string(),
+            method: "UnaryEcho".to_string(),
+            message: Some(serde_json::json!({"message": "pooled"})),
+            channel_pool_size: Some(2),
+            ..Default::default()
+        },
+    );
+
+    // Two calls through a size-2 pool: the first creates the pool (exercising the
+    // double-checked locking) and memoizes it on the VU; the second hits the
+    // VU-local memo. Both round-robin slots are used.
+    for _ in 0..2 {
+        let response = handler.execute(&mut vu, &request).await.expect("response");
+        assert_eq!(response.status, 0, "status_text: {}", response.status_text);
+        assert!(!response.failed());
+        assert_eq!(response.protocol_version, "grpc");
+        let json: serde_json::Value = serde_json::from_slice(&response.body).expect("json body");
+        assert_eq!(json["message"], "pooled");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn grpc_server_streaming_collects_all_messages() {
     let server = GrpcEchoServer::spawn().await.expect("grpc server");
     let dir = tempfile::tempdir().expect("tempdir");

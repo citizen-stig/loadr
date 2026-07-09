@@ -8,7 +8,8 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 use std::time::Instant;
 
 use async_trait::async_trait;
@@ -118,13 +119,30 @@ impl Decoder for DynamicDecoder {
 }
 
 // ---------------------------------------------------------------------------
-// Per-VU channels
+// Channels: per-VU (default) and shared pool (opt-in)
 // ---------------------------------------------------------------------------
+
+/// A fixed set of lazily connected channels, handed out round-robin.
+/// `Channel::clone` is cheap and shares the underlying connection, so a
+/// small pool multiplexes arbitrarily many concurrent streams.
+struct ChannelPool {
+    channels: Vec<Channel>,
+    next: AtomicU64,
+}
+
+impl ChannelPool {
+    fn next(&self) -> Channel {
+        let i = self.next.fetch_add(1, Ordering::Relaxed) as usize % self.channels.len();
+        self.channels[i].clone()
+    }
+}
 
 /// Lazily connected tonic channels per endpoint, stored per VU.
 #[derive(Default)]
 struct GrpcChannels {
     channels: HashMap<String, Channel>,
+    /// VU-local memo of shared pools (the pools themselves are global).
+    pools: HashMap<String, Arc<ChannelPool>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -135,6 +153,9 @@ struct GrpcChannels {
 pub struct GrpcHandler {
     tls: Option<tonic::transport::ClientTlsConfig>,
     base_dir: PathBuf,
+    /// Shared channel pools, keyed by (endpoint, size). Consulted only on a
+    /// VU's first pooled request per endpoint; hits are memoized per VU.
+    channel_pools: RwLock<HashMap<(String, usize), Arc<ChannelPool>>>,
 }
 
 impl GrpcHandler {
@@ -170,6 +191,7 @@ impl GrpcHandler {
         Ok(GrpcHandler {
             tls,
             base_dir: base_dir.to_path_buf(),
+            channel_pools: RwLock::new(HashMap::new()),
         })
     }
 
@@ -195,12 +217,88 @@ impl GrpcHandler {
         Ok((format!("{scheme}://{host}:{port}"), tls))
     }
 
+    /// Endpoint for a shared pooled channel: large fixed HTTP/2 windows (many
+    /// concurrent streams share one connection) plus keepalive.
+    fn pooled_endpoint(&self, endpoint: &str, tls: bool) -> Result<Endpoint, ProtocolError> {
+        let mut ep = Endpoint::from_shared(endpoint.to_string())
+            .map_err(|e| {
+                ProtocolError::InvalidRequest(format!("invalid grpc endpoint `{endpoint}`: {e}"))
+            })?
+            .initial_stream_window_size(4 * 1024 * 1024)
+            .initial_connection_window_size(8 * 1024 * 1024)
+            .http2_keep_alive_interval(std::time::Duration::from_secs(30))
+            .keep_alive_while_idle(true);
+        if tls {
+            ep = ep
+                .tls_config(self.tls.clone().unwrap_or_default())
+                .map_err(|e| ProtocolError::Tls(format!("grpc tls config error: {e}")))?;
+        }
+        Ok(ep)
+    }
+
+    /// Get-or-create the shared pool of `size` channels for `endpoint`.
+    /// Double-checked read→write; `connect_lazy()` does no I/O and no `.await`
+    /// is held across the lock, so building under the write lock is fine.
+    fn shared_pool(
+        &self,
+        endpoint: &str,
+        tls: bool,
+        size: usize,
+    ) -> Result<Arc<ChannelPool>, ProtocolError> {
+        let key = (endpoint.to_string(), size);
+        if let Some(pool) = self
+            .channel_pools
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&key)
+        {
+            return Ok(pool.clone());
+        }
+        let mut map = self
+            .channel_pools
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(pool) = map.get(&key) {
+            return Ok(pool.clone());
+        }
+        let mut channels = Vec::with_capacity(size);
+        for _ in 0..size {
+            channels.push(self.pooled_endpoint(endpoint, tls)?.connect_lazy());
+        }
+        let pool = Arc::new(ChannelPool {
+            channels,
+            next: AtomicU64::new(0),
+        });
+        map.insert(key, pool.clone());
+        Ok(pool)
+    }
+
     fn channel(
         &self,
         ctx: &mut VuContext,
         endpoint: &str,
         tls: bool,
+        pool_size: Option<usize>,
     ) -> Result<Channel, ProtocolError> {
+        if let Some(size) = pool_size {
+            // Config validation rejects 0; clamp anyway so `% len` can never
+            // divide by zero if a caller bypasses validation.
+            let size = size.max(1);
+            // Hot path: VU-local memo — no lock, no allocation.
+            let state = ctx.extensions.get_or_insert_with(GrpcChannels::default);
+            if let Some(pool) = state.pools.get(endpoint) {
+                if pool.channels.len() == size {
+                    return Ok(pool.next());
+                }
+            }
+            // First use (or size changed for this endpoint): global map.
+            let pool = self.shared_pool(endpoint, tls, size)?;
+            let channel = pool.next();
+            let state = ctx.extensions.get_or_insert_with(GrpcChannels::default);
+            state.pools.insert(endpoint.to_string(), pool);
+            return Ok(channel);
+        }
+        // ---- existing per-VU path: keep byte-for-byte as it is today ----
         let channels = ctx.extensions.get_or_insert_with(GrpcChannels::default);
         if let Some(ch) = channels.channels.get(endpoint) {
             return Ok(ch.clone());
@@ -340,7 +438,7 @@ impl ProtocolHandler for GrpcHandler {
             ProtocolError::InvalidRequest("grpc request requires `grpc:` options".to_string())
         })?;
         let (endpoint, tls) = self.endpoint_uri(&request.url)?;
-        let channel = self.channel(ctx, &endpoint, tls)?;
+        let channel = self.channel(ctx, &endpoint, tls, grpc.channel_pool_size)?;
 
         let start = Instant::now();
 

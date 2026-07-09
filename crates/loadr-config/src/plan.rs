@@ -1246,6 +1246,11 @@ pub struct GrpcOptions {
     /// gRPC metadata (in addition to request `headers`).
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub metadata: IndexMap<String, String>,
+    /// Share a fixed pool of N HTTP/2 channels across all VUs for this endpoint,
+    /// round-robined (vs. the default: one connection per VU). Recommended for
+    /// high-concurrency runs against a single endpoint. Must be >= 1 when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_pool_size: Option<usize>,
 }
 
 /// GraphQL request options.

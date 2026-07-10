@@ -413,7 +413,7 @@ async fn grpc_unary_via_proto_files() {
             proto_files: vec![proto_path],
             service: "loadr.test.Echo".to_string(),
             method: "UnaryEcho".to_string(),
-            message: Some(serde_json::json!({"message": "hi grpc"})),
+            message: Some(Arc::new(serde_json::json!({"message": "hi grpc"}))),
             ..Default::default()
         },
     );
@@ -443,16 +443,20 @@ async fn grpc_unary_pooled_channels() {
             proto_files: vec![proto_path],
             service: "loadr.test.Echo".to_string(),
             method: "UnaryEcho".to_string(),
-            message: Some(serde_json::json!({"message": "pooled"})),
+            message: Some(Arc::new(serde_json::json!({"message": "pooled"}))),
+            // Literal message: the second call must serve the encoded body
+            // from the per-VU cache (same Arc identity) with an identical result.
+            message_literal: true,
             channel_pool_size: Some(2),
             ..Default::default()
         },
     );
 
-    // Two calls through a size-2 pool: the first creates the pool (exercising the
-    // double-checked locking) and memoizes it on the VU; the second hits the
-    // VU-local memo. Both round-robin slots are used.
-    for _ in 0..2 {
+    // Three calls through a size-2 pool: the first creates the pool
+    // (exercising the double-checked locking), resolves the call state, and
+    // encodes the literal message; later calls hit the VU-local call cache
+    // and the encoded-body cache.
+    for _ in 0..3 {
         let response = handler.execute(&mut vu, &request).await.expect("response");
         assert_eq!(response.status, 0, "status_text: {}", response.status_text);
         assert!(!response.failed());
@@ -478,7 +482,9 @@ async fn grpc_server_streaming_collects_all_messages() {
             proto_files: vec![proto_path],
             service: "loadr.test.Echo".to_string(),
             method: "ServerStreamEcho".to_string(),
-            message: Some(serde_json::json!({"message": "stream", "repeat": 3})),
+            message: Some(Arc::new(
+                serde_json::json!({"message": "stream", "repeat": 3}),
+            )),
             ..Default::default()
         },
     );
@@ -503,7 +509,7 @@ async fn grpc_unary_via_reflection() {
             reflection: true,
             service: "loadr.test.Echo".to_string(),
             method: "UnaryEcho".to_string(),
-            message: Some(serde_json::json!({"message": "reflected"})),
+            message: Some(Arc::new(serde_json::json!({"message": "reflected"}))),
             ..Default::default()
         },
     );

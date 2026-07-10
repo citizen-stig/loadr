@@ -187,6 +187,12 @@ pub struct CompiledRequest {
     pub checks: Vec<CompiledCondition>,
     pub ws: Option<loadr_config::WsOptions>,
     pub grpc: Option<loadr_config::GrpcOptions>,
+    /// Pre-parsed gRPC message(s) when every string leaf is a literal
+    /// template: `prepare` hands out the same `Arc` every iteration (no
+    /// render walk, no deep clone), and the stable identity lets the gRPC
+    /// handler cache the encoded body per `Arc`.
+    pub grpc_literal_message: Option<Arc<serde_json::Value>>,
+    pub grpc_literal_messages: Option<Arc<Vec<serde_json::Value>>>,
     pub graphql: Option<loadr_config::GraphqlOptions>,
     pub socket: Option<loadr_config::SocketOptions>,
     pub sse: Option<loadr_config::SseOptions>,
@@ -444,6 +450,18 @@ fn compile_request(
         g.proto_includes = g.proto_includes.iter().map(&resolve).collect();
         g
     });
+    // Detect template-free gRPC messages once; `prepare` then skips the
+    // per-iteration render walk and hands out these Arcs unchanged.
+    let grpc_literal_message = grpc
+        .as_ref()
+        .and_then(|g| g.message.as_ref())
+        .filter(|m| json_is_literal(m))
+        .cloned()
+        .map(Arc::new);
+    let grpc_literal_messages = grpc
+        .as_ref()
+        .filter(|g| !g.messages.is_empty() && g.messages.iter().all(json_is_literal))
+        .map(|g| Arc::new(g.messages.clone()));
 
     Ok(CompiledRequest {
         name: req
@@ -490,6 +508,8 @@ fn compile_request(
             .collect::<Result<_, _>>()?,
         ws: req.ws.clone(),
         grpc,
+        grpc_literal_message,
+        grpc_literal_messages,
         graphql: req.graphql.clone(),
         socket: req.socket.clone(),
         sse: req.sse.clone(),
@@ -1606,22 +1626,39 @@ impl FlowRunner {
             });
         }
         if let Some(grpc) = &req.grpc {
+            let message = match &req.grpc_literal_message {
+                Some(arc) => Some(arc.clone()),
+                None => grpc
+                    .message
+                    .as_ref()
+                    .map(|m| render_json(self, m, vu, script).map(Arc::new))
+                    .transpose()?,
+            };
+            let messages = match &req.grpc_literal_messages {
+                Some(arc) => arc.clone(),
+                None => Arc::new(
+                    grpc.messages
+                        .iter()
+                        .map(|m| render_json(self, m, vu, script))
+                        .collect::<Result<Vec<_>, _>>()?,
+                ),
+            };
+            // The handler uses `messages` when non-empty, else `message`;
+            // the literal flag must describe whichever it will use.
+            let message_literal = if grpc.messages.is_empty() {
+                req.grpc_literal_message.is_some()
+            } else {
+                req.grpc_literal_messages.is_some()
+            };
             options.grpc = Some(GrpcRequest {
                 proto_files: grpc.proto_files.clone(),
                 proto_includes: grpc.proto_includes.clone(),
                 reflection: grpc.reflection,
                 service: grpc.service.clone(),
                 method: grpc.method.clone(),
-                message: grpc
-                    .message
-                    .as_ref()
-                    .map(|m| render_json(self, m, vu, script))
-                    .transpose()?,
-                messages: grpc
-                    .messages
-                    .iter()
-                    .map(|m| render_json(self, m, vu, script))
-                    .collect::<Result<_, _>>()?,
+                message,
+                messages,
+                message_literal,
                 metadata: grpc
                     .metadata
                     .iter()
@@ -1989,6 +2026,21 @@ fn render_str(
 ) -> Result<String, PrepareError> {
     let tpl = Template::parse(s).map_err(|e| PrepareError::Other(e.to_string()))?;
     render_template(runner, &tpl, vu, script)
+}
+
+/// True when rendering `value` with [`render_json`] would return it
+/// unchanged: every string leaf parses as a literal (no `${...}`) template.
+/// Parse failures count as non-literal so they surface through the normal
+/// per-iteration render error path.
+fn json_is_literal(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(s) => Template::parse(s)
+            .map(|tpl| tpl.is_literal())
+            .unwrap_or(false),
+        serde_json::Value::Array(items) => items.iter().all(json_is_literal),
+        serde_json::Value::Object(map) => map.values().all(json_is_literal),
+        _ => true,
+    }
 }
 
 fn render_json(

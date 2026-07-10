@@ -45,6 +45,7 @@
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use base64::Engine as _;
@@ -55,7 +56,7 @@ use loadr_core::error::ProtocolError;
 use loadr_core::{PreparedRequest, ProtocolHandler, ProtocolResponse, VuContext};
 
 use crate::error::PluginError;
-use crate::native::{FfiRequest, FfiResponse};
+use crate::native::{cache_protocol_config, ffi_request_to_vec, CachedProtocolConfig, FfiResponse};
 use crate::PluginInfo;
 
 /// The frozen C-ABI version. Bumped only on an incompatible change to the
@@ -218,6 +219,7 @@ impl CAbiPlugin {
                 actual: self.info.kind.clone(),
             });
         }
+        let config = cache_protocol_config(config)?;
         Ok(CAbiProtocolAdapter {
             name: self.info.name.clone(),
             config,
@@ -267,7 +269,7 @@ unsafe fn copy_and_free(
 /// of plugin identically.
 pub struct CAbiProtocolAdapter {
     name: String,
-    config: serde_json::Value,
+    config: CachedProtocolConfig,
     execute: ExecuteFn,
     free: FreeFn,
 }
@@ -323,17 +325,8 @@ impl ProtocolHandler for CAbiProtocolAdapter {
         _ctx: &mut VuContext,
         request: &PreparedRequest,
     ) -> Result<ProtocolResponse, ProtocolError> {
-        let ffi_request = FfiRequest {
-            name: request.name.clone(),
-            method: request.method.clone(),
-            url: request.url.clone(),
-            headers: request.headers.clone(),
-            body_b64: base64::engine::general_purpose::STANDARD.encode(&request.body),
-            timeout_ms: request.timeout.as_millis() as u64,
-            options: request.options.plugin.clone(),
-            config: self.config.clone(),
-        };
-        let request_json = serde_json::to_vec(&ffi_request)
+        let config = Arc::clone(&self.config);
+        let request_json = ffi_request_to_vec(request, &config)
             .map_err(|e| ProtocolError::InvalidRequest(format!("cannot encode request: {e}")))?;
         let bytes_sent = request.body.len() as u64;
         let ffi = self
@@ -371,6 +364,10 @@ mod tests {
     use super::*;
     use std::process::Command;
     use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{Arc, Barrier};
+    use std::time::Duration;
+
+    use loadr_core::RequestOptions;
 
     /// Compile a C source string into a cdylib in a fresh temp dir, returning
     /// the dir (kept alive) and the artifact path. Uses the system `cc`.
@@ -489,6 +486,63 @@ int unrelated_symbol(void) { return 42; }
         assert_eq!(resp.duration_ms, 1.5);
         assert_eq!(resp.extras["k"], "v");
         assert!(resp.error.is_none());
+    }
+
+    #[test]
+    fn concurrent_adapters_keep_cached_configs_isolated() {
+        let (_d, path) = compile_cdylib(VALID_C);
+        let plugin = CAbiPlugin::load(&path).expect("load");
+        let left_config = serde_json::json!({"prefix": "LEFT"});
+        let right_config = serde_json::json!({"prefix": "RIGHT"});
+        let left = Arc::new(
+            plugin
+                .make_protocol(left_config.clone())
+                .expect("make left protocol"),
+        );
+        let right = Arc::new(
+            plugin
+                .make_protocol(right_config.clone())
+                .expect("make right protocol"),
+        );
+        let start = Arc::new(Barrier::new(2));
+
+        let request = || PreparedRequest {
+            name: "config isolation".into(),
+            protocol: "fx".into(),
+            method: "GET".into(),
+            url: "fx://local".into(),
+            headers: Vec::new(),
+            body: Bytes::new(),
+            timeout: Duration::from_secs(1),
+            follow_redirects: false,
+            max_redirects: 0,
+            options: RequestOptions::default(),
+        };
+
+        std::thread::scope(|scope| {
+            for (adapter, expected) in [(left, left_config), (right, right_config)] {
+                let start = Arc::clone(&start);
+                let request = request();
+                scope.spawn(move || {
+                    start.wait();
+                    for iteration in 0..256 {
+                        // This is the same Arc-clone + borrowing serializer
+                        // seam used by CAbiProtocolAdapter::execute.
+                        let config = Arc::clone(&adapter.config);
+                        let wire = ffi_request_to_vec(&request, &config)
+                            .expect("serialize cached C-ABI request");
+                        let value: serde_json::Value =
+                            serde_json::from_slice(&wire).expect("parse C-ABI request");
+                        assert_eq!(
+                            value.get("config"),
+                            Some(&expected),
+                            "adapter config mixed on iteration {iteration}",
+                        );
+                        std::thread::yield_now();
+                    }
+                });
+            }
+        });
     }
 
     #[test]

@@ -234,6 +234,12 @@ async fn auth_basic_bearer_and_401() {
     assert_eq!(status, http::StatusCode::OK);
     assert_eq!(&body[..], b"ok");
 
+    // Build metadata is public so the pre-authentication UI can render it.
+    let (status, version) = server.call("GET", "/api/version", None).await;
+    assert_eq!(status, http::StatusCode::OK);
+    assert_eq!(version["version"], loadr_core::build_info::VERSION);
+    assert_eq!(version["revision"], loadr_core::build_info::GIT_REVISION);
+
     // Wrong basic → 401.
     use base64::Engine as _;
     let bad = format!(
@@ -680,6 +686,7 @@ async fn static_spa_served_with_content_types() {
     let html = String::from_utf8_lossy(&body);
     assert!(html.contains("loadr"), "index.html must contain 'loadr'");
     assert!(html.contains("app.js"));
+    assert!(html.contains("id=\"build-version\""));
 
     let (status, headers, body) = server.raw("/app.js").await;
     assert_eq!(status, http::StatusCode::OK);
@@ -689,6 +696,7 @@ async fn static_spa_served_with_content_types() {
         .unwrap_or("");
     assert!(ct.contains("javascript"), "{ct}");
     assert!(!body.is_empty());
+    assert!(String::from_utf8_lossy(&body).contains("/api/version"));
 
     let (status, headers, _) = server.raw("/style.css").await;
     assert_eq!(status, http::StatusCode::OK);

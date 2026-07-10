@@ -7,6 +7,7 @@
 //! abstractions the other crates plug into.
 
 pub mod aggregate;
+pub mod build_info;
 pub mod conditions;
 pub mod cookies;
 pub mod data;

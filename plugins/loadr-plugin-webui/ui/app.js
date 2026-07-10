@@ -1403,9 +1403,21 @@
     });
   }
 
+  async function initBuildVersion() {
+    try {
+      const info = await API.get('/api/version');
+      if (info && info.version && info.revision) {
+        $('#build-version').textContent = `loadr ${info.version} (${info.revision})`;
+      }
+    } catch (e) {
+      /* Keep the static footer label if build metadata cannot be loaded. */
+    }
+  }
+
   window.addEventListener('hashchange', () => App.route());
   document.addEventListener('DOMContentLoaded', () => {
     initTheme();
+    initBuildVersion();
     Login.init();
     App.route();
   });

@@ -1,20 +1,28 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="/assets/consent.js"></script>
 <title>Zero to a k6-and-JMeter competitor in four weeks — loadr blog</title>
 <meta name="description" content="The first commit landed on 12 June. Four weeks and 180 commits later, loadr had seven protocols, a plugin ecosystem, a desktop app, and a DoS finder. Here&#x27;s how.">
+<meta property="og:title" content="Zero to a k6-and-JMeter competitor in four weeks — loadr blog">
+<meta property="og:description" content="The first commit landed on 12 June. Four weeks and 180 commits later, loadr had seven protocols, a plugin ecosystem, a desktop app, and a DoS finder. Here&#x27;s how.">
+<meta property="og:url" content="https://loadr.io/blog/four-weeks/">
+<meta property="og:type" content="article">
+<link rel="canonical" href="https://loadr.io/blog/four-weeks/">
 <link rel="icon" type="image/png" sizes="64x64" href="/assets/favicon-64.png">
 <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 <link rel="alternate icon" href="/assets/favicon.ico">
 <link rel="stylesheet" href="/assets/site.css">
 <style>
-.prose h2{font-family:var(--font-mono,ui-monospace,monospace);font-weight:800;font-size:1.5rem;
-  color:#fff;margin:2.2rem 0 .8rem;letter-spacing:-.01em}
-.prose h3{font-family:var(--font-mono,ui-monospace,monospace);font-weight:700;font-size:1.15rem;
-  color:#f3f4f6;margin:1.6rem 0 .5rem;padding-left:.6rem;border-left:2px solid #ef4444}
-.prose p{color:#cbd0d8;line-height:1.75;margin:0 0 1rem}
+/* Headings track the rest of the site: sans and tight, not monospace. Mono
+   stays where the site already uses it — code, kickers, metadata. */
+.prose{font-size:1.0625rem}
+.prose h2{font-weight:800;font-size:1.6rem;color:#fff;margin:2.4rem 0 .8rem;letter-spacing:-.015em}
+.prose h3{font-weight:700;font-size:1.2rem;color:#f3f4f6;margin:1.7rem 0 .5rem;
+  padding-left:.6rem;border-left:2px solid #ef4444;letter-spacing:-.01em}
+.prose p{color:#cbd0d8;line-height:1.75;margin:0 0 1.1rem}
 .prose a{color:#f87171;text-decoration:none;border-bottom:1px solid rgba(248,113,113,.35)}
 .prose a:hover{color:#fca5a5}
 .prose strong{color:#fff;font-weight:700}
@@ -34,21 +42,32 @@
   font-size:.78rem;text-transform:uppercase;letter-spacing:.03em}
 .prose td{padding:.5rem .7rem;border-bottom:1px solid #232330;color:#cbd0d8;vertical-align:top}
 .prose hr{border:0;border-top:1px solid #232330;margin:2rem 0}
+.prose > *:first-child{margin-top:0}
 </style>
 </head>
-<body class="bg-ink text-ash antialiased">
+<body class="antialiased overflow-x-clip">
 <!-- INCLUDE:NAV -->
-  <main id="main" class="mx-auto max-w-3xl px-5 py-16">
-    <a href="/blog/" class="text-sm text-smoke hover:text-flare">← Blog</a>
-    <header class="mt-4 mb-10 border-b border-edge pb-8">
-      <div class="flex items-center gap-3 mb-4">
+  <main id="main" class="mx-auto max-w-[76rem] px-5 pt-32 pb-20">
+    <nav class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-smoke">
+      <a class="hover:text-flare" href="/blog/">Blog</a>
+      <span class="text-edge-bright">/</span>
+      <span class="text-smoke">Retrospective</span>
+      <span class="text-edge-bright">/</span>
+      <span class="text-ash">Zero to a k6-and-JMeter competitor in four weeks</span>
+    </nav>
+
+    <header class="mt-5 border-b border-edge/60 pb-8">
+      <div class="flex flex-wrap items-center gap-3">
         <span class="rounded-full border px-2.5 py-0.5 text-xs font-semibold bg-panel text-ash border-edge">Retrospective</span>
-        <span class="text-xs text-smoke">7 Jul 2026 · 8 min read · The loadr team</span>
+        <time datetime="2026-07-07T10:20:00+01:00" class="font-mono text-xs text-smoke">7 Jul 2026 · 10:20</time>
+        <span class="font-mono text-xs text-smoke/70">8 min read</span>
       </div>
-      <h1 class="text-4xl font-black text-white leading-tight">Zero to a k6-and-JMeter competitor in four weeks</h1>
-      <p class="mt-4 text-lg text-smoke leading-relaxed">The first commit landed on 12 June. Four weeks and 180 commits later, loadr had seven protocols, a plugin ecosystem, a desktop app, and a DoS finder. Here&#x27;s how.</p>
+      <h1 class="mt-4 text-4xl font-black leading-tight tracking-tight text-white sm:text-5xl">Zero to a k6-and-JMeter competitor in four weeks</h1>
+      <p class="mt-4 max-w-3xl text-lg leading-relaxed text-smoke">The first commit landed on 12 June. Four weeks and 180 commits later, loadr had seven protocols, a plugin ecosystem, a desktop app, and a DoS finder. Here&#x27;s how.</p>
     </header>
-    <article class="prose">
+
+    <div class="lg:flex lg:gap-12 xl:gap-16">
+      <article class="prose min-w-0 flex-1 pt-10">
 <p>The first commit landed at <strong>10:57 on 12 June 2026</strong>. By the evening of 6 July — twenty-four working days later, across roughly <strong>180 commits</strong> — loadr had seven wire protocols, a QuickJS scripting engine, a WASM-and-native plugin system, distributed agents, a web UI, a signed Electron desktop app, a benchmark harness against the four incumbents, AI test generation, and a one-command algorithmic-DoS finder. This is the honest account of how a single binary went from an empty repo to a credible k6-and-JMeter competitor in four weeks — including the parts of "four weeks" that deserve an asterisk.</p>
 
 <h2>Day one was not a hello-world</h2>
@@ -122,13 +141,32 @@
 
 <p>None of that undercuts the result. In four weeks loadr went from nothing to a single binary that imports your JMeter and k6 scripts, speaks seven-plus protocols, scales across agents, ships a desktop GUI, generates tests from English, and finds algorithmic-complexity bugs — each capability landed on a foundation that was built to carry it. The velocity wasn't the point. It was the receipt.</p>
 
-    </article>
+      </article>
+    <aside class="mt-12 lg:mt-0 lg:w-[19rem] lg:shrink-0">
+      <div class="lg:sticky lg:top-28">
+        <div class="rounded-2xl border border-edge bg-panel p-5">
+          <dl class="space-y-4">
+            <div><dt class="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Published</dt><dd class="mt-1 text-sm text-ash"><time datetime="2026-07-07T10:20:00+01:00">7 Jul 2026 · 10:20</time></dd></div>
+            <div><dt class="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Author</dt><dd class="mt-1 text-sm text-ash">The loadr team</dd></div>
+            <div><dt class="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Reading time</dt><dd class="mt-1 text-sm text-ash">8 min</dd></div>
+            <div><dt class="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Category</dt><dd class="mt-1 text-sm text-ash"><a class="hover:text-flare" href="/blog/">Retrospective</a></dd></div>
+          </dl>
+        </div>
+        <div class="mt-6 rounded-2xl border border-edge bg-panel p-5">
+          <p class="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">More posts</p>
+          <ul class="mt-2 divide-y divide-edge/60"><li><a href="/blog/six-new-families/" class="group block py-2"><span class="block text-sm leading-snug text-ash group-hover:text-flare">What&#x27;s next: six new feature families</span><time datetime="2026-07-08T09:00:00+01:00" class="mt-0.5 block font-mono text-[11px] text-smoke/60">8 Jul 2026 · 09:00</time></a></li><li><a href="/blog/whats-new/" class="group block py-2"><span class="block text-sm leading-snug text-ash group-hover:text-flare">What&#x27;s New in loadr</span><time datetime="2026-07-06T14:05:00+01:00" class="mt-0.5 block font-mono text-[11px] text-smoke/60">6 Jul 2026 · 14:05</time></a></li><li><a href="/blog/finding-dos-bugs/" class="group block py-2"><span class="block text-sm leading-snug text-ash group-hover:text-flare">Teaching a load tester to find DoS bugs</span><time datetime="2026-07-06T08:30:00+01:00" class="mt-0.5 block font-mono text-[11px] text-smoke/60">6 Jul 2026 · 08:30</time></a></li></ul>
+          <a href="/blog/" class="mt-4 inline-block text-sm font-semibold text-flare hover:underline">All posts →</a>
+        </div>
+      </div>
+    </aside>
+    </div>
   </main>
-<footer class="border-t border-edge mt-20">
-  <div class="mx-auto max-w-3xl px-5 py-10 text-sm text-smoke flex flex-wrap gap-4 justify-between">
-    <span>© loadr — the load testing platform.</span>
+<footer class="border-t border-edge/60 bg-coal/40 mt-20">
+  <div class="mx-auto max-w-[76rem] px-5 py-10 text-sm text-smoke flex flex-wrap gap-4 justify-between">
+    <span>© 2026 loadr — the load testing platform.</span>
     <span><a class="hover:text-flare" href="/blog/">← All posts</a> ·
       <a class="hover:text-flare" href="https://github.com/levantar-ai/loadr">GitHub</a></span>
   </div>
 </footer>
+<script src="/assets/site.js" defer></script>
 </body></html>

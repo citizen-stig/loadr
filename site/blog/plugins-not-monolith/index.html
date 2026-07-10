@@ -1,20 +1,28 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="/assets/consent.js"></script>
 <title>A plugin ecosystem, not a monolith — loadr blog</title>
 <meta name="description" content="WASM, native Rust, and a plain C ABI so any language can add a protocol. How loadr keeps a single binary small while covering Postgres, Kafka, MQTT, Cassandra and 25 more.">
+<meta property="og:title" content="A plugin ecosystem, not a monolith — loadr blog">
+<meta property="og:description" content="WASM, native Rust, and a plain C ABI so any language can add a protocol. How loadr keeps a single binary small while covering Postgres, Kafka, MQTT, Cassandra and 25 more.">
+<meta property="og:url" content="https://loadr.io/blog/plugins-not-monolith/">
+<meta property="og:type" content="article">
+<link rel="canonical" href="https://loadr.io/blog/plugins-not-monolith/">
 <link rel="icon" type="image/png" sizes="64x64" href="/assets/favicon-64.png">
 <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 <link rel="alternate icon" href="/assets/favicon.ico">
 <link rel="stylesheet" href="/assets/site.css">
 <style>
-.prose h2{font-family:var(--font-mono,ui-monospace,monospace);font-weight:800;font-size:1.5rem;
-  color:#fff;margin:2.2rem 0 .8rem;letter-spacing:-.01em}
-.prose h3{font-family:var(--font-mono,ui-monospace,monospace);font-weight:700;font-size:1.15rem;
-  color:#f3f4f6;margin:1.6rem 0 .5rem;padding-left:.6rem;border-left:2px solid #ef4444}
-.prose p{color:#cbd0d8;line-height:1.75;margin:0 0 1rem}
+/* Headings track the rest of the site: sans and tight, not monospace. Mono
+   stays where the site already uses it — code, kickers, metadata. */
+.prose{font-size:1.0625rem}
+.prose h2{font-weight:800;font-size:1.6rem;color:#fff;margin:2.4rem 0 .8rem;letter-spacing:-.015em}
+.prose h3{font-weight:700;font-size:1.2rem;color:#f3f4f6;margin:1.7rem 0 .5rem;
+  padding-left:.6rem;border-left:2px solid #ef4444;letter-spacing:-.01em}
+.prose p{color:#cbd0d8;line-height:1.75;margin:0 0 1.1rem}
 .prose a{color:#f87171;text-decoration:none;border-bottom:1px solid rgba(248,113,113,.35)}
 .prose a:hover{color:#fca5a5}
 .prose strong{color:#fff;font-weight:700}
@@ -34,21 +42,32 @@
   font-size:.78rem;text-transform:uppercase;letter-spacing:.03em}
 .prose td{padding:.5rem .7rem;border-bottom:1px solid #232330;color:#cbd0d8;vertical-align:top}
 .prose hr{border:0;border-top:1px solid #232330;margin:2rem 0}
+.prose > *:first-child{margin-top:0}
 </style>
 </head>
-<body class="bg-ink text-ash antialiased">
+<body class="antialiased overflow-x-clip">
 <!-- INCLUDE:NAV -->
-  <main id="main" class="mx-auto max-w-3xl px-5 py-16">
-    <a href="/blog/" class="text-sm text-smoke hover:text-flare">← Blog</a>
-    <header class="mt-4 mb-10 border-b border-edge pb-8">
-      <div class="flex items-center gap-3 mb-4">
+  <main id="main" class="mx-auto max-w-[76rem] px-5 pt-32 pb-20">
+    <nav class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-smoke">
+      <a class="hover:text-flare" href="/blog/">Blog</a>
+      <span class="text-edge-bright">/</span>
+      <span class="text-smoke">Retrospective</span>
+      <span class="text-edge-bright">/</span>
+      <span class="text-ash">A plugin ecosystem, not a monolith</span>
+    </nav>
+
+    <header class="mt-5 border-b border-edge/60 pb-8">
+      <div class="flex flex-wrap items-center gap-3">
         <span class="rounded-full border px-2.5 py-0.5 text-xs font-semibold bg-panel text-ash border-edge">Architecture</span>
-        <span class="text-xs text-smoke">3 Jul 2026 · 7 min read · The loadr team</span>
+        <time datetime="2026-07-03T09:15:00+01:00" class="font-mono text-xs text-smoke">3 Jul 2026 · 09:15</time>
+        <span class="font-mono text-xs text-smoke/70">7 min read</span>
       </div>
-      <h1 class="text-4xl font-black text-white leading-tight">A plugin ecosystem, not a monolith</h1>
-      <p class="mt-4 text-lg text-smoke leading-relaxed">WASM, native Rust, and a plain C ABI so any language can add a protocol. How loadr keeps a single binary small while covering Postgres, Kafka, MQTT, Cassandra and 25 more.</p>
+      <h1 class="mt-4 text-4xl font-black leading-tight tracking-tight text-white sm:text-5xl">A plugin ecosystem, not a monolith</h1>
+      <p class="mt-4 max-w-3xl text-lg leading-relaxed text-smoke">WASM, native Rust, and a plain C ABI so any language can add a protocol. How loadr keeps a single binary small while covering Postgres, Kafka, MQTT, Cassandra and 25 more.</p>
     </header>
-    <article class="prose">
+
+    <div class="lg:flex lg:gap-12 xl:gap-16">
+      <article class="prose min-w-0 flex-1 pt-10">
 <p>Every load-testing tool eventually faces the same pressure: someone wants a protocol you don't ship. A team runs on NATS, or MQTT, or a bespoke binary framing over TCP, and now your options are "wait for us to add it" or "vendor a fork." JMeter answered with a sprawling plugin zoo behind a JVM. k6 answered with xk6, which recompiles the binary. loadr took a different bet — extend the tool at runtime, in the language of your choice, without rebuilding the core and without a JVM. This is the story of how that machinery came together and why the built-in database drivers eventually moved <em>out</em> of the binary.</p>
 
 <h2>Three ways in</h2>
@@ -109,13 +128,32 @@ void      loadr_plugin_free(uint8_t *ptr, size_t len);</code></pre>
 
 <p>Four plugin release trains later (<code>plugin-v1.0.0</code> through <code>plugin-v1.3.0</code>, 2026-06-15 to 07-02), the signed index carries close to 30 published native plugins across five roles: protocol drivers (the databases above, plus MQTT, NATS, Cassandra), outputs (Datadog, CloudWatch, OTLP, S3 archive, JUnit, Slack), request signers (SigV4, HMAC, OAuth2), extractors and assertions (CSS-select, XPath, JSON-schema, protobuf-decode, JWT-decode) — the WASM ones riding the WIT interface, the rest native. None of it is in the core binary. That's the whole point: the download stays small, the dependency graph stays honest, and the protocol <em>you</em> need is a <code>plugin install</code> away — or four exported C symbols, if we haven't written it yet.</p>
 
-    </article>
+      </article>
+    <aside class="mt-12 lg:mt-0 lg:w-[19rem] lg:shrink-0">
+      <div class="lg:sticky lg:top-28">
+        <div class="rounded-2xl border border-edge bg-panel p-5">
+          <dl class="space-y-4">
+            <div><dt class="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Published</dt><dd class="mt-1 text-sm text-ash"><time datetime="2026-07-03T09:15:00+01:00">3 Jul 2026 · 09:15</time></dd></div>
+            <div><dt class="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Author</dt><dd class="mt-1 text-sm text-ash">The loadr team</dd></div>
+            <div><dt class="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Reading time</dt><dd class="mt-1 text-sm text-ash">7 min</dd></div>
+            <div><dt class="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Category</dt><dd class="mt-1 text-sm text-ash"><a class="hover:text-flare" href="/blog/">Retrospective</a></dd></div>
+          </dl>
+        </div>
+        <div class="mt-6 rounded-2xl border border-edge bg-panel p-5">
+          <p class="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">More posts</p>
+          <ul class="mt-2 divide-y divide-edge/60"><li><a href="/blog/six-new-families/" class="group block py-2"><span class="block text-sm leading-snug text-ash group-hover:text-flare">What&#x27;s next: six new feature families</span><time datetime="2026-07-08T09:00:00+01:00" class="mt-0.5 block font-mono text-[11px] text-smoke/60">8 Jul 2026 · 09:00</time></a></li><li><a href="/blog/four-weeks/" class="group block py-2"><span class="block text-sm leading-snug text-ash group-hover:text-flare">Zero to a k6-and-JMeter competitor in four weeks</span><time datetime="2026-07-07T10:20:00+01:00" class="mt-0.5 block font-mono text-[11px] text-smoke/60">7 Jul 2026 · 10:20</time></a></li><li><a href="/blog/whats-new/" class="group block py-2"><span class="block text-sm leading-snug text-ash group-hover:text-flare">What&#x27;s New in loadr</span><time datetime="2026-07-06T14:05:00+01:00" class="mt-0.5 block font-mono text-[11px] text-smoke/60">6 Jul 2026 · 14:05</time></a></li></ul>
+          <a href="/blog/" class="mt-4 inline-block text-sm font-semibold text-flare hover:underline">All posts →</a>
+        </div>
+      </div>
+    </aside>
+    </div>
   </main>
-<footer class="border-t border-edge mt-20">
-  <div class="mx-auto max-w-3xl px-5 py-10 text-sm text-smoke flex flex-wrap gap-4 justify-between">
-    <span>© loadr — the load testing platform.</span>
+<footer class="border-t border-edge/60 bg-coal/40 mt-20">
+  <div class="mx-auto max-w-[76rem] px-5 py-10 text-sm text-smoke flex flex-wrap gap-4 justify-between">
+    <span>© 2026 loadr — the load testing platform.</span>
     <span><a class="hover:text-flare" href="/blog/">← All posts</a> ·
       <a class="hover:text-flare" href="https://github.com/levantar-ai/loadr">GitHub</a></span>
   </div>
 </footer>
+<script src="/assets/site.js" defer></script>
 </body></html>

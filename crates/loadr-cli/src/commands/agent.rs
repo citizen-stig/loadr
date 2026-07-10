@@ -36,12 +36,17 @@ pub struct AgentArgs {
     /// Override the TLS server name
     #[arg(long)]
     pub tls_domain: Option<String>,
+    /// Tokio worker threads for the agent (default: number of CPUs)
+    #[arg(long, env = "LOADR_WORKER_THREADS")]
+    pub worker_threads: Option<usize>,
 }
 
 pub fn execute(args: AgentArgs) -> anyhow::Result<i32> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    if let Some(n) = args.worker_threads {
+        builder.worker_threads(n.max(1));
+    }
+    let runtime = builder.enable_all().build()?;
     runtime.block_on(async move {
         let mut labels = HashMap::new();
         for label in &args.label {

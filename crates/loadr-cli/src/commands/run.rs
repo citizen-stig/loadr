@@ -52,12 +52,17 @@ pub struct RunArgs {
     /// Dump full HTTP requests and responses (verbose; sets LOADR_HTTP_DEBUG).
     #[arg(long)]
     pub http_debug: bool,
+    /// Tokio worker threads for the run (default: number of CPUs)
+    #[arg(long, env = "LOADR_WORKER_THREADS")]
+    pub worker_threads: Option<usize>,
 }
 
 pub fn execute(args: RunArgs, quiet: bool) -> anyhow::Result<i32> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    if let Some(n) = args.worker_threads {
+        builder.worker_threads(n.max(1));
+    }
+    let runtime = builder.enable_all().build()?;
     runtime.block_on(async move {
         match &args.controller {
             Some(addr) => submit_remote(&args, addr).await,

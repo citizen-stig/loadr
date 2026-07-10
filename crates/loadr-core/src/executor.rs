@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use loadr_config::ExecutorSpec;
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{mpsc, watch, Notify};
 use tokio_util::sync::CancellationToken;
 
 use crate::flow::{FlowRunner, IterationOutcome};
@@ -608,6 +608,22 @@ impl RateSchedule {
     }
 }
 
+/// Arrival dispatch tick. Arrivals due within one tick are released as a
+/// single burst, so the tick bounds both scheduling precision and burst size
+/// (e.g. at 150k/s a 5ms tick wakes ~750 workers back-to-back). Tunable via
+/// `LOADR_DISPATCH_TICK_US`; 1000 is recommended above ~50k/s per process.
+fn dispatch_tick() -> Duration {
+    static TICK: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *TICK.get_or_init(|| {
+        let us = std::env::var("LOADR_DISPATCH_TICK_US")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(5000)
+            .clamp(250, 1_000_000);
+        Duration::from_micros(us)
+    })
+}
+
 /// Open-model executors: a dispatcher starts iterations on schedule via a pool
 /// of workers, growing the pool to `max_vus` and recording dropped iterations
 /// when starved.
@@ -628,40 +644,43 @@ async fn run_arrival_rate(
         spec.graceful_stop,
     );
 
-    // Idle workers park a oneshot here; the dispatcher fires it to start an iteration.
-    let (idle_tx, mut idle_rx) = mpsc::unbounded_channel::<oneshot::Sender<()>>();
+    // Idle workers park their wake handle here; the dispatcher fires it to
+    // start an iteration. One `Notify` per worker for its whole lifetime — a
+    // `notify_one` that races the worker's `notified()` registration is
+    // stored as a permit, so wakes are never lost and no per-iteration
+    // channel allocation is needed.
+    let (idle_tx, mut idle_rx) = mpsc::unbounded_channel::<Arc<Notify>>();
     let mut worker_handles = Vec::new();
-    let spawn_worker =
-        |run_first: bool,
-         env: ExecEnv,
-         cancel: CancellationToken,
-         idle_tx: mpsc::UnboundedSender<oneshot::Sender<()>>| {
-            tokio::spawn(async move {
-                let mut worker = env.new_worker();
-                env.active_vus.fetch_add(1, Ordering::Relaxed);
-                let mut first = run_first;
-                loop {
-                    if !first {
-                        let (tx, rx) = oneshot::channel();
-                        if idle_tx.send(tx).is_err() {
-                            break;
-                        }
-                        tokio::select! {
-                            _ = cancel.cancelled() => break,
-                            r = rx => { if r.is_err() { break; } }
-                        }
-                    }
-                    first = false;
-                    if cancel.is_cancelled() {
+    let spawn_worker = |run_first: bool,
+                        env: ExecEnv,
+                        cancel: CancellationToken,
+                        idle_tx: mpsc::UnboundedSender<Arc<Notify>>| {
+        tokio::spawn(async move {
+            let mut worker = env.new_worker();
+            env.active_vus.fetch_add(1, Ordering::Relaxed);
+            let wake = Arc::new(Notify::new());
+            let mut first = run_first;
+            loop {
+                if !first {
+                    if idle_tx.send(wake.clone()).is_err() {
                         break;
                     }
-                    if !env.run_one(&mut worker, &cancel).await {
-                        break;
+                    tokio::select! {
+                        _ = cancel.cancelled() => break,
+                        _ = wake.notified() => {}
                     }
                 }
-                env.active_vus.fetch_sub(1, Ordering::Relaxed);
-            })
-        };
+                first = false;
+                if cancel.is_cancelled() {
+                    break;
+                }
+                if !env.run_one(&mut worker, &cancel).await {
+                    break;
+                }
+            }
+            env.active_vus.fetch_sub(1, Ordering::Relaxed);
+        })
+    };
 
     for _ in 0..pre_allocated {
         worker_handles.push(spawn_worker(
@@ -677,7 +696,7 @@ async fn run_arrival_rate(
     let scenario_tags = env.runner.program.tags.clone();
     let started = Instant::now();
     let mut emitted: f64 = 0.0; // fractional iterations owed
-    let mut ticker = tokio::time::interval(Duration::from_millis(5));
+    let mut ticker = tokio::time::interval(dispatch_tick());
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Burst);
     let mut last = Instant::now();
 
@@ -701,8 +720,8 @@ async fn run_arrival_rate(
         while emitted >= 1.0 {
             emitted -= 1.0;
             match idle_rx.try_recv() {
-                Ok(tx) => {
-                    let _ = tx.send(());
+                Ok(wake) => {
+                    wake.notify_one();
                 }
                 Err(_) => {
                     if allocated < max_vus {

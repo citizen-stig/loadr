@@ -188,6 +188,9 @@ struct CachedCall {
     method_name: String,
     reflection: bool,
     proto_files: Vec<PathBuf>,
+    /// Part of the identity: the same files can resolve differently under
+    /// different include roots.
+    proto_includes: Vec<PathBuf>,
     pool_size: Option<usize>,
     input_desc: prost_reflect::MessageDescriptor,
     path: http::uri::PathAndQuery,
@@ -211,6 +214,7 @@ impl CachedCall {
             && self.method_name == grpc.method
             && self.reflection == grpc.reflection
             && self.proto_files == grpc.proto_files
+            && self.proto_includes == grpc.proto_includes
             && self.pool_size == grpc.channel_pool_size
     }
 }
@@ -570,6 +574,7 @@ impl ProtocolHandler for GrpcHandler {
                     method_name: grpc.method.clone(),
                     reflection: grpc.reflection,
                     proto_files: grpc.proto_files.clone(),
+                    proto_includes: grpc.proto_includes.clone(),
                     pool_size: grpc.channel_pool_size,
                     input_desc: method.input(),
                     path,

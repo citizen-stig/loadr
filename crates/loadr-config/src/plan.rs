@@ -1951,6 +1951,18 @@ pub enum DataSource {
         #[serde(default)]
         pick: PickStrategy,
     },
+    /// Rows generated on demand by a `data_source`-capable plugin listed
+    /// under `plugins:`. Rows are per-request: each request preparation
+    /// pulls a fresh row; a plugin that reports exhaustion retires the VU
+    /// (like `on_eof: stop`). No `mode`/`on_eof`/`pick` — those describe
+    /// stored-row iteration, which doesn't apply here.
+    Plugin {
+        /// Plugin name (a `plugins:` entry) that generates the rows.
+        source: String,
+        /// Source-level config passed to the plugin at init.
+        #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+        config: serde_json::Value,
+    },
 }
 
 /// Where a secret's value comes from.
@@ -2384,5 +2396,35 @@ flow:
         let c: Condition =
             serde_yaml::from_str("{ type: duration, max: 500ms, name: fast }").unwrap();
         assert_eq!(c.display_name(), "fast");
+    }
+
+    #[test]
+    fn plugin_data_source_round_trips() {
+        let ds: DataSource =
+            serde_yaml::from_str("{ type: plugin, source: tx-signer, config: { chain_id: t-1 } }")
+                .expect("parse");
+        match &ds {
+            DataSource::Plugin { source, config } => {
+                assert_eq!(source, "tx-signer");
+                assert_eq!(config["chain_id"], "t-1");
+            }
+            other => panic!("expected DataSource::Plugin, got {other:?}"),
+        }
+        let yaml = serde_yaml::to_string(&ds).expect("serialize");
+        let back: DataSource = serde_yaml::from_str(&yaml).expect("reparse");
+        assert!(matches!(back, DataSource::Plugin { .. }));
+    }
+
+    #[test]
+    fn plugin_data_source_config_defaults_to_null() {
+        let ds: DataSource =
+            serde_yaml::from_str("{ type: plugin, source: tx-signer }").expect("parse");
+        match &ds {
+            DataSource::Plugin { source, config } => {
+                assert_eq!(source, "tx-signer");
+                assert!(config.is_null());
+            }
+            other => panic!("expected DataSource::Plugin, got {other:?}"),
+        }
     }
 }

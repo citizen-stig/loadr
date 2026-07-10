@@ -34,6 +34,7 @@ impl Echo for EchoService {
         Ok(Response::new(EchoResponse {
             message: req.message,
             index: 0,
+            payload: req.payload,
         }))
     }
 
@@ -46,10 +47,12 @@ impl Echo for EchoService {
         let req = request.into_inner();
         let repeat = if req.repeat > 0 { req.repeat } else { 3 };
         let message = req.message;
+        let payload = req.payload;
         let stream = futures::stream::iter((0..repeat).map(move |index| {
             Ok(EchoResponse {
                 message: message.clone(),
                 index,
+                payload: payload.clone(),
             })
         }));
         Ok(Response::new(Box::pin(stream)))
@@ -61,14 +64,17 @@ impl Echo for EchoService {
     ) -> EchoResult<EchoResponse> {
         let mut inbound = request.into_inner();
         let mut combined = String::new();
+        let mut payload = Vec::new();
         let mut count = 0i32;
         while let Some(req) = inbound.message().await? {
             combined.push_str(&req.message);
+            payload = req.payload;
             count += 1;
         }
         Ok(Response::new(EchoResponse {
             message: combined,
             index: count,
+            payload,
         }))
     }
 
@@ -87,6 +93,7 @@ impl Echo for EchoService {
                         Ok(EchoResponse {
                             message: req.message,
                             index,
+                            payload: req.payload,
                         }),
                         (Some(inbound), index + 1),
                     )),

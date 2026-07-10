@@ -1,6 +1,7 @@
 //! `loadr run` — standalone runs (optionally with the live web UI) and
 //! submission to a distributed controller.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -142,6 +143,7 @@ pub fn build_engine(
         .unwrap_or_else(loadr_plugin_api::default_plugins_dir);
     let mut outputs = extra_outputs;
     let mut services: Vec<Box<dyn loadr_plugin_api::ServicePlugin>> = Vec::new();
+    let mut data_sources: HashMap<String, Box<dyn loadr_core::DataSourcePlugin>> = HashMap::new();
     for plugin_ref in &plan.plugins {
         if !plugin_ref.enabled {
             continue;
@@ -151,7 +153,20 @@ pub fn build_engine(
         match loaded {
             loadr_plugin_api::LoadedPlugin::Protocol(handler) => protocols.register(handler),
             loadr_plugin_api::LoadedPlugin::Output(output) => outputs.push(output),
-            loadr_plugin_api::LoadedPlugin::Service(service) => services.push(service),
+            loadr_plugin_api::LoadedPlugin::Service {
+                service,
+                data_source,
+            } => {
+                if let Some(service) = service {
+                    services.push(service);
+                }
+                if let Some(data_source) = data_source {
+                    // Keyed by the plan's `plugins:` name, not the plugin's
+                    // self-reported `info().name` -- that's what
+                    // `data.<name>.source` and validation refer to.
+                    data_sources.insert(plugin_ref.name.clone(), data_source);
+                }
+            }
             loadr_plugin_api::LoadedPlugin::Extractor(_)
             | loadr_plugin_api::LoadedPlugin::Assertion(_) => {
                 tracing::info!(
@@ -191,6 +206,7 @@ pub fn build_engine(
             protocols,
             script,
             outputs,
+            data_sources,
             ..Default::default()
         },
     )?;

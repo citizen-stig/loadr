@@ -25,6 +25,7 @@ pub mod thresholds;
 pub mod vu;
 
 pub use aggregate::{AggValues, Aggregator, MetricsDelta, SeriesSnapshot, Snapshot};
+pub use data::{DataSourcePlugin, PluginRowCtx, PluginRowResult, RowIdentity};
 pub use engine::{Engine, EngineOptions, RunHandle, RunResult, RunStatus};
 pub use error::{EngineError, ProtocolError, ScriptError};
 pub use executor::partition_spec;

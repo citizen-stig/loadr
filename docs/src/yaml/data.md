@@ -47,3 +47,73 @@ scenarios:
 
 From JS, fetch the current row with `session.data('users')` →
 `{username: "...", password: "..."}`.
+
+## Plugin-backed (on-demand) sources
+
+`type: plugin` generates a row per **request**, on demand, from a native
+plugin that provides the `data_source` capability — instead of loading rows
+from a file up front. Use it when a value can't be pre-generated, e.g. a
+time-sensitive, cryptographically signed payload that must land inside a
+protobuf `bytes` field:
+
+```yaml
+plugins:
+  - name: tx-signer
+    path: ./target/release/libtx_signer.so
+    config: { seed: 42 }
+
+data:
+  signed_tx:
+    type: plugin
+    source: tx-signer      # a plugins: entry providing data_source
+    config:
+      chain_id: testnet-1
+
+scenarios:
+  submit:
+    executor: constant-vus
+    vus: 100
+    duration: 5m
+    flow:
+      - request:
+          name: submit tx
+          protocol: grpc
+          url: grpc://node:50051
+          grpc:
+            proto_files: [submit.proto]
+            service: mempool.Submitter
+            method: Submit
+            message:
+              tx: "${data.signed_tx.tx_b64}"   # bytes field <- base64 string
+          checks:
+            - { type: status, equals: 0 }
+```
+
+The config surface is exactly `{ type: plugin, source: <plugin>, config:
+<object> }`. **`mode`, `on_eof` and `pick` do not apply** and are ignored if
+present — those describe iterating over a stored set of rows, which doesn't
+exist here; a plugin generates every row fresh, per call.
+
+**Freshness is per-request, not per-iteration.** CSV/JSON/inline sources
+cache one row per iteration (all references in the same iteration see the
+same row). Plugin-backed sources instead cache one row per **request
+preparation**: every `${data.<name>.*}` field rendered while preparing a
+single request sees the same generated row, but the next request in the same
+iteration — or a retried request — gets a fresh one. This matters for a flow
+that sends two signed submissions per iteration: they must not reuse the
+same signature.
+
+**Exhaustion retires the VU**, the same as `on_eof: stop` for a finite CSV.
+**Plugin errors count as failed requests** (tagged `error:prepare` on
+`http_req_failed`) and the run continues — a transient signing failure does
+not abort the whole test.
+
+**Distributed runs:** the plugin must be installed locally on every agent;
+native plugin binaries are never shipped from the controller to agents. An
+assignment referencing a plugin without the `data_source` capability (or not
+loaded at all) fails cleanly before the synchronized start barrier.
+
+See [Native data-source plugins](../plugins/developing.md#native-data-source-plugins)
+for how to write one, and
+[the gRPC feeder design](../custom-grpc-plugin-feeder.md) for the motivating
+use case.

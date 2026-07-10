@@ -406,6 +406,7 @@ fn handle_assignment(
             partition: Some((a.partition_index, a.partition_count)),
             extra_tags,
             snapshot_interval: Duration::from_millis(500),
+            data_sources: Default::default(),
         },
     )
     .map_err(|e| format!("engine setup failed: {e}"))?;

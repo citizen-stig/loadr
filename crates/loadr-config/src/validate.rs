@@ -146,6 +146,26 @@ pub fn validate(plan: &TestPlan, source: Option<&str>, opts: &ValidateOptions) -
                     ctx.error(format!("data.{name}.rows"), "inline data has no rows");
                 }
             }
+            DataSource::Plugin { source, .. } => {
+                if source.is_empty() {
+                    ctx.error(
+                        format!("data.{name}.source"),
+                        "plugin data source needs a `source` plugin name",
+                    );
+                } else if !ctx.plan.plugins.iter().any(|p| &p.name == source) {
+                    ctx.push(
+                        Diagnostic::error(
+                            format!("data.{name}.source"),
+                            format!(
+                                "data source references plugin `{source}` which is not listed under `plugins:`"
+                            ),
+                        )
+                        .with_suggestion(
+                            "declare the plugin under `plugins:`; it must provide the data_source capability",
+                        ),
+                    );
+                }
+            }
         }
     }
 
@@ -1338,5 +1358,51 @@ scenarios:
         };
         let diags = validate(&plan, Some(yaml), &opts);
         assert!(diags.iter().any(|d| d.message.contains("file not found")));
+    }
+
+    #[test]
+    fn plugin_data_source_needs_declared_plugin() {
+        let yaml = r#"
+data:
+  signed_tx: { type: plugin, source: tx-signer }
+scenarios:
+  s: { executor: constant-vus, vus: 1, duration: 1s, flow: [ { request: { url: https://e.com/ } } ] }
+"#;
+        let diags = errors(yaml);
+        assert!(diags.iter().any(|d| d.path == "data.signed_tx.source"
+            && d.message.contains("not listed under `plugins:`")));
+    }
+
+    #[test]
+    fn plugin_data_source_with_empty_source_name() {
+        let yaml = r#"
+data:
+  signed_tx: { type: plugin, source: "" }
+scenarios:
+  s: { executor: constant-vus, vus: 1, duration: 1s, flow: [ { request: { url: https://e.com/ } } ] }
+"#;
+        let diags = errors(yaml);
+        assert!(diags
+            .iter()
+            .any(|d| d.path == "data.signed_tx.source" && d.message.contains("needs a `source`")));
+    }
+
+    #[test]
+    fn plugin_data_source_with_declared_plugin_is_valid() {
+        let yaml = r#"
+plugins:
+  - { name: tx-signer, path: ./libtx_signer.so }
+data:
+  signed_tx: { type: plugin, source: tx-signer, config: { chain_id: testnet-1 } }
+scenarios:
+  s:
+    executor: constant-vus
+    vus: 1
+    duration: 1s
+    flow:
+      - request: { url: "https://e.com/${data.signed_tx.tx_b64}" }
+"#;
+        let diags = errors(yaml);
+        assert!(diags.is_empty(), "expected no errors, got: {diags:?}");
     }
 }

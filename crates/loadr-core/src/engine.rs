@@ -44,6 +44,9 @@ pub struct EngineOptions {
     /// Extra tags on every sample (e.g. `instance` in distributed mode).
     pub extra_tags: Tags,
     pub snapshot_interval: Duration,
+    /// Loaded `data_source`-capable plugins, keyed by the `plugins:` name
+    /// that `data.<name>.source` refers to.
+    pub data_sources: HashMap<String, Box<dyn crate::data::DataSourcePlugin>>,
 }
 
 impl Default for EngineOptions {
@@ -56,6 +59,7 @@ impl Default for EngineOptions {
             partition: None,
             extra_tags: Tags::new(),
             snapshot_interval: Duration::from_secs(1),
+            data_sources: HashMap::new(),
         }
     }
 }
@@ -236,7 +240,7 @@ impl Engine {
         let builtins = Arc::new(BuiltinMetrics::resolve(&registry));
 
         // Data feeds.
-        let data = crate::data::DataFeeds::load(&plan.data, &base_dir)?;
+        let data = crate::data::DataFeeds::load(&plan.data, &base_dir, opts.data_sources)?;
         let gauge_tags = Arc::new(plan.defaults.tags.clone());
 
         let run_ctx = Arc::new(RunContext {

@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 use loadr_config::{DataMode, DataSource, OnEof, PickStrategy};
+use parking_lot::Mutex;
 use rand::seq::SliceRandom;
 use rand::RngExt;
 
@@ -80,16 +81,34 @@ impl std::fmt::Debug for Feed {
     }
 }
 
-/// Per-VU feeder state: sequential cursors and per-VU shuffle orders.
+/// Per-VU feeder state: sequential cursors, per-VU shuffle orders, and
+/// plugin row sequence counters.
 #[derive(Debug, Default)]
 pub struct VuFeedState {
     cursors: HashMap<String, usize>,
     shuffles: HashMap<String, Vec<usize>>,
+    plugin_sequences: Arc<Mutex<HashMap<String, u64>>>,
 }
 
 impl VuFeedState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub(crate) fn fork_for_parallel(&self) -> Self {
+        Self {
+            cursors: HashMap::new(),
+            shuffles: HashMap::new(),
+            plugin_sequences: Arc::clone(&self.plugin_sequences),
+        }
+    }
+
+    fn next_plugin_seq(&self, source: &str) -> u64 {
+        let mut sequences = self.plugin_sequences.lock();
+        let seq = sequences.entry(source.to_string()).or_insert(0);
+        let current = *seq;
+        *seq += 1;
+        current
     }
 }
 
@@ -334,11 +353,7 @@ impl DataFeeds {
 
         let feed = match feed {
             Feed::Plugin(plugin) => {
-                // Reuse the per-VU cursor slot as the monotonic per-source
-                // sequence counter (read then post-increment).
-                let seq_cell = state.cursors.entry(source.to_string()).or_insert(0);
-                let seq = *seq_cell as u64;
-                *seq_cell += 1;
+                let seq = state.next_plugin_seq(source);
                 let ctx = PluginRowCtx {
                     source,
                     vu: id.vu,
@@ -784,6 +799,29 @@ mod tests {
         let r2 = feeds
             .next_row("signed", &mut st, &mut r, &id())
             .expect("row");
+        assert_eq!(r1["seq"], "0");
+        assert_eq!(r2["seq"], "1");
+    }
+
+    #[test]
+    fn plugin_source_seq_is_shared_across_parallel_forks() {
+        let (plugin, _handle) = fake_plugin("signer", FakeMode::EchoSeq);
+        let mut plugins: HashMap<String, Box<dyn DataSourcePlugin>> = HashMap::new();
+        plugins.insert("signer".to_string(), Box::new(plugin));
+        let feeds =
+            DataFeeds::load(&plugin_source("signer"), Path::new("."), plugins).expect("load");
+        let parent = VuFeedState::new();
+        let mut branch_a = parent.fork_for_parallel();
+        let mut branch_b = parent.fork_for_parallel();
+        let mut r = rng();
+
+        let r1 = feeds
+            .next_row("signed", &mut branch_a, &mut r, &id())
+            .expect("row");
+        let r2 = feeds
+            .next_row("signed", &mut branch_b, &mut r, &id())
+            .expect("row");
+
         assert_eq!(r1["seq"], "0");
         assert_eq!(r2["seq"], "1");
     }

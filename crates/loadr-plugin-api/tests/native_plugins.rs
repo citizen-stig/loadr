@@ -206,6 +206,86 @@ async fn protocol_plugin_config_prefix_fallback() {
     assert_eq!(&response.body[..], b"CFG:zyx");
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn protocol_plugin_concurrent_handlers_keep_configs_isolated() {
+    let plugin = NativePlugin::load(&protocol_so()).expect("load protocol plugin");
+    let left_handler = Arc::new(
+        plugin
+            .make_protocol(serde_json::json!({"prefix": "LEFT-CONFIG:"}))
+            .expect("make left protocol"),
+    );
+    let right_handler = Arc::new(
+        plugin
+            .make_protocol(serde_json::json!({"prefix": "RIGHT-CONFIG:"}))
+            .expect("make right protocol"),
+    );
+
+    let left_request = PreparedRequest {
+        name: "left echo".into(),
+        protocol: "echo-proto".into(),
+        method: "SEND".into(),
+        url: "echo://left".into(),
+        headers: Vec::new(),
+        body: bytes::Bytes::from_static(b"left-body"),
+        timeout: Duration::from_secs(5),
+        follow_redirects: false,
+        max_redirects: 0,
+        options: RequestOptions::default(),
+    };
+    let right_request = PreparedRequest {
+        name: "right echo".into(),
+        protocol: "echo-proto".into(),
+        method: "SEND".into(),
+        url: "echo://right".into(),
+        headers: Vec::new(),
+        body: bytes::Bytes::from_static(b"right-body"),
+        timeout: Duration::from_secs(5),
+        follow_redirects: false,
+        max_redirects: 0,
+        options: RequestOptions::default(),
+    };
+
+    let start = Arc::new(tokio::sync::Barrier::new(2));
+    let run_calls = |handler: Arc<loadr_plugin_api::NativeProtocolAdapter>,
+                     start: Arc<tokio::sync::Barrier>,
+                     mut vu: VuContext,
+                     request: PreparedRequest,
+                     expected: &'static [u8]| async move {
+        start.wait().await;
+        for iteration in 0..256 {
+            let response = handler
+                .execute(&mut vu, &request)
+                .await
+                .expect("execute protocol");
+            assert_eq!(
+                &response.body[..],
+                expected,
+                "handler config mixed on iteration {iteration}"
+            );
+            tokio::task::yield_now().await;
+        }
+    };
+
+    let left_task = tokio::spawn(run_calls(
+        left_handler,
+        Arc::clone(&start),
+        minimal_vu(),
+        left_request,
+        b"LEFT-CONFIG:ydob-tfel",
+    ));
+    let right_task = tokio::spawn(run_calls(
+        right_handler,
+        start,
+        minimal_vu(),
+        right_request,
+        b"RIGHT-CONFIG:ydob-thgir",
+    ));
+
+    let (left_result, right_result) = tokio::join!(left_task, right_task);
+    left_result.expect("left handler task");
+    right_result.expect("right handler task");
+}
+
 #[test]
 fn kind_mismatch_constructors_error() {
     let plugin = NativePlugin::load(&output_so()).expect("load output plugin");

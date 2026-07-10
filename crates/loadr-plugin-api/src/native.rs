@@ -16,6 +16,7 @@ use base64::Engine as _;
 use bytes::Bytes;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 
 use loadr_core::data::{DataSourcePlugin, PluginRowCtx, PluginRowResult, Row};
 use loadr_core::error::{EngineError, ProtocolError};
@@ -150,7 +151,7 @@ impl NativePlugin {
         config: serde_json::Value,
     ) -> Result<NativeProtocolAdapter, PluginError> {
         match self.module.make_protocol() {
-            ROption::RSome(ctor) => Ok(NativeProtocolAdapter::new(ctor(), config)),
+            ROption::RSome(ctor) => NativeProtocolAdapter::new(ctor(), config),
             ROption::RNone => Err(self.missing("protocol")),
         }
     }
@@ -259,7 +260,7 @@ impl Output for NativeOutputAdapter {
 /// Bridges an FFI protocol plugin to `loadr_core::ProtocolHandler`.
 pub struct NativeProtocolAdapter {
     name: String,
-    config: serde_json::Value,
+    config: CachedProtocolConfig,
     inner: Arc<FfiProtocolBox>,
 }
 
@@ -272,14 +273,73 @@ impl std::fmt::Debug for NativeProtocolAdapter {
 }
 
 impl NativeProtocolAdapter {
-    fn new(inner: FfiProtocolBox, config: serde_json::Value) -> Self {
+    fn new(inner: FfiProtocolBox, config: serde_json::Value) -> Result<Self, PluginError> {
         let name = inner.name().into_string();
-        NativeProtocolAdapter {
+        let config = cache_protocol_config(config)?;
+        Ok(NativeProtocolAdapter {
             name,
             config,
             inner: Arc::new(inner),
+        })
+    }
+}
+
+pub(crate) type CachedProtocolConfig = Arc<RawValue>;
+
+pub(crate) fn cache_protocol_config(
+    config: serde_json::Value,
+) -> Result<CachedProtocolConfig, PluginError> {
+    let config = serde_json::value::to_raw_value(&config)
+        .map_err(|e| PluginError::Other(format!("cannot encode native plugin config: {e}")))?;
+    Ok(Arc::from(config))
+}
+
+/// Host-only ABI-v1 wire representation. Unlike the public [`FfiRequest`],
+/// this borrows dynamic request values and embeds the cached config through
+/// [`RawValue`] so serde does not traverse it again.
+#[derive(Serialize)]
+struct WireFfiRequest<'a> {
+    name: &'a str,
+    method: &'a str,
+    url: &'a str,
+    headers: &'a [(String, String)],
+    body_b64: &'a str,
+    timeout_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    options: Option<&'a serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    config: Option<&'a RawValue>,
+}
+
+impl<'a> WireFfiRequest<'a> {
+    fn new(request: &'a PreparedRequest, body_b64: &'a str, config: &'a RawValue) -> Self {
+        WireFfiRequest {
+            name: &request.name,
+            method: &request.method,
+            url: &request.url,
+            headers: &request.headers,
+            body_b64,
+            timeout_ms: request.timeout.as_millis() as u64,
+            options: request.options.plugin.as_ref(),
+            config: (config.get() != "null").then_some(config),
         }
     }
+}
+
+pub(crate) fn ffi_request_to_string(
+    request: &PreparedRequest,
+    config: &RawValue,
+) -> Result<String, serde_json::Error> {
+    let body_b64 = base64::engine::general_purpose::STANDARD.encode(&request.body);
+    serde_json::to_string(&WireFfiRequest::new(request, &body_b64, config))
+}
+
+pub(crate) fn ffi_request_to_vec(
+    request: &PreparedRequest,
+    config: &RawValue,
+) -> Result<Vec<u8>, serde_json::Error> {
+    let body_b64 = base64::engine::general_purpose::STANDARD.encode(&request.body);
+    serde_json::to_vec(&WireFfiRequest::new(request, &body_b64, config))
 }
 
 pub(crate) struct OwnedFfiRequest {
@@ -622,5 +682,206 @@ mod tests {
 
         let response = execute.await.expect("slow plugin response");
         assert_eq!(response.status, 200);
+    }
+}
+#[cfg(test)]
+mod tests {
+    use std::hint::black_box;
+    use std::time::{Duration, Instant};
+
+    use base64::Engine as _;
+    use loadr_core::RequestOptions;
+
+    use super::*;
+
+    fn prepared_request(options: Option<serde_json::Value>) -> PreparedRequest {
+        PreparedRequest {
+            name: "request \"name\"\n".into(),
+            protocol: "fixture".into(),
+            method: "M\\ETHOD".into(),
+            url: "fixture://host/path?value=\"quoted\"&unicode=\u{2603}".into(),
+            headers: vec![
+                ("x-quote".into(), "\"\\\n\t".into()),
+                ("x-unicode".into(), "caf\u{e9}".into()),
+            ],
+            body: Bytes::from_static(b"\0ffi body\xff"),
+            timeout: Duration::from_millis(1_234),
+            follow_redirects: false,
+            max_redirects: 0,
+            options: RequestOptions {
+                plugin: options,
+                ..Default::default()
+            },
+        }
+    }
+
+    fn public_ffi_request(request: &PreparedRequest, config: serde_json::Value) -> FfiRequest {
+        FfiRequest {
+            name: request.name.clone(),
+            method: request.method.clone(),
+            url: request.url.clone(),
+            headers: request.headers.clone(),
+            body_b64: base64::engine::general_purpose::STANDARD.encode(&request.body),
+            timeout_ms: request.timeout.as_millis() as u64,
+            options: request.options.plugin.clone(),
+            config,
+        }
+    }
+
+    #[test]
+    fn cached_wire_request_matches_public_ffi_request_exactly() {
+        let cases = [
+            ("null", serde_json::Value::Null),
+            ("empty object", serde_json::json!({})),
+            (
+                "nested object",
+                serde_json::json!({
+                    "outer": {
+                        "array": [1, true, null, "quote \" slash \\ line\n"],
+                        "object": {"key": "value"}
+                    }
+                }),
+            ),
+            (
+                "array",
+                serde_json::json!([1, "two", false, {"nested": null}]),
+            ),
+            (
+                "escaped string",
+                serde_json::json!("quotes \" backslash \\ newline\n tab\t control\u{0001}"),
+            ),
+            ("boolean", serde_json::json!(true)),
+            ("integer", serde_json::json!(9_007_199_254_740_991_i64)),
+            ("number", serde_json::json!(-12.5)),
+        ];
+
+        for (label, config) in cases {
+            let request = prepared_request(Some(serde_json::json!({
+                "dynamic": "value \"with\" escapes\\and\nlines"
+            })));
+            let public = public_ffi_request(&request, config.clone());
+            let expected_string = serde_json::to_string(&public).expect("serialize public request");
+            let expected_value = serde_json::to_value(&public).expect("value of public request");
+            let cached = cache_protocol_config(config.clone()).expect("cache config");
+
+            let actual_string =
+                ffi_request_to_string(&request, &cached).expect("serialize cached request");
+            let actual_vec = ffi_request_to_vec(&request, &cached).expect("serialize cached bytes");
+            let actual_value: serde_json::Value =
+                serde_json::from_str(&actual_string).expect("parse cached request");
+
+            assert_eq!(
+                actual_string, expected_string,
+                "string wire mismatch: {label}"
+            );
+            assert_eq!(
+                actual_vec,
+                expected_string.as_bytes(),
+                "byte wire mismatch: {label}"
+            );
+            assert_eq!(actual_value, expected_value, "JSON value mismatch: {label}");
+
+            let actual_config = actual_value
+                .as_object()
+                .expect("wire request object")
+                .get("config");
+            if config.is_null() {
+                assert!(actual_config.is_none(), "null config must be omitted");
+            } else {
+                assert_eq!(
+                    actual_config,
+                    Some(&config),
+                    "config JSON type changed: {label}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cached_wire_request_preserves_omission_and_scalar_types() {
+        let request = prepared_request(None);
+        let null = cache_protocol_config(serde_json::Value::Null).expect("cache null");
+        let value: serde_json::Value = serde_json::from_str(
+            &ffi_request_to_string(&request, &null).expect("serialize null config"),
+        )
+        .expect("parse request");
+        let object = value.as_object().expect("wire request object");
+        assert!(!object.contains_key("options"));
+        assert!(!object.contains_key("config"));
+
+        for config in [
+            serde_json::json!("scalar \"string\""),
+            serde_json::json!(false),
+            serde_json::json!(42),
+        ] {
+            let cached = cache_protocol_config(config.clone()).expect("cache scalar");
+            let value: serde_json::Value = serde_json::from_str(
+                &ffi_request_to_string(&request, &cached).expect("serialize scalar config"),
+            )
+            .expect("parse request");
+            assert_eq!(value.get("config"), Some(&config));
+            assert_eq!(
+                std::mem::discriminant(value.get("config").expect("embedded config")),
+                std::mem::discriminant(&config),
+                "cached scalar must retain its original JSON type",
+            );
+        }
+    }
+
+    fn config_with_serialized_size(bytes: usize) -> serde_json::Value {
+        const EMPTY_OBJECT_BYTES: usize = 2;
+        const OBJECT_OVERHEAD_BYTES: usize = r#"{"payload":""}"#.len();
+        if bytes == EMPTY_OBJECT_BYTES {
+            return serde_json::json!({});
+        }
+        assert!(bytes >= OBJECT_OVERHEAD_BYTES);
+        serde_json::json!({"payload": "x".repeat(bytes - OBJECT_OVERHEAD_BYTES)})
+    }
+
+    /// Run with:
+    /// `cargo test -p loadr-plugin-api --release cached_config_marshalling_benchmark -- --ignored --nocapture`
+    #[test]
+    #[ignore = "manual release-mode marshalling benchmark"]
+    fn cached_config_marshalling_benchmark() {
+        let request = prepared_request(Some(serde_json::json!({"dynamic": true})));
+        let cases = [
+            ("empty", 2, 100_000),
+            ("1 KiB", 1_024, 20_000),
+            ("64 KiB", 64 * 1_024, 1_000),
+        ];
+
+        for (label, config_bytes, iterations) in cases {
+            let config = config_with_serialized_size(config_bytes);
+            assert_eq!(
+                serde_json::to_string(&config)
+                    .expect("serialize benchmark config")
+                    .len(),
+                config_bytes,
+            );
+            let cached = cache_protocol_config(config.clone()).expect("cache benchmark config");
+
+            let legacy_started = Instant::now();
+            for _ in 0..iterations {
+                let ffi_request = public_ffi_request(&request, config.clone());
+                black_box(serde_json::to_string(&ffi_request).expect("legacy serialization"));
+            }
+            let legacy_elapsed = legacy_started.elapsed();
+
+            let cached_started = Instant::now();
+            for _ in 0..iterations {
+                let config = Arc::clone(&cached);
+                black_box(ffi_request_to_string(&request, &config).expect("cached serialization"));
+            }
+            let cached_elapsed = cached_started.elapsed();
+
+            let legacy_ns = legacy_elapsed.as_nanos() as f64 / iterations as f64;
+            let cached_ns = cached_elapsed.as_nanos() as f64 / iterations as f64;
+            println!(
+                "{label}: config_bytes={config_bytes} iterations={iterations} \
+                 legacy_ns_per_op={legacy_ns:.1} cached_ns_per_op={cached_ns:.1} \
+                 speedup={:.2}x",
+                legacy_ns / cached_ns,
+            );
+        }
     }
 }

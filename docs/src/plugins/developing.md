@@ -214,6 +214,11 @@ Key facts that shape the design:
 The host serializes a `loadr_plugin_api::FfiRequest` to JSON and hands it to
 `execute`; the plugin returns a `FfiResponse` as JSON:
 
+Under native ABI v1, the host caches the serialized plugin-level `config`, so
+it does not clone and traverse that invariant value again for every request.
+The config remains part of each request payload, however, so ABI-v1 plugins
+still parse the request JSON, including `config`, on every `execute` call.
+
 ```jsonc
 // FfiRequest (host -> plugin)
 {

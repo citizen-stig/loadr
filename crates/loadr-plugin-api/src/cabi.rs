@@ -56,7 +56,7 @@ use loadr_core::{PreparedRequest, ProtocolHandler, ProtocolResponse, VuContext};
 use crate::error::PluginError;
 use crate::native::{
     cache_protocol_config, ffi_request_to_vec, response_from_ffi, CachedProtocolConfig,
-    FfiResponse, OwndedFfiRequest,
+    FfiResponse, OwnedFfiRequest,
 };
 use crate::PluginInfo;
 
@@ -319,11 +319,11 @@ fn call_c_abi_protocol(
     execute: ExecuteFn,
     free: FreeFn,
     request: OwnedFfiRequest,
-    config: serde_json::Value,
+    config: CachedProtocolConfig,
 ) -> Result<ProtocolResponse, ProtocolError> {
-    let (ffi_request, url, bytes_sent) = request.into_ffi_request(config);
-    let request_json = serde_json::to_vec(&ffi_request)
+    let request_json = ffi_request_to_vec(&request, &config)
         .map_err(|e| ProtocolError::InvalidRequest(format!("cannot encode request: {e}")))?;
+    let (url, bytes_sent) = request.into_response_metadata();
     let ffi = call_execute(plugin_name, execute, free, &request_json)
         .map_err(|e| ProtocolError::Transport(e.to_string()))?;
     response_from_ffi(plugin_name, ffi, url, bytes_sent)
@@ -344,7 +344,7 @@ impl ProtocolHandler for CAbiProtocolAdapter {
         let name = self.name.clone();
         let execute = self.execute;
         let free = self.free;
-        let config = self.config.clone();
+        let config = Arc::clone(&self.config);
         tokio::task::spawn_blocking(move || {
             call_c_abi_protocol(&name, execute, free, owned, config)
         })
@@ -352,37 +352,6 @@ impl ProtocolHandler for CAbiProtocolAdapter {
         .map_err(|e| {
             ProtocolError::Transport(format!("plugin `{}` blocking task failed: {e}", self.name))
         })?
-        let config = Arc::clone(&self.config);
-        let request_json = ffi_request_to_vec(request, &config)
-            .map_err(|e| ProtocolError::InvalidRequest(format!("cannot encode request: {e}")))?;
-        let bytes_sent = request.body.len() as u64;
-        let ffi = self
-            .call(&request_json)
-            .map_err(|e| ProtocolError::Transport(e.to_string()))?;
-        let body = base64::engine::general_purpose::STANDARD
-            .decode(&ffi.body_b64)
-            .map_err(|e| {
-                ProtocolError::Transport(format!(
-                    "plugin `{}` returned invalid body base64: {e}",
-                    self.name
-                ))
-            })?;
-        let mut response = ProtocolResponse {
-            status: ffi.status,
-            status_text: ffi.status_text,
-            headers: ffi.headers,
-            bytes_sent,
-            bytes_received: body.len() as u64,
-            body: Bytes::from(body),
-            protocol_version: self.name.clone(),
-            error: ffi.error,
-            url: request.url.clone(),
-            extras: ffi.extras,
-            ..Default::default()
-        };
-        response.timings.duration_ms = ffi.duration_ms;
-        response.timings.waiting_ms = ffi.duration_ms;
-        Ok(response)
     }
 }
 
@@ -394,6 +363,7 @@ mod tests {
     use std::sync::{Arc, Barrier};
     use std::time::Duration;
 
+    use bytes::Bytes;
     use loadr_core::RequestOptions;
 
     /// Compile a C source string into a cdylib in a fresh temp dir, returning
@@ -562,7 +532,8 @@ int unrelated_symbol(void) { return 42; }
                         // This is the same Arc-clone + borrowing serializer
                         // seam used by CAbiProtocolAdapter::execute.
                         let config = Arc::clone(&adapter.config);
-                        let wire = ffi_request_to_vec(&request, &config)
+                        let owned = OwnedFfiRequest::from_prepared(&request);
+                        let wire = ffi_request_to_vec(&owned, &config)
                             .expect("serialize cached C-ABI request");
                         let value: serde_json::Value =
                             serde_json::from_slice(&wire).expect("parse C-ABI request");

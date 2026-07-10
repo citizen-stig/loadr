@@ -312,22 +312,22 @@ struct WireFfiRequest<'a> {
 }
 
 impl<'a> WireFfiRequest<'a> {
-    fn new(request: &'a PreparedRequest, body_b64: &'a str, config: &'a RawValue) -> Self {
+    fn new(request: &'a OwnedFfiRequest, body_b64: &'a str, config: &'a RawValue) -> Self {
         WireFfiRequest {
             name: &request.name,
             method: &request.method,
             url: &request.url,
             headers: &request.headers,
             body_b64,
-            timeout_ms: request.timeout.as_millis() as u64,
-            options: request.options.plugin.as_ref(),
+            timeout_ms: request.timeout_ms,
+            options: request.options.as_ref(),
             config: (config.get() != "null").then_some(config),
         }
     }
 }
 
 pub(crate) fn ffi_request_to_string(
-    request: &PreparedRequest,
+    request: &OwnedFfiRequest,
     config: &RawValue,
 ) -> Result<String, serde_json::Error> {
     let body_b64 = base64::engine::general_purpose::STANDARD.encode(&request.body);
@@ -335,7 +335,7 @@ pub(crate) fn ffi_request_to_string(
 }
 
 pub(crate) fn ffi_request_to_vec(
-    request: &PreparedRequest,
+    request: &OwnedFfiRequest,
     config: &RawValue,
 ) -> Result<Vec<u8>, serde_json::Error> {
     let body_b64 = base64::engine::general_purpose::STANDARD.encode(&request.body);
@@ -365,20 +365,9 @@ impl OwnedFfiRequest {
         }
     }
 
-    pub(crate) fn into_ffi_request(self, config: serde_json::Value) -> (FfiRequest, String, u64) {
-        let url = self.url.clone();
+    pub(crate) fn into_response_metadata(self) -> (String, u64) {
         let bytes_sent = self.body.len() as u64;
-        let request = FfiRequest {
-            name: self.name,
-            method: self.method,
-            url: self.url,
-            headers: self.headers,
-            body_b64: base64::engine::general_purpose::STANDARD.encode(&self.body),
-            timeout_ms: self.timeout_ms,
-            options: self.options,
-            config,
-        };
-        (request, url, bytes_sent)
+        (self.url, bytes_sent)
     }
 }
 
@@ -386,11 +375,11 @@ fn call_v1_protocol(
     plugin_name: &str,
     inner: &FfiProtocolBox,
     request: OwnedFfiRequest,
-    config: serde_json::Value,
+    config: CachedProtocolConfig,
 ) -> Result<ProtocolResponse, ProtocolError> {
-    let (ffi_request, url, bytes_sent) = request.into_ffi_request(config);
-    let request_json = serde_json::to_string(&ffi_request)
+    let request_json = ffi_request_to_string(&request, &config)
         .map_err(|e| ProtocolError::InvalidRequest(format!("cannot encode request: {e}")))?;
+    let (url, bytes_sent) = request.into_response_metadata();
     let response_json = inner.execute(RString::from(request_json));
     let ffi = serde_json::from_str(response_json.as_str()).map_err(|e| {
         ProtocolError::Transport(format!(
@@ -445,7 +434,7 @@ impl ProtocolHandler for NativeProtocolAdapter {
         let owned = OwnedFfiRequest::from_prepared(request);
         let plugin_name = self.name.clone();
         let inner = Arc::clone(&self.inner);
-        let config = self.config.clone();
+        let config = Arc::clone(&self.config);
         let call_plugin_name = plugin_name.clone();
         tokio::task::spawn_blocking(move || {
             call_v1_protocol(&call_plugin_name, &inner, owned, config)
@@ -607,7 +596,8 @@ impl DataSourcePlugin for NativeDataSourceAdapter {
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use std::time::Duration;
+    use std::hint::black_box;
+    use std::time::{Duration, Instant};
 
     use loadr_core::metrics::{MetricRegistry, MetricsBus, Tags};
     use loadr_core::vu::RunContext;
@@ -660,7 +650,8 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn v1_protocol_call_does_not_block_core_runtime_timer() {
         let inner = FfiProtocol_TO::from_value(SlowProtocol, abi_stable::erased_types::TD_Opaque);
-        let adapter = NativeProtocolAdapter::new(inner, serde_json::Value::Null);
+        let adapter = NativeProtocolAdapter::new(inner, serde_json::Value::Null)
+            .expect("construct native protocol adapter");
         let mut vu = minimal_vu();
         let request = request();
         let started = std::time::Instant::now();
@@ -683,16 +674,6 @@ mod tests {
         let response = execute.await.expect("slow plugin response");
         assert_eq!(response.status, 200);
     }
-}
-#[cfg(test)]
-mod tests {
-    use std::hint::black_box;
-    use std::time::{Duration, Instant};
-
-    use base64::Engine as _;
-    use loadr_core::RequestOptions;
-
-    use super::*;
 
     fn prepared_request(options: Option<serde_json::Value>) -> PreparedRequest {
         PreparedRequest {
@@ -715,15 +696,15 @@ mod tests {
         }
     }
 
-    fn public_ffi_request(request: &PreparedRequest, config: serde_json::Value) -> FfiRequest {
+    fn public_ffi_request(request: OwnedFfiRequest, config: serde_json::Value) -> FfiRequest {
         FfiRequest {
-            name: request.name.clone(),
-            method: request.method.clone(),
-            url: request.url.clone(),
-            headers: request.headers.clone(),
+            name: request.name,
+            method: request.method,
+            url: request.url,
+            headers: request.headers,
             body_b64: base64::engine::general_purpose::STANDARD.encode(&request.body),
-            timeout_ms: request.timeout.as_millis() as u64,
-            options: request.options.plugin.clone(),
+            timeout_ms: request.timeout_ms,
+            options: request.options,
             config,
         }
     }
@@ -759,14 +740,16 @@ mod tests {
             let request = prepared_request(Some(serde_json::json!({
                 "dynamic": "value \"with\" escapes\\and\nlines"
             })));
-            let public = public_ffi_request(&request, config.clone());
+            let public =
+                public_ffi_request(OwnedFfiRequest::from_prepared(&request), config.clone());
             let expected_string = serde_json::to_string(&public).expect("serialize public request");
             let expected_value = serde_json::to_value(&public).expect("value of public request");
             let cached = cache_protocol_config(config.clone()).expect("cache config");
+            let owned = OwnedFfiRequest::from_prepared(&request);
 
             let actual_string =
-                ffi_request_to_string(&request, &cached).expect("serialize cached request");
-            let actual_vec = ffi_request_to_vec(&request, &cached).expect("serialize cached bytes");
+                ffi_request_to_string(&owned, &cached).expect("serialize cached request");
+            let actual_vec = ffi_request_to_vec(&owned, &cached).expect("serialize cached bytes");
             let actual_value: serde_json::Value =
                 serde_json::from_str(&actual_string).expect("parse cached request");
 
@@ -800,9 +783,10 @@ mod tests {
     #[test]
     fn cached_wire_request_preserves_omission_and_scalar_types() {
         let request = prepared_request(None);
+        let owned = OwnedFfiRequest::from_prepared(&request);
         let null = cache_protocol_config(serde_json::Value::Null).expect("cache null");
         let value: serde_json::Value = serde_json::from_str(
-            &ffi_request_to_string(&request, &null).expect("serialize null config"),
+            &ffi_request_to_string(&owned, &null).expect("serialize null config"),
         )
         .expect("parse request");
         let object = value.as_object().expect("wire request object");
@@ -816,7 +800,7 @@ mod tests {
         ] {
             let cached = cache_protocol_config(config.clone()).expect("cache scalar");
             let value: serde_json::Value = serde_json::from_str(
-                &ffi_request_to_string(&request, &cached).expect("serialize scalar config"),
+                &ffi_request_to_string(&owned, &cached).expect("serialize scalar config"),
             )
             .expect("parse request");
             assert_eq!(value.get("config"), Some(&config));
@@ -862,15 +846,17 @@ mod tests {
 
             let legacy_started = Instant::now();
             for _ in 0..iterations {
-                let ffi_request = public_ffi_request(&request, config.clone());
+                let owned = OwnedFfiRequest::from_prepared(&request);
+                let ffi_request = public_ffi_request(owned, config.clone());
                 black_box(serde_json::to_string(&ffi_request).expect("legacy serialization"));
             }
             let legacy_elapsed = legacy_started.elapsed();
 
             let cached_started = Instant::now();
             for _ in 0..iterations {
+                let owned = OwnedFfiRequest::from_prepared(&request);
                 let config = Arc::clone(&cached);
-                black_box(ffi_request_to_string(&request, &config).expect("cached serialization"));
+                black_box(ffi_request_to_string(&owned, &config).expect("cached serialization"));
             }
             let cached_elapsed = cached_started.elapsed();
 

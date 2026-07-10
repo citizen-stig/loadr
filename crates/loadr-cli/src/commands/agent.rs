@@ -82,9 +82,7 @@ pub fn execute(args: AgentArgs) -> anyhow::Result<i32> {
                 let loaded = loadr_plugin_api::PluginRegistry::load_ref(plugin_ref, &plugins_dir)
                     .map_err(|e| format!("plugin `{}`: {e}", plugin_ref.name))?;
                 match loaded {
-                    loadr_plugin_api::LoadedPlugin::Protocol(handler) => {
-                        registry.register(handler)
-                    }
+                    loadr_plugin_api::LoadedPlugin::Protocol(handler) => registry.register(handler),
                     other => tracing::warn!(
                         plugin = %plugin_ref.name,
                         kind = %other.kind(),

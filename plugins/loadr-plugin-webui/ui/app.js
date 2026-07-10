@@ -694,9 +694,12 @@
           tbody.replaceChildren(
             ...(runs.length
               ? runs.map((r) => {
+                  const live = ['pending', 'running', 'stopping'].includes(r.state);
                   const dur = r.ended_ms
                     ? (r.ended_ms - r.started_ms) / 1000
-                    : (Date.now() - r.started_ms) / 1000;
+                    : live
+                      ? (Date.now() - r.started_ms) / 1000
+                      : null;
                   return h(
                     'tr',
                     { onclick: () => (location.hash = '#/runs/' + r.run_id) },

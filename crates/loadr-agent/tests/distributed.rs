@@ -251,6 +251,17 @@ thresholds:
     assert_eq!(run_state(&handle, &run_id), "finished");
 
     let summary = handle.run_summary(&run_id).expect("merged summary");
+    let run_info = handle
+        .runs()
+        .into_iter()
+        .find(|r| r.run_id == run_id)
+        .expect("run info");
+    assert_eq!(run_info.ended_ms, Some(summary.ended_ms));
+
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    let summary_after_wait = handle.run_summary(&run_id).expect("stable summary");
+    assert_eq!(summary_after_wait.ended_ms, summary.ended_ms);
+    assert_eq!(summary_after_wait.duration_secs, summary.duration_secs);
 
     // Exact totals: shared iterations split 40/40/40 across the 3 agents.
     let http_reqs = summary

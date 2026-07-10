@@ -998,11 +998,11 @@ def nav_filter_box():
 
 
 def category_nav(counts):
-    """Category jump-list for the demos index, with scrollspy highlighting."""
-    out = [
-        '<p class="px-1 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Categories</p>',
-        '<ul class="mt-3 space-y-0.5">',
-    ]
+    """Category jump-list for the demos index, with scrollspy highlighting.
+
+    No heading of its own — it sits inside a nav_panel whose head supplies one.
+    """
+    out = ['<ul class="space-y-0.5">']
     for cat in CATEGORY_ORDER:
         n = counts.get(cat, 0)
         if not n:
@@ -1022,15 +1022,45 @@ def category_nav(counts):
     return "\n".join(out)
 
 
-def nav_panel(inner, foot):
-    """The chrome around a sticky sidebar: full-height card, its own scroller."""
+def nav_panel(head, scroller, foot):
+    """The chrome around a sticky sidebar: full-height card, its own scroller.
+
+    top-28 clears the fixed site nav with air to spare; the height is sized so
+    the card's foot lands ~1.5rem off the bottom of the viewport once pinned,
+    rather than stopping short or running under the fold.
+    """
     return (
-        '<div class="sticky top-24 h-[calc(100vh-7.5rem)]">'
+        '<div class="sticky top-28 h-[calc(100vh-8.5rem)]">'
         '<div class="flex h-full flex-col overflow-hidden rounded-2xl border border-edge bg-panel '
         'shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset]">'
-        f'{inner}'
-        f'{foot}'
+        f'{head}{scroller}{foot}'
         '</div></div>'
+    )
+
+
+def panel_head(label):
+    return f'<div class="shrink-0 border-b border-edge/70 px-4 py-3.5">{label}</div>'
+
+
+def panel_foot(text):
+    return (
+        '<div class="shrink-0 border-t border-edge/70 bg-coal/40 px-4 py-2.5">'
+        f'<span data-demo-count class="font-mono text-[11px] text-smoke/70">{text}</span></div>'
+    )
+
+
+def panel_scroller(body, attr="", pad_top=True):
+    # Bottom-only fade for the row the scroller clips; a top fade would wash out
+    # the category headers that pin to that edge.
+    #
+    # pad_top=False for the demo list: a scroll container's top padding sits
+    # ABOVE where `sticky top-0` pins, so rows scroll through that strip in plain
+    # sight, uncovered by the header that is supposed to hide them.
+    pt = "pt-3" if pad_top else "pt-0"
+    return (
+        f'<div {attr} class="min-h-0 flex-1 overflow-y-auto px-2 pb-3 {pt} '
+        '[mask-image:linear-gradient(to_bottom,#000_calc(100%-18px),transparent_100%)]">'
+        f'{body}</div>'
     )
 
 
@@ -1183,6 +1213,14 @@ def render_index():
         )
     groups_html = "\n\n      ".join(groups)
 
+    cat_panel = nav_panel(
+        panel_head(
+            '<p class="text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Browse by category</p>'
+        ),
+        panel_scroller(category_nav(counts)),
+        panel_foot(f"{len(DEMOS)} demos · {len(CATEGORY_ORDER)} categories"),
+    )
+
     desc = ("Every loadr demo, categorised: load profiles, traffic modelling, validation, protocols, "
             "databases, scripting, distributed scale and ops integrations. Each tile opens a detail page "
             "with the runnable example, what to look for and the command to run it.")
@@ -1207,14 +1245,11 @@ def render_index():
 </section>
 
 <!-- ======================================================= DEMO CARDS -->
-<section class="pb-8">
+<section class="pt-10 pb-8 lg:pt-14">
   <div class="mx-auto max-w-[88rem] px-5 lg:flex lg:gap-12 xl:gap-16">
 
     <aside class="hidden lg:block lg:w-[16.5rem] lg:shrink-0">
-      <div class="sticky top-24 max-h-[calc(100vh-7.5rem)] overflow-y-auto rounded-2xl border border-edge
-                  bg-panel/60 p-3 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset]">
-        {category_nav(counts)}
-      </div>
+      {cat_panel}
     </aside>
 
     <div class="min-w-0 flex-1 space-y-14">
@@ -1305,16 +1340,9 @@ def render_detail(d, prev, nxt):
     # sticky headers) and the desktop panel.
     mobile_nav = demo_nav(slug, sticky_headers=False)
     nav_panel_html = nav_panel(
-        f'<div class="shrink-0 border-b border-edge/70 px-4 py-3.5">{nav_filter_box()}</div>'
-        # Fade the half-row the scroller clips at the bottom. Bottom only: a top
-        # fade would also wash out the category headers, which pin to that edge.
-        '<div data-demo-nav class="min-h-0 flex-1 overflow-y-auto px-2 py-3 '
-        '[mask-image:linear-gradient(to_bottom,#000_calc(100%-18px),transparent_100%)]">'
-        f'{demo_nav(slug)}'
-        '</div>',
-        '<div class="shrink-0 border-t border-edge/70 bg-coal/40 px-4 py-2.5">'
-        f'<span data-demo-count class="font-mono text-[11px] text-smoke/70">{len(DEMOS)} demos · {len(CATEGORY_ORDER)} categories</span>'
-        '</div>',
+        panel_head(nav_filter_box()),
+        panel_scroller(demo_nav(slug), "data-demo-nav", pad_top=False),
+        panel_foot(f"{len(DEMOS)} demos · {len(CATEGORY_ORDER)} categories"),
     )
 
     parts = [head(title, desc, canonical)]
@@ -1340,7 +1368,7 @@ def render_detail(d, prev, nxt):
 </section>
 
 <!-- ======================================================= DETAIL -->
-<section class="pb-16">
+<section class="pt-10 pb-16 lg:pt-14">
   <div class="mx-auto max-w-[88rem] px-5 lg:flex lg:gap-12 xl:gap-16">
 
     <!-- left-hand demo nav: a disclosure on mobile, a full-height sticky panel from lg -->

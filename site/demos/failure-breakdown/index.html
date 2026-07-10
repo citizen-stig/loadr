@@ -22,7 +22,7 @@
 <!-- ======================================================= HERO -->
 <section class="hero-grid relative overflow-hidden pt-32 pb-10">
   <div class="pointer-events-none absolute -top-40 left-1/2 h-[40rem] w-[56rem] -translate-x-1/2 rounded-[50%] bg-blood/20 blur-[150px]"></div>
-  <div class="mx-auto max-w-7xl px-5">
+  <div class="mx-auto max-w-[88rem] px-5">
     <nav class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-smoke">
       <a class="hover:text-flare" href="/demos/">Demos</a>
       <span class="text-edge-bright">/</span>
@@ -41,229 +41,235 @@
 
 <!-- ======================================================= DETAIL -->
 <section class="pb-16">
-  <div class="mx-auto max-w-7xl px-5 lg:flex lg:items-start lg:gap-10">
+  <div class="mx-auto max-w-[88rem] px-5 lg:flex lg:gap-12 xl:gap-16">
 
-    <!-- left-hand demo nav: a disclosure on mobile, a sticky column from lg -->
-    <details class="mb-8 rounded-xl border border-edge bg-panel lg:hidden">
-      <summary class="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-ash">
-        Browse all 52 demos
+    <!-- left-hand demo nav: a disclosure on mobile, a full-height sticky panel from lg -->
+    <details class="mb-8 overflow-hidden rounded-xl border border-edge bg-panel/60 lg:hidden">
+      <summary class="flex cursor-pointer select-none items-center justify-between px-4 py-3 text-sm font-semibold text-ash">
+        <span>Browse all 52 demos</span>
+        <span class="text-xs font-normal text-smoke/70">12 categories</span>
       </summary>
-      <div class="border-t border-edge px-4 py-4">
-        <a href="/demos/" class="flex items-center gap-2 text-sm font-semibold text-flare hover:underline"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5m0 0l6 6m-6-6l6-6"/></svg>All 52 demos</a>
-<div class="mt-5 space-y-5">
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Load profiles</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/quickstart/">The 30-second quickstart</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/ramping-load/">Ramping load</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/arrival-rate/">Open-model arrival rate</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/spike-test/">Spike test</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/soak/">Soak &amp; outputs</a></li>
+      <div class="max-h-[70vh] overflow-y-auto border-t border-edge px-4 py-4">
+        <div class="space-y-4">
+<div data-demo-group data-cat="Load profiles">
+<p class="-mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Load profiles</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/quickstart/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">The 30-second quickstart</span></a></li>
+<li data-demo-item><a href="/demos/ramping-load/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Ramping load</span></a></li>
+<li data-demo-item><a href="/demos/arrival-rate/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Open-model arrival rate</span></a></li>
+<li data-demo-item><a href="/demos/spike-test/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Spike test</span></a></li>
+<li data-demo-item><a href="/demos/soak/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Soak &amp; outputs</span></a></li>
 </ul></div>
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Traffic modelling</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/scenario-weights/">Weighted traffic mix</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/flow-control/">Flow control &amp; weighted tasks</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/feeders-and-throttle/">Feeders &amp; throttling</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/data-driven/">Data-driven load</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/correlation/">Correlation &amp; extraction</a></li>
+<div data-demo-group data-cat="Traffic modelling">
+<p class="-mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Traffic modelling</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/scenario-weights/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Weighted traffic mix</span></a></li>
+<li data-demo-item><a href="/demos/flow-control/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Flow control &amp; weighted tasks</span></a></li>
+<li data-demo-item><a href="/demos/feeders-and-throttle/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Feeders &amp; throttling</span></a></li>
+<li data-demo-item><a href="/demos/data-driven/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Data-driven load</span></a></li>
+<li data-demo-item><a href="/demos/correlation/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Correlation &amp; extraction</span></a></li>
 </ul></div>
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Validation &amp; CI</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/functional-test/">Functional / smoke test</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/check-chains/">JMESPath &amp; fused check-chains</a></li>
-<li><a aria-current="page" class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-blood bg-coal/60 font-semibold text-white" href="/demos/failure-breakdown/">Failure breakdown, by cause</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/tags/">Tags &amp; per-route metrics</a></li>
+<div data-demo-group data-cat="Validation &amp; CI">
+<p class="-mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Validation &amp; CI</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/functional-test/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Functional / smoke test</span></a></li>
+<li data-demo-item><a href="/demos/check-chains/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">JMESPath &amp; fused check-chains</span></a></li>
+<li data-demo-item><a aria-current="page" href="/demos/failure-breakdown/" class="relative flex items-start gap-2.5 rounded-lg bg-gradient-to-r from-blood/25 via-blood/10 to-transparent py-1.5 pl-3.5 pr-2 text-sm font-semibold text-white ring-1 ring-inset ring-blood/25"><span class="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-blood shadow-[0_0_10px_rgba(220,38,38,0.7)]"></span><span class="leading-snug">Failure breakdown, by cause</span></a></li>
+<li data-demo-item><a href="/demos/tags/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Tags &amp; per-route metrics</span></a></li>
 </ul></div>
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Authoring &amp; analysis</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/record/">Record a session into a scenario</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/gen/">Generate a test from an API contract</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/explain/">Explain a run in plain language</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/history/">Catch regressions statistically</a></li>
+<div data-demo-group data-cat="Authoring &amp; analysis">
+<p class="-mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Authoring &amp; analysis</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/record/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Record a session into a scenario</span></a></li>
+<li data-demo-item><a href="/demos/gen/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Generate a test from an API contract</span></a></li>
+<li data-demo-item><a href="/demos/explain/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Explain a run in plain language</span></a></li>
+<li data-demo-item><a href="/demos/history/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Catch regressions statistically</span></a></li>
 </ul></div>
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Auth, sessions &amp; uploads</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/auth-tokens/">Per-VU auth tokens + refresh</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/cookies-session/">Cookie-based sessions</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/file-uploads/">Multipart file uploads</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/http-advanced/">Advanced HTTP</a></li>
+<div data-demo-group data-cat="Auth, sessions &amp; uploads">
+<p class="-mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Auth, sessions &amp; uploads</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/auth-tokens/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Per-VU auth tokens + refresh</span></a></li>
+<li data-demo-item><a href="/demos/cookies-session/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Cookie-based sessions</span></a></li>
+<li data-demo-item><a href="/demos/file-uploads/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Multipart file uploads</span></a></li>
+<li data-demo-item><a href="/demos/http-advanced/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Advanced HTTP</span></a></li>
 </ul></div>
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Protocols</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/websocket/">WebSockets</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/grpc/">gRPC</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/graphql/">GraphQL</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/tcp-udp/">Raw TCP &amp; UDP</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/sse/">Server-Sent Events</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/soap/">SOAP / XML</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/twirp/">Twirp RPC</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/browser/">Browser (headless)</a></li>
+<div data-demo-group data-cat="Protocols">
+<p class="-mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Protocols</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/websocket/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">WebSockets</span></a></li>
+<li data-demo-item><a href="/demos/grpc/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">gRPC</span></a></li>
+<li data-demo-item><a href="/demos/graphql/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">GraphQL</span></a></li>
+<li data-demo-item><a href="/demos/tcp-udp/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Raw TCP &amp; UDP</span></a></li>
+<li data-demo-item><a href="/demos/sse/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Server-Sent Events</span></a></li>
+<li data-demo-item><a href="/demos/soap/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">SOAP / XML</span></a></li>
+<li data-demo-item><a href="/demos/twirp/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Twirp RPC</span></a></li>
+<li data-demo-item><a href="/demos/browser/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Browser (headless)</span></a></li>
 </ul></div>
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Databases &amp; messaging</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/postgres/">PostgreSQL</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/mongo/">MongoDB</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/mysql/">MySQL</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/redis/">Redis</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/kafka/">Apache Kafka</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/rabbitmq/">RabbitMQ</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/elasticsearch/">Elasticsearch</a></li>
+<div data-demo-group data-cat="Databases &amp; messaging">
+<p class="-mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Databases &amp; messaging</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/postgres/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">PostgreSQL</span></a></li>
+<li data-demo-item><a href="/demos/mongo/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">MongoDB</span></a></li>
+<li data-demo-item><a href="/demos/mysql/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">MySQL</span></a></li>
+<li data-demo-item><a href="/demos/redis/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Redis</span></a></li>
+<li data-demo-item><a href="/demos/kafka/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Apache Kafka</span></a></li>
+<li data-demo-item><a href="/demos/rabbitmq/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">RabbitMQ</span></a></li>
+<li data-demo-item><a href="/demos/elasticsearch/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Elasticsearch</span></a></li>
 </ul></div>
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Scripting &amp; metrics</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/javascript/">JavaScript in the flow</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/custom-metrics/">Custom metrics</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/lifecycle/">Lifecycle hooks</a></li>
+<div data-demo-group data-cat="Scripting &amp; metrics">
+<p class="-mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Scripting &amp; metrics</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/javascript/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">JavaScript in the flow</span></a></li>
+<li data-demo-item><a href="/demos/custom-metrics/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Custom metrics</span></a></li>
+<li data-demo-item><a href="/demos/lifecycle/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Lifecycle hooks</span></a></li>
 </ul></div>
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Scale &amp; operations</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/distributed/">Distributed fleet</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/environments/">Environments</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/scenarios-and-groups/">Scenarios &amp; groups</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/timeseries-report/">Time-series HTML report</a></li>
+<div data-demo-group data-cat="Scale &amp; operations">
+<p class="-mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Scale &amp; operations</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/distributed/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Distributed fleet</span></a></li>
+<li data-demo-item><a href="/demos/environments/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Environments</span></a></li>
+<li data-demo-item><a href="/demos/scenarios-and-groups/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Scenarios &amp; groups</span></a></li>
+<li data-demo-item><a href="/demos/timeseries-report/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Time-series HTML report</span></a></li>
 </ul></div>
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Ops integrations</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/prometheus-grafana/">Prometheus + Grafana</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/cicd/">CI/CD performance gate</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/kubernetes/">Kubernetes</a></li>
+<div data-demo-group data-cat="Ops integrations">
+<p class="-mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Ops integrations</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/prometheus-grafana/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Prometheus + Grafana</span></a></li>
+<li data-demo-item><a href="/demos/cicd/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">CI/CD performance gate</span></a></li>
+<li data-demo-item><a href="/demos/kubernetes/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Kubernetes</span></a></li>
 </ul></div>
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Adopt loadr</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/convert/">Import from k6 &amp; JMeter</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/web-ui/">The live Web UI</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/agent-fleet/">The agent fleet, in the UI</a></li>
+<div data-demo-group data-cat="Adopt loadr">
+<p class="-mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Adopt loadr</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/convert/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Import from k6 &amp; JMeter</span></a></li>
+<li data-demo-item><a href="/demos/web-ui/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">The live Web UI</span></a></li>
+<li data-demo-item><a href="/demos/agent-fleet/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">The agent fleet, in the UI</span></a></li>
 </ul></div>
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Extending loadr</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/write-plugin-go/">Write a plugin in Go</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/native-protocol-c/">A native protocol in C</a></li>
+<div data-demo-group data-cat="Extending loadr">
+<p class="-mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Extending loadr</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/write-plugin-go/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Write a plugin in Go</span></a></li>
+<li data-demo-item><a href="/demos/native-protocol-c/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">A native protocol in C</span></a></li>
 </ul></div>
+<p data-demo-empty hidden class="px-3 py-6 text-center text-sm text-smoke/70">No demos match.</p>
 </div>
       </div>
     </details>
 
-    <aside class="hidden lg:block lg:w-64 lg:shrink-0">
-      <div data-demo-nav class="sticky top-24 max-h-[calc(100vh-8rem)] overflow-y-auto pr-2">
-        <a href="/demos/" class="flex items-center gap-2 text-sm font-semibold text-flare hover:underline"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5m0 0l6 6m-6-6l6-6"/></svg>All 52 demos</a>
-<div class="mt-5 space-y-5">
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Load profiles</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/quickstart/">The 30-second quickstart</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/ramping-load/">Ramping load</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/arrival-rate/">Open-model arrival rate</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/spike-test/">Spike test</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/soak/">Soak &amp; outputs</a></li>
+    <aside class="hidden lg:block lg:w-[17.5rem] lg:shrink-0">
+      <div class="sticky top-24 h-[calc(100vh-7.5rem)]"><div class="flex h-full flex-col overflow-hidden rounded-2xl border border-edge bg-panel shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset]"><div class="shrink-0 border-b border-edge/70 px-4 py-3.5"><a href="/demos/" class="group flex items-center gap-2 text-[13px] font-semibold text-flare"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" class="transition-transform group-hover:-translate-x-0.5"><path d="M19 12H5m0 0l6 6m-6-6l6-6"/></svg><span class="group-hover:underline">All 52 demos</span></a><div class="relative mt-3"><svg class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-smoke/60" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input data-demo-filter type="search" placeholder="Filter demos…" aria-label="Filter demos" class="w-full rounded-lg border border-edge bg-ink/80 py-1.5 pl-8 pr-8 text-sm text-ash placeholder:text-smoke/50 transition focus:border-blood/50 focus:outline-none focus:ring-2 focus:ring-blood/25"><kbd data-demo-hint class="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border border-edge bg-coal px-1.5 py-0.5 font-mono text-[10px] text-smoke/60">/</kbd></div></div><div data-demo-nav class="min-h-0 flex-1 overflow-y-auto px-2 py-3 [mask-image:linear-gradient(to_bottom,#000_calc(100%-18px),transparent_100%)]"><div class="space-y-4">
+<div data-demo-group data-cat="Load profiles">
+<p class="sticky top-0 z-10 bg-panel shadow-[0_6px_6px_-6px_rgba(0,0,0,0.55)] -mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Load profiles</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/quickstart/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">The 30-second quickstart</span></a></li>
+<li data-demo-item><a href="/demos/ramping-load/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Ramping load</span></a></li>
+<li data-demo-item><a href="/demos/arrival-rate/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Open-model arrival rate</span></a></li>
+<li data-demo-item><a href="/demos/spike-test/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Spike test</span></a></li>
+<li data-demo-item><a href="/demos/soak/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Soak &amp; outputs</span></a></li>
 </ul></div>
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Traffic modelling</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/scenario-weights/">Weighted traffic mix</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/flow-control/">Flow control &amp; weighted tasks</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/feeders-and-throttle/">Feeders &amp; throttling</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/data-driven/">Data-driven load</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/correlation/">Correlation &amp; extraction</a></li>
+<div data-demo-group data-cat="Traffic modelling">
+<p class="sticky top-0 z-10 bg-panel shadow-[0_6px_6px_-6px_rgba(0,0,0,0.55)] -mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Traffic modelling</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/scenario-weights/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Weighted traffic mix</span></a></li>
+<li data-demo-item><a href="/demos/flow-control/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Flow control &amp; weighted tasks</span></a></li>
+<li data-demo-item><a href="/demos/feeders-and-throttle/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Feeders &amp; throttling</span></a></li>
+<li data-demo-item><a href="/demos/data-driven/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Data-driven load</span></a></li>
+<li data-demo-item><a href="/demos/correlation/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Correlation &amp; extraction</span></a></li>
 </ul></div>
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Validation &amp; CI</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/functional-test/">Functional / smoke test</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/check-chains/">JMESPath &amp; fused check-chains</a></li>
-<li><a aria-current="page" class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-blood bg-coal/60 font-semibold text-white" href="/demos/failure-breakdown/">Failure breakdown, by cause</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/tags/">Tags &amp; per-route metrics</a></li>
+<div data-demo-group data-cat="Validation &amp; CI">
+<p class="sticky top-0 z-10 bg-panel shadow-[0_6px_6px_-6px_rgba(0,0,0,0.55)] -mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Validation &amp; CI</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/functional-test/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Functional / smoke test</span></a></li>
+<li data-demo-item><a href="/demos/check-chains/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">JMESPath &amp; fused check-chains</span></a></li>
+<li data-demo-item><a aria-current="page" href="/demos/failure-breakdown/" class="relative flex items-start gap-2.5 rounded-lg bg-gradient-to-r from-blood/25 via-blood/10 to-transparent py-1.5 pl-3.5 pr-2 text-sm font-semibold text-white ring-1 ring-inset ring-blood/25"><span class="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-blood shadow-[0_0_10px_rgba(220,38,38,0.7)]"></span><span class="leading-snug">Failure breakdown, by cause</span></a></li>
+<li data-demo-item><a href="/demos/tags/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Tags &amp; per-route metrics</span></a></li>
 </ul></div>
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Authoring &amp; analysis</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/record/">Record a session into a scenario</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/gen/">Generate a test from an API contract</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/explain/">Explain a run in plain language</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/history/">Catch regressions statistically</a></li>
+<div data-demo-group data-cat="Authoring &amp; analysis">
+<p class="sticky top-0 z-10 bg-panel shadow-[0_6px_6px_-6px_rgba(0,0,0,0.55)] -mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Authoring &amp; analysis</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/record/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Record a session into a scenario</span></a></li>
+<li data-demo-item><a href="/demos/gen/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Generate a test from an API contract</span></a></li>
+<li data-demo-item><a href="/demos/explain/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Explain a run in plain language</span></a></li>
+<li data-demo-item><a href="/demos/history/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Catch regressions statistically</span></a></li>
 </ul></div>
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Auth, sessions &amp; uploads</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/auth-tokens/">Per-VU auth tokens + refresh</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/cookies-session/">Cookie-based sessions</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/file-uploads/">Multipart file uploads</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/http-advanced/">Advanced HTTP</a></li>
+<div data-demo-group data-cat="Auth, sessions &amp; uploads">
+<p class="sticky top-0 z-10 bg-panel shadow-[0_6px_6px_-6px_rgba(0,0,0,0.55)] -mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Auth, sessions &amp; uploads</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/auth-tokens/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Per-VU auth tokens + refresh</span></a></li>
+<li data-demo-item><a href="/demos/cookies-session/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Cookie-based sessions</span></a></li>
+<li data-demo-item><a href="/demos/file-uploads/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Multipart file uploads</span></a></li>
+<li data-demo-item><a href="/demos/http-advanced/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Advanced HTTP</span></a></li>
 </ul></div>
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Protocols</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/websocket/">WebSockets</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/grpc/">gRPC</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/graphql/">GraphQL</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/tcp-udp/">Raw TCP &amp; UDP</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/sse/">Server-Sent Events</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/soap/">SOAP / XML</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/twirp/">Twirp RPC</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/browser/">Browser (headless)</a></li>
+<div data-demo-group data-cat="Protocols">
+<p class="sticky top-0 z-10 bg-panel shadow-[0_6px_6px_-6px_rgba(0,0,0,0.55)] -mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Protocols</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/websocket/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">WebSockets</span></a></li>
+<li data-demo-item><a href="/demos/grpc/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">gRPC</span></a></li>
+<li data-demo-item><a href="/demos/graphql/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">GraphQL</span></a></li>
+<li data-demo-item><a href="/demos/tcp-udp/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Raw TCP &amp; UDP</span></a></li>
+<li data-demo-item><a href="/demos/sse/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Server-Sent Events</span></a></li>
+<li data-demo-item><a href="/demos/soap/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">SOAP / XML</span></a></li>
+<li data-demo-item><a href="/demos/twirp/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Twirp RPC</span></a></li>
+<li data-demo-item><a href="/demos/browser/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Browser (headless)</span></a></li>
 </ul></div>
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Databases &amp; messaging</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/postgres/">PostgreSQL</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/mongo/">MongoDB</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/mysql/">MySQL</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/redis/">Redis</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/kafka/">Apache Kafka</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/rabbitmq/">RabbitMQ</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/elasticsearch/">Elasticsearch</a></li>
+<div data-demo-group data-cat="Databases &amp; messaging">
+<p class="sticky top-0 z-10 bg-panel shadow-[0_6px_6px_-6px_rgba(0,0,0,0.55)] -mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Databases &amp; messaging</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/postgres/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">PostgreSQL</span></a></li>
+<li data-demo-item><a href="/demos/mongo/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">MongoDB</span></a></li>
+<li data-demo-item><a href="/demos/mysql/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">MySQL</span></a></li>
+<li data-demo-item><a href="/demos/redis/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Redis</span></a></li>
+<li data-demo-item><a href="/demos/kafka/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Apache Kafka</span></a></li>
+<li data-demo-item><a href="/demos/rabbitmq/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">RabbitMQ</span></a></li>
+<li data-demo-item><a href="/demos/elasticsearch/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Elasticsearch</span></a></li>
 </ul></div>
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Scripting &amp; metrics</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/javascript/">JavaScript in the flow</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/custom-metrics/">Custom metrics</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/lifecycle/">Lifecycle hooks</a></li>
+<div data-demo-group data-cat="Scripting &amp; metrics">
+<p class="sticky top-0 z-10 bg-panel shadow-[0_6px_6px_-6px_rgba(0,0,0,0.55)] -mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Scripting &amp; metrics</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/javascript/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">JavaScript in the flow</span></a></li>
+<li data-demo-item><a href="/demos/custom-metrics/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Custom metrics</span></a></li>
+<li data-demo-item><a href="/demos/lifecycle/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Lifecycle hooks</span></a></li>
 </ul></div>
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Scale &amp; operations</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/distributed/">Distributed fleet</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/environments/">Environments</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/scenarios-and-groups/">Scenarios &amp; groups</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/timeseries-report/">Time-series HTML report</a></li>
+<div data-demo-group data-cat="Scale &amp; operations">
+<p class="sticky top-0 z-10 bg-panel shadow-[0_6px_6px_-6px_rgba(0,0,0,0.55)] -mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Scale &amp; operations</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/distributed/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Distributed fleet</span></a></li>
+<li data-demo-item><a href="/demos/environments/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Environments</span></a></li>
+<li data-demo-item><a href="/demos/scenarios-and-groups/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Scenarios &amp; groups</span></a></li>
+<li data-demo-item><a href="/demos/timeseries-report/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Time-series HTML report</span></a></li>
 </ul></div>
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Ops integrations</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/prometheus-grafana/">Prometheus + Grafana</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/cicd/">CI/CD performance gate</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/kubernetes/">Kubernetes</a></li>
+<div data-demo-group data-cat="Ops integrations">
+<p class="sticky top-0 z-10 bg-panel shadow-[0_6px_6px_-6px_rgba(0,0,0,0.55)] -mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Ops integrations</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/prometheus-grafana/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Prometheus + Grafana</span></a></li>
+<li data-demo-item><a href="/demos/cicd/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">CI/CD performance gate</span></a></li>
+<li data-demo-item><a href="/demos/kubernetes/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Kubernetes</span></a></li>
 </ul></div>
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Adopt loadr</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/convert/">Import from k6 &amp; JMeter</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/web-ui/">The live Web UI</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/agent-fleet/">The agent fleet, in the UI</a></li>
+<div data-demo-group data-cat="Adopt loadr">
+<p class="sticky top-0 z-10 bg-panel shadow-[0_6px_6px_-6px_rgba(0,0,0,0.55)] -mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Adopt loadr</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/convert/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Import from k6 &amp; JMeter</span></a></li>
+<li data-demo-item><a href="/demos/web-ui/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">The live Web UI</span></a></li>
+<li data-demo-item><a href="/demos/agent-fleet/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">The agent fleet, in the UI</span></a></li>
 </ul></div>
-<div>
-<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Extending loadr</p>
-<ul class="space-y-px border-l border-edge">
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/write-plugin-go/">Write a plugin in Go</a></li>
-<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/native-protocol-c/">A native protocol in C</a></li>
+<div data-demo-group data-cat="Extending loadr">
+<p class="sticky top-0 z-10 bg-panel shadow-[0_6px_6px_-6px_rgba(0,0,0,0.55)] -mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Extending loadr</p>
+<ul class="mt-1 space-y-0.5">
+<li data-demo-item><a href="/demos/write-plugin-go/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">Write a plugin in Go</span></a></li>
+<li data-demo-item><a href="/demos/native-protocol-c/" class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare"><span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors group-hover:bg-blood"></span><span class="leading-snug">A native protocol in C</span></a></li>
 </ul></div>
-</div>
-      </div>
+<p data-demo-empty hidden class="px-3 py-6 text-center text-sm text-smoke/70">No demos match.</p>
+</div></div><div class="shrink-0 border-t border-edge/70 bg-coal/40 px-4 py-2.5"><span data-demo-count class="font-mono text-[11px] text-smoke/70">52 demos · 12 categories</span></div></div></div>
     </aside>
 
-    <div class="grid min-w-0 flex-1 gap-8 lg:grid-cols-2">
+    <!-- The sticky panel can only travel inside its parent, and the <aside>
+         stretches to this column. Without a floor the column can come out
+         shorter than the panel, pinning it to zero travel — so it never sticks.
+         Sized to just clear the panel: any taller only opens a void, since the
+         pin always ends before the footer either way. prev/next hangs at the
+         column's foot so any slack reads as spacing. -->
+    <div class="flex min-w-0 flex-1 flex-col lg:min-h-[calc(100vh-4rem)]">
+    <div class="grid gap-8 lg:grid-cols-2">
     <div>
       <div class="codebox">
         <div class="codebar"><span>Run it</span><button data-copy="#failure-breakdownRun" class="rounded border border-edge px-2 py-0.5 text-[10px] text-smoke hover:text-flare">copy</button></div>
@@ -354,27 +360,66 @@ thresholds:
       </div>
     </div>
     </div>
+
+    <!-- prev / next lives inside the content column: it gives the sticky
+         sidebar's containing block the height it needs to actually stick -->
+    <nav class="mt-auto flex items-center justify-between gap-4 border-t border-edge/60 pt-6 text-sm">
+    <a class="text-smoke hover:text-flare" href="/demos/check-chains/">← JMESPath &amp; fused check-chains</a>
+    <a class="font-semibold text-flare hover:underline" href="/demos/">All demos</a>
+    <a class="text-smoke hover:text-flare" href="/demos/tags/">Tags &amp; per-route metrics →</a>
+    </nav>
+    </div>
   </div>
 </section>
 <script>
 (function () {
   var box = document.querySelector('[data-demo-nav]');
   if (!box) return;
+
   var active = box.querySelector('[aria-current="page"]');
-  if (!active) return;
-  var target = active.offsetTop - box.clientHeight / 2 + active.offsetHeight / 2;
-  box.scrollTop = target > 0 ? target : 0;
+  if (active) {
+    var target = active.offsetTop - box.clientHeight / 2 + active.offsetHeight / 2;
+    box.scrollTop = target > 0 ? target : 0;
+  }
+
+  var input = document.querySelector('[data-demo-filter]');
+  if (!input) return;
+  var groups = box.querySelectorAll('[data-demo-group]');
+  var empty = box.querySelector('[data-demo-empty]');
+  var count = document.querySelector('[data-demo-count]');
+  var hint = document.querySelector('[data-demo-hint]');
+
+  function apply() {
+    var q = input.value.trim().toLowerCase();
+    var shown = 0;
+    groups.forEach(function (g) {
+      var vis = 0;
+      g.querySelectorAll('[data-demo-item]').forEach(function (li) {
+        var hit = !q || li.textContent.toLowerCase().indexOf(q) !== -1;
+        li.hidden = !hit;
+        if (hit) vis++;
+      });
+      g.hidden = vis === 0;
+      shown += vis;
+    });
+    if (empty) empty.hidden = shown !== 0;
+    if (count) count.textContent = q ? shown + ' of ' + 52 : '52 demos · 12 categories';
+    if (hint) hint.hidden = !!q;
+  }
+
+  input.addEventListener('input', apply);
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { input.value = ''; apply(); input.blur(); }
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === '/' && document.activeElement !== input &&
+        !/^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) {
+      e.preventDefault();
+      input.focus();
+    }
+  });
 })();
 </script>
-
-<!-- ======================================================= PREV / NEXT -->
-<section class="border-t border-edge/60 bg-coal/40 py-10">
-  <div class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 text-sm">
-    <a class="text-smoke hover:text-flare" href="/demos/check-chains/">← JMESPath &amp; fused check-chains</a>
-    <a class="font-semibold text-flare hover:underline" href="/demos/">All demos</a>
-    <a class="text-smoke hover:text-flare" href="/demos/tags/">Tags &amp; per-route metrics →</a>
-  </div>
-</section>
 
 </main>
 

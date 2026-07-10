@@ -918,79 +918,213 @@ def demos_by_cat():
     return by_cat
 
 
-def demo_nav(current_slug=None):
+def nav_link(d, active):
+    """One demo entry in the left-hand nav — a pill, with a bar + rail dot when active."""
+    if active:
+        return (
+            '<li data-demo-item>'
+            f'<a aria-current="page" href="/demos/{d["slug"]}/" '
+            'class="relative flex items-start gap-2.5 rounded-lg bg-gradient-to-r from-blood/25 via-blood/10 '
+            'to-transparent py-1.5 pl-3.5 pr-2 text-sm font-semibold text-white ring-1 ring-inset ring-blood/25">'
+            '<span class="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-blood '
+            'shadow-[0_0_10px_rgba(220,38,38,0.7)]"></span>'
+            f'<span class="leading-snug">{esc(d["title"])}</span></a></li>'
+        )
+    return (
+        '<li data-demo-item>'
+        f'<a href="/demos/{d["slug"]}/" '
+        'class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke '
+        'transition-colors duration-150 hover:bg-coal/70 hover:text-flare">'
+        '<span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors '
+        'group-hover:bg-blood"></span>'
+        f'<span class="leading-snug">{esc(d["title"])}</span></a></li>'
+    )
+
+
+def demo_nav(current_slug=None, sticky_headers=True):
     """The grouped list of every demo — the body of the left-hand nav.
 
-    Rendered twice per detail page (a mobile <details>, a sticky desktop aside),
-    so it carries no ids. The active link is marked with aria-current so the
-    sticky column can scroll it into view.
+    Rendered twice per detail page (a mobile <details>, a sticky desktop panel),
+    so it carries no ids. Category headers stick to the top of the scroll
+    container on desktop; inside the mobile disclosure there is no scroller of
+    its own, so they must not.
     """
     by_cat = demos_by_cat()
-    out = [
-        '<a href="/demos/" class="flex items-center gap-2 text-sm font-semibold text-flare hover:underline">'
-        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" '
-        'stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5m0 0l6 6m-6-6l6-6"/></svg>'
-        f'All {len(DEMOS)} demos</a>',
-        '<div class="mt-5 space-y-5">',
-    ]
+    # The header must be fully opaque: it scrolls over the list beneath it, and a
+    # translucent background lets the items bleed straight through it.
+    head_cls = (
+        "sticky top-0 z-10 bg-panel shadow-[0_6px_6px_-6px_rgba(0,0,0,0.55)] "
+        if sticky_headers
+        else ""
+    ) + "-mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60"
+
+    out = ['<div class="space-y-4">']
     for cat in CATEGORY_ORDER:
         items = by_cat.get(cat, [])
         if not items:
             continue
-        out.append('<div>')
-        out.append(
-            '<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">'
-            f'{esc(cat)}</p>'
-        )
-        out.append('<ul class="space-y-px border-l border-edge">')
+        out.append(f'<div data-demo-group data-cat="{esc(cat)}">')
+        out.append(f'<p class="{head_cls}">{esc(cat)}</p>')
+        out.append('<ul class="mt-1 space-y-0.5">')
         for d in items:
-            active = d["slug"] == current_slug
-            cls = (
-                "-ml-px block border-l-2 py-1 pl-3 text-sm transition "
-                + (
-                    "border-blood bg-coal/60 font-semibold text-white"
-                    if active
-                    else "border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare"
-                )
-            )
-            cur = ' aria-current="page"' if active else ""
-            out.append(
-                f'<li><a{cur} class="{cls}" href="/demos/{d["slug"]}/">{esc(d["title"])}</a></li>'
-            )
+            out.append(nav_link(d, d["slug"] == current_slug))
         out.append("</ul></div>")
+    out.append(
+        '<p data-demo-empty hidden class="px-3 py-6 text-center text-sm text-smoke/70">No demos match.</p>'
+    )
     out.append("</div>")
     return "\n".join(out)
 
 
+def nav_filter_box():
+    """Search field + 'all demos' link — the panel header, above the scroller."""
+    return (
+        '<a href="/demos/" class="group flex items-center gap-2 text-[13px] font-semibold text-flare">'
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" '
+        'stroke-linecap="round" stroke-linejoin="round" class="transition-transform group-hover:-translate-x-0.5">'
+        '<path d="M19 12H5m0 0l6 6m-6-6l6-6"/></svg>'
+        f'<span class="group-hover:underline">All {len(DEMOS)} demos</span></a>'
+        '<div class="relative mt-3">'
+        '<svg class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-smoke/60" width="14" '
+        'height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">'
+        '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>'
+        '<input data-demo-filter type="search" placeholder="Filter demos…" aria-label="Filter demos" '
+        'class="w-full rounded-lg border border-edge bg-ink/80 py-1.5 pl-8 pr-8 text-sm text-ash placeholder:text-smoke/50 '
+        'transition focus:border-blood/50 focus:outline-none focus:ring-2 focus:ring-blood/25">'
+        '<kbd data-demo-hint class="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border '
+        'border-edge bg-coal px-1.5 py-0.5 font-mono text-[10px] text-smoke/60">/</kbd>'
+        '</div>'
+    )
+
+
 def category_nav(counts):
-    """Sticky category jump-list for the demos index (52 demos is a long scroll)."""
-    out = ['<p class="text-xs font-semibold uppercase tracking-wider text-smoke">Categories</p>',
-           '<ul class="mt-4 space-y-px border-l border-edge">']
+    """Category jump-list for the demos index, with scrollspy highlighting."""
+    out = [
+        '<p class="px-1 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Categories</p>',
+        '<ul class="mt-3 space-y-0.5">',
+    ]
     for cat in CATEGORY_ORDER:
         n = counts.get(cat, 0)
         if not n:
             continue
         out.append(
-            f'<li><a href="#{cat_slug(cat)}" class="-ml-px flex items-center justify-between gap-2 border-l-2 '
-            'border-transparent py-1 pl-3 pr-1 text-sm text-smoke transition hover:border-edge-bright '
-            'hover:bg-coal/40 hover:text-flare">'
-            f'<span>{esc(cat)}</span><span class="text-[11px] text-smoke/60">{n}</span></a></li>'
+            f'<li><a data-cat-link href="#{cat_slug(cat)}" '
+            'class="group flex items-center justify-between gap-2 rounded-lg py-1.5 pl-3.5 pr-2.5 text-sm '
+            'text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare '
+            'aria-[current=true]:bg-gradient-to-r aria-[current=true]:from-blood/25 aria-[current=true]:via-blood/10 '
+            'aria-[current=true]:to-transparent aria-[current=true]:font-semibold aria-[current=true]:text-white '
+            'aria-[current=true]:ring-1 aria-[current=true]:ring-inset aria-[current=true]:ring-blood/25">'
+            f'<span class="leading-snug">{esc(cat)}</span>'
+            '<span class="shrink-0 rounded-full border border-edge bg-coal px-1.5 py-px font-mono text-[10px] '
+            f'text-smoke/70 group-hover:border-edge-bright">{n}</span></a></li>'
         )
     out.append("</ul>")
     return "\n".join(out)
 
 
-# Scrolls the active demo into view inside the sticky column without moving the
-# page — the list is taller than the viewport, so the current demo is often
-# below the fold on load.
-NAV_SCROLL_JS = """<script>
+def nav_panel(inner, foot):
+    """The chrome around a sticky sidebar: full-height card, its own scroller."""
+    return (
+        '<div class="sticky top-24 h-[calc(100vh-7.5rem)]">'
+        '<div class="flex h-full flex-col overflow-hidden rounded-2xl border border-edge bg-panel '
+        'shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset]">'
+        f'{inner}'
+        f'{foot}'
+        '</div></div>'
+    )
+
+
+# Scrolls the active demo into view inside the sticky column (the list is taller
+# than the viewport), and wires the filter box: type to narrow, "/" to focus,
+# Escape to clear. Groups whose demos all hide are hidden with them.
+NAV_JS = """<script>
 (function () {
   var box = document.querySelector('[data-demo-nav]');
   if (!box) return;
+
   var active = box.querySelector('[aria-current="page"]');
-  if (!active) return;
-  var target = active.offsetTop - box.clientHeight / 2 + active.offsetHeight / 2;
-  box.scrollTop = target > 0 ? target : 0;
+  if (active) {
+    var target = active.offsetTop - box.clientHeight / 2 + active.offsetHeight / 2;
+    box.scrollTop = target > 0 ? target : 0;
+  }
+
+  var input = document.querySelector('[data-demo-filter]');
+  if (!input) return;
+  var groups = box.querySelectorAll('[data-demo-group]');
+  var empty = box.querySelector('[data-demo-empty]');
+  var count = document.querySelector('[data-demo-count]');
+  var hint = document.querySelector('[data-demo-hint]');
+
+  function apply() {
+    var q = input.value.trim().toLowerCase();
+    var shown = 0;
+    groups.forEach(function (g) {
+      var vis = 0;
+      g.querySelectorAll('[data-demo-item]').forEach(function (li) {
+        var hit = !q || li.textContent.toLowerCase().indexOf(q) !== -1;
+        li.hidden = !hit;
+        if (hit) vis++;
+      });
+      g.hidden = vis === 0;
+      shown += vis;
+    });
+    if (empty) empty.hidden = shown !== 0;
+    if (count) count.textContent = q ? shown + ' of ' + %d : '%d demos · %d categories';
+    if (hint) hint.hidden = !!q;
+  }
+
+  input.addEventListener('input', apply);
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { input.value = ''; apply(); input.blur(); }
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === '/' && document.activeElement !== input &&
+        !/^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) {
+      e.preventDefault();
+      input.focus();
+    }
+  });
+})();
+</script>"""
+
+
+def nav_js():
+    n_cats = len({d["category"] for d in DEMOS})
+    return NAV_JS % (len(DEMOS), len(DEMOS), n_cats)
+
+
+# Highlights the category you are looking at, in the index jump-list. Driven by
+# scroll position rather than an IntersectionObserver: the hero is taller than
+# any sensible observer band, so at the top of the page nothing intersects and
+# nothing would be highlighted. "Last heading above the fold line" always has an
+# answer, and it falls back to the first category.
+INDEX_NAV_JS = """<script>
+(function () {
+  var links = Array.prototype.slice.call(document.querySelectorAll('[data-cat-link]'));
+  if (!links.length) return;
+  var sections = links.map(function (a) {
+    return document.getElementById(a.getAttribute('href').slice(1));
+  });
+
+  var FOLD = 130;  // just below the fixed site nav
+  function paint() {
+    var cur = sections[0];
+    sections.forEach(function (s) {
+      if (s && s.getBoundingClientRect().top <= FOLD) cur = s;
+    });
+    links.forEach(function (a, i) {
+      if (sections[i] === cur) { a.setAttribute('aria-current', 'true'); }
+      else { a.removeAttribute('aria-current'); }
+    });
+  }
+
+  var ticking = false;
+  window.addEventListener('scroll', function () {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(function () { paint(); ticking = false; });
+  }, { passive: true });
+  paint();
 })();
 </script>"""
 
@@ -1074,10 +1208,11 @@ def render_index():
 
 <!-- ======================================================= DEMO CARDS -->
 <section class="pb-8">
-  <div class="mx-auto max-w-7xl px-5 lg:flex lg:items-start lg:gap-10">
+  <div class="mx-auto max-w-[88rem] px-5 lg:flex lg:gap-12 xl:gap-16">
 
-    <aside class="hidden lg:block lg:w-60 lg:shrink-0">
-      <div class="sticky top-24 max-h-[calc(100vh-8rem)] overflow-y-auto pr-2">
+    <aside class="hidden lg:block lg:w-[16.5rem] lg:shrink-0">
+      <div class="sticky top-24 max-h-[calc(100vh-7.5rem)] overflow-y-auto rounded-2xl border border-edge
+                  bg-panel/60 p-3 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset]">
         {category_nav(counts)}
       </div>
     </aside>
@@ -1087,6 +1222,7 @@ def render_index():
     </div>
   </div>
 </section>
+{INDEX_NAV_JS}
 
 <!-- ======================================================= CTA -->
 <section class="border-t border-edge/60 bg-coal/50 py-20">
@@ -1165,15 +1301,28 @@ def render_detail(d, prev, nxt):
     if d.get("docs"):
         docs_btn = f'<a href="{d["docs"]}" class="rounded-xl border border-edge-bright bg-coal px-6 py-3 font-semibold text-ash hover:border-ember/60 hover:text-white">Read the docs →</a>'
 
-    # One list, rendered twice: the mobile disclosure and the sticky column.
-    nav_html = demo_nav(slug)
+    # The same list twice: a mobile disclosure (no scroller of its own, so no
+    # sticky headers) and the desktop panel.
+    mobile_nav = demo_nav(slug, sticky_headers=False)
+    nav_panel_html = nav_panel(
+        f'<div class="shrink-0 border-b border-edge/70 px-4 py-3.5">{nav_filter_box()}</div>'
+        # Fade the half-row the scroller clips at the bottom. Bottom only: a top
+        # fade would also wash out the category headers, which pin to that edge.
+        '<div data-demo-nav class="min-h-0 flex-1 overflow-y-auto px-2 py-3 '
+        '[mask-image:linear-gradient(to_bottom,#000_calc(100%-18px),transparent_100%)]">'
+        f'{demo_nav(slug)}'
+        '</div>',
+        '<div class="shrink-0 border-t border-edge/70 bg-coal/40 px-4 py-2.5">'
+        f'<span data-demo-count class="font-mono text-[11px] text-smoke/70">{len(DEMOS)} demos · {len(CATEGORY_ORDER)} categories</span>'
+        '</div>',
+    )
 
     parts = [head(title, desc, canonical)]
     parts.append(f"""
 <!-- ======================================================= HERO -->
 <section class="hero-grid relative overflow-hidden pt-32 pb-10">
   <div class="pointer-events-none absolute -top-40 left-1/2 h-[40rem] w-[56rem] -translate-x-1/2 rounded-[50%] bg-blood/20 blur-[150px]"></div>
-  <div class="mx-auto max-w-7xl px-5">
+  <div class="mx-auto max-w-[88rem] px-5">
     <nav class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-smoke">
       <a class="hover:text-flare" href="/demos/">Demos</a>
       <span class="text-edge-bright">/</span>
@@ -1192,25 +1341,31 @@ def render_detail(d, prev, nxt):
 
 <!-- ======================================================= DETAIL -->
 <section class="pb-16">
-  <div class="mx-auto max-w-7xl px-5 lg:flex lg:items-start lg:gap-10">
+  <div class="mx-auto max-w-[88rem] px-5 lg:flex lg:gap-12 xl:gap-16">
 
-    <!-- left-hand demo nav: a disclosure on mobile, a sticky column from lg -->
-    <details class="mb-8 rounded-xl border border-edge bg-panel lg:hidden">
-      <summary class="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-ash">
-        Browse all {len(DEMOS)} demos
+    <!-- left-hand demo nav: a disclosure on mobile, a full-height sticky panel from lg -->
+    <details class="mb-8 overflow-hidden rounded-xl border border-edge bg-panel/60 lg:hidden">
+      <summary class="flex cursor-pointer select-none items-center justify-between px-4 py-3 text-sm font-semibold text-ash">
+        <span>Browse all {len(DEMOS)} demos</span>
+        <span class="text-xs font-normal text-smoke/70">{len(CATEGORY_ORDER)} categories</span>
       </summary>
-      <div class="border-t border-edge px-4 py-4">
-        {nav_html}
+      <div class="max-h-[70vh] overflow-y-auto border-t border-edge px-4 py-4">
+        {mobile_nav}
       </div>
     </details>
 
-    <aside class="hidden lg:block lg:w-64 lg:shrink-0">
-      <div data-demo-nav class="sticky top-24 max-h-[calc(100vh-8rem)] overflow-y-auto pr-2">
-        {nav_html}
-      </div>
+    <aside class="hidden lg:block lg:w-[17.5rem] lg:shrink-0">
+      {nav_panel_html}
     </aside>
 
-    <div class="grid min-w-0 flex-1 gap-8 lg:grid-cols-2">
+    <!-- The sticky panel can only travel inside its parent, and the <aside>
+         stretches to this column. Without a floor the column can come out
+         shorter than the panel, pinning it to zero travel — so it never sticks.
+         Sized to just clear the panel: any taller only opens a void, since the
+         pin always ends before the footer either way. prev/next hangs at the
+         column's foot so any slack reads as spacing. -->
+    <div class="flex min-w-0 flex-1 flex-col lg:min-h-[calc(100vh-4rem)]">
+    <div class="grid gap-8 lg:grid-cols-2">
     <div>
       <div class="codebox">
         <div class="codebar"><span>Run it</span><button data-copy="#{slug}Run" class="rounded border border-edge px-2 py-0.5 text-[10px] text-smoke hover:text-flare">copy</button></div>
@@ -1235,13 +1390,10 @@ def render_detail(d, prev, nxt):
       </div>
     </div>
     </div>
-  </div>
-</section>
-{NAV_SCROLL_JS}
 
-<!-- ======================================================= PREV / NEXT -->
-<section class="border-t border-edge/60 bg-coal/40 py-10">
-  <div class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 text-sm">
+    <!-- prev / next lives inside the content column: it gives the sticky
+         sidebar's containing block the height it needs to actually stick -->
+    <nav class="mt-auto flex items-center justify-between gap-4 border-t border-edge/60 pt-6 text-sm">
 """)
     if prev:
         parts.append(f'    <a class="text-smoke hover:text-flare" href="/demos/{prev["slug"]}/">← {esc(prev["title"])}</a>\n')
@@ -1252,8 +1404,11 @@ def render_detail(d, prev, nxt):
         parts.append(f'    <a class="text-smoke hover:text-flare" href="/demos/{nxt["slug"]}/">{esc(nxt["title"])} →</a>\n')
     else:
         parts.append('    <span></span>\n')
-    parts.append("""  </div>
+    parts.append(f"""    </nav>
+    </div>
+  </div>
 </section>
+{nav_js()}
 """)
     parts.append(FOOTER)
     return "".join(parts)

@@ -36,6 +36,9 @@ base64 = { workspace = true }
 uuid = { workspace = true }
 humantime = { workspace = true }
 
+[build-dependencies]
+serde_json = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 serde_yaml = { workspace = true }
@@ -43,4 +46,3 @@ loadr-config = { workspace = true }
 async-trait = { workspace = true }
 parking_lot = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
-

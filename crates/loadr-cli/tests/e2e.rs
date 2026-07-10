@@ -6,6 +6,28 @@ use std::time::Duration;
 
 const BIN: &str = env!("CARGO_BIN_EXE_loadr");
 
+#[test]
+fn version_commands_include_revision() {
+    let expected = format!("loadr {}", loadr_core::build_info::VERSION_WITH_REVISION);
+
+    let short = Command::new(BIN)
+        .arg("--version")
+        .output()
+        .expect("run loadr --version");
+    assert!(short.status.success());
+    assert_eq!(String::from_utf8_lossy(&short.stdout).trim(), expected);
+
+    let detailed = Command::new(BIN)
+        .arg("version")
+        .output()
+        .expect("run loadr version");
+    assert!(detailed.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&detailed.stdout).lines().next(),
+        Some(expected.as_str())
+    );
+}
+
 fn write_test(dir: &std::path::Path, name: &str, yaml: &str) -> std::path::PathBuf {
     let path = dir.join(name);
     std::fs::write(&path, yaml).expect("write test yaml");

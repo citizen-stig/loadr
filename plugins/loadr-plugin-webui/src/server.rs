@@ -152,6 +152,7 @@ fn router(state: Arc<AppState>) -> Router {
 
     Router::new()
         .route("/healthz", get(healthz))
+        .route("/api/version", get(crate::api::version))
         .nest("/api", api)
         .fallback(get(static_handler))
         .with_state(state)

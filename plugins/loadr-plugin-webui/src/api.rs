@@ -37,6 +37,14 @@ impl IntoResponse for ApiError {
     }
 }
 
+/// Public build metadata used by the embedded UI footer.
+pub(crate) async fn version() -> Json<Value> {
+    Json(json!({
+        "version": loadr_core::build_info::VERSION,
+        "revision": loadr_core::build_info::GIT_REVISION,
+    }))
+}
+
 pub(crate) async fn overview(State(state): State<Arc<AppState>>) -> Json<Value> {
     Json(overview_json(state.backend.as_ref()))
 }

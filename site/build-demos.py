@@ -941,13 +941,20 @@ def nav_link(d, active):
     )
 
 
-def demo_nav(current_slug=None, sticky_headers=True):
+def demo_nav(current_slug=None, sticky_headers=True, cat_base=""):
     """The grouped list of every demo — the body of the left-hand nav.
+
+    ONE component, used in every sidebar slot: the demos index and every detail
+    page. Two different navs in the same slot read as a bug, however sensible
+    each looked alone.
 
     Rendered twice per detail page (a mobile <details>, a sticky desktop panel),
     so it carries no ids. Category headers stick to the top of the scroll
     container on desktop; inside the mobile disclosure there is no scroller of
     its own, so they must not.
+
+    cat_base prefixes the category anchors: "" on the index (jump down the page),
+    "/demos/" on a detail page (jump back to the index's section).
     """
     by_cat = demos_by_cat()
     # The header must be fully opaque: it scrolls over the list beneath it, and a
@@ -956,7 +963,12 @@ def demo_nav(current_slug=None, sticky_headers=True):
         "sticky top-0 z-10 bg-panel shadow-[0_6px_6px_-6px_rgba(0,0,0,0.55)] "
         if sticky_headers
         else ""
-    ) + "-mx-2 px-4 py-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60"
+    ) + "-mx-2 px-4 py-1.5"
+    link_cls = (
+        "block text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60 "
+        "transition-colors hover:text-flare "
+        "aria-[current=true]:text-flare"
+    )
 
     out = ['<div class="space-y-4">']
     for cat in CATEGORY_ORDER:
@@ -964,7 +976,10 @@ def demo_nav(current_slug=None, sticky_headers=True):
         if not items:
             continue
         out.append(f'<div data-demo-group data-cat="{esc(cat)}">')
-        out.append(f'<p class="{head_cls}">{esc(cat)}</p>')
+        out.append(
+            f'<p class="{head_cls}">'
+            f'<a data-cat-link href="{cat_base}#{cat_slug(cat)}" class="{link_cls}">{esc(cat)}</a></p>'
+        )
         out.append('<ul class="mt-1 space-y-0.5">')
         for d in items:
             out.append(nav_link(d, d["slug"] == current_slug))
@@ -976,10 +991,15 @@ def demo_nav(current_slug=None, sticky_headers=True):
     return "\n".join(out)
 
 
-def nav_filter_box():
-    """Search field + 'all demos' link — the panel header, above the scroller."""
+def nav_filter_box(on_index=False):
+    """Search field + 'all demos' link — the panel header, above the scroller.
+
+    On the index that link points at the page you are already on, so it carries
+    aria-current instead of pretending to go somewhere.
+    """
+    cur = ' aria-current="page"' if on_index else ""
     return (
-        '<a href="/demos/" class="group flex items-center gap-2 text-[13px] font-semibold text-flare">'
+        f'<a href="/demos/"{cur} class="group flex items-center gap-2 text-[13px] font-semibold text-flare">'
         '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" '
         'stroke-linecap="round" stroke-linejoin="round" class="transition-transform group-hover:-translate-x-0.5">'
         '<path d="M19 12H5m0 0l6 6m-6-6l6-6"/></svg>'
@@ -997,29 +1017,15 @@ def nav_filter_box():
     )
 
 
-def category_nav(counts):
-    """Category jump-list for the demos index, with scrollspy highlighting.
-
-    No heading of its own — it sits inside a nav_panel whose head supplies one.
-    """
-    out = ['<ul class="space-y-0.5">']
-    for cat in CATEGORY_ORDER:
-        n = counts.get(cat, 0)
-        if not n:
-            continue
-        out.append(
-            f'<li><a data-cat-link href="#{cat_slug(cat)}" '
-            'class="group flex items-center justify-between gap-2 rounded-lg py-1.5 pl-3.5 pr-2.5 text-sm '
-            'text-smoke transition-colors duration-150 hover:bg-coal/70 hover:text-flare '
-            'aria-[current=true]:bg-gradient-to-r aria-[current=true]:from-blood/25 aria-[current=true]:via-blood/10 '
-            'aria-[current=true]:to-transparent aria-[current=true]:font-semibold aria-[current=true]:text-white '
-            'aria-[current=true]:ring-1 aria-[current=true]:ring-inset aria-[current=true]:ring-blood/25">'
-            f'<span class="leading-snug">{esc(cat)}</span>'
-            '<span class="shrink-0 rounded-full border border-edge bg-coal px-1.5 py-px font-mono text-[10px] '
-            f'text-smoke/70 group-hover:border-edge-bright">{n}</span></a></li>'
-        )
-    out.append("</ul>")
-    return "\n".join(out)
+def sidebar_panel(current_slug=None, cat_base="", on_index=False):
+    """The sticky sidebar card, identical on the index and every detail page."""
+    return nav_panel(
+        panel_head(nav_filter_box(on_index)),
+        panel_scroller(
+            demo_nav(current_slug, cat_base=cat_base), "data-demo-nav", pad_top=False
+        ),
+        panel_foot(f"{len(DEMOS)} demos · {len(CATEGORY_ORDER)} categories"),
+    )
 
 
 def nav_panel(head, scroller, foot):
@@ -1192,7 +1198,6 @@ def card(d):
 
 def render_index():
     by_cat = demos_by_cat()
-    counts = {cat: len(items) for cat, items in by_cat.items()}
 
     groups = []
     for cat in CATEGORY_ORDER:
@@ -1213,13 +1218,9 @@ def render_index():
         )
     groups_html = "\n\n      ".join(groups)
 
-    cat_panel = nav_panel(
-        panel_head(
-            '<p class="text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60">Browse by category</p>'
-        ),
-        panel_scroller(category_nav(counts)),
-        panel_foot(f"{len(DEMOS)} demos · {len(CATEGORY_ORDER)} categories"),
-    )
+    # Same sidebar as the detail pages. Its category headers anchor down this
+    # page's card sections, so it doubles as the jump-list.
+    cat_panel = sidebar_panel(cat_base="", on_index=True)
 
     desc = ("Every loadr demo, categorised: load profiles, traffic modelling, validation, protocols, "
             "databases, scripting, distributed scale and ops integrations. Each tile opens a detail page "
@@ -1248,7 +1249,7 @@ def render_index():
 <section class="pt-10 pb-8 lg:pt-14">
   <div class="mx-auto max-w-[88rem] px-5 lg:flex lg:gap-12 xl:gap-16">
 
-    <aside class="hidden lg:block lg:w-[16.5rem] lg:shrink-0">
+    <aside class="hidden lg:block lg:w-[17.5rem] lg:shrink-0">
       {cat_panel}
     </aside>
 
@@ -1257,6 +1258,7 @@ def render_index():
     </div>
   </div>
 </section>
+{nav_js()}
 {INDEX_NAV_JS}
 
 <!-- ======================================================= CTA -->
@@ -1338,12 +1340,8 @@ def render_detail(d, prev, nxt):
 
     # The same list twice: a mobile disclosure (no scroller of its own, so no
     # sticky headers) and the desktop panel.
-    mobile_nav = demo_nav(slug, sticky_headers=False)
-    nav_panel_html = nav_panel(
-        panel_head(nav_filter_box()),
-        panel_scroller(demo_nav(slug), "data-demo-nav", pad_top=False),
-        panel_foot(f"{len(DEMOS)} demos · {len(CATEGORY_ORDER)} categories"),
-    )
+    mobile_nav = demo_nav(slug, sticky_headers=False, cat_base="/demos/")
+    nav_panel_html = sidebar_panel(slug, cat_base="/demos/")
 
     parts = [head(title, desc, canonical)]
     parts.append(f"""

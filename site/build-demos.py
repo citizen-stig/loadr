@@ -767,6 +767,7 @@ CATEGORY_BLURB = {
     "Load profiles": "The shapes of load — constant, ramping, arrival-rate, spike and soak.",
     "Traffic modelling": "Make synthetic traffic look real — weighted mixes, feeders, correlation.",
     "Validation & CI": "Turn a load test into a pass/fail gate your pipeline can trust.",
+    "Authoring & analysis": "Write plans from a recording, a contract or a sentence — then have loadr read the result back to you.",
     "Auth, sessions & uploads": "Tokens, cookies, multipart uploads and the deeper HTTP surface.",
     "Protocols": "Everything past HTTP — WebSocket, gRPC, GraphQL, SSE, SOAP, Twirp, browser.",
     "Databases & messaging": "Drive datastores and brokers at their native protocol via runtime plugins.",
@@ -782,6 +783,8 @@ CATEGORY_ICON = {
     "Protocols": "M8 3v4M16 3v4M4 11h16M6 21h12", "Databases & messaging": "M12 3c4 0 7 1.3 7 3v12c0 1.7-3 3-7 3s-7-1.3-7-3V6c0-1.7 3-3 7-3z",
     "Scripting & metrics": "M8 9l-4 3 4 3M16 9l4 3-4 3", "Scale & operations": "M3 12h4l3 8 4-16 3 8h4",
     "Ops integrations": "M12 3v6m0 6v6M3 12h6m6 0h6", "Extending loadr": "M12 5v14M5 12h14",
+    "Authoring & analysis": "M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z",
+    "Adopt loadr": "M12 3v12m0 0l4-4m-4 4l-4-4M4 21h16",
 }
 
 
@@ -902,6 +905,96 @@ def curve_svg(kind):
     )
 
 
+def cat_slug(cat):
+    """A stable anchor id for a category heading ('Auth, sessions & uploads' -> 'auth-sessions-uploads')."""
+    s = cat.lower().replace("&", " ").replace(",", " ")
+    return "-".join(s.split())
+
+
+def demos_by_cat():
+    by_cat = {}
+    for d in DEMOS:
+        by_cat.setdefault(d["category"], []).append(d)
+    return by_cat
+
+
+def demo_nav(current_slug=None):
+    """The grouped list of every demo — the body of the left-hand nav.
+
+    Rendered twice per detail page (a mobile <details>, a sticky desktop aside),
+    so it carries no ids. The active link is marked with aria-current so the
+    sticky column can scroll it into view.
+    """
+    by_cat = demos_by_cat()
+    out = [
+        '<a href="/demos/" class="flex items-center gap-2 text-sm font-semibold text-flare hover:underline">'
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" '
+        'stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5m0 0l6 6m-6-6l6-6"/></svg>'
+        f'All {len(DEMOS)} demos</a>',
+        '<div class="mt-5 space-y-5">',
+    ]
+    for cat in CATEGORY_ORDER:
+        items = by_cat.get(cat, [])
+        if not items:
+            continue
+        out.append('<div>')
+        out.append(
+            '<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">'
+            f'{esc(cat)}</p>'
+        )
+        out.append('<ul class="space-y-px border-l border-edge">')
+        for d in items:
+            active = d["slug"] == current_slug
+            cls = (
+                "-ml-px block border-l-2 py-1 pl-3 text-sm transition "
+                + (
+                    "border-blood bg-coal/60 font-semibold text-white"
+                    if active
+                    else "border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare"
+                )
+            )
+            cur = ' aria-current="page"' if active else ""
+            out.append(
+                f'<li><a{cur} class="{cls}" href="/demos/{d["slug"]}/">{esc(d["title"])}</a></li>'
+            )
+        out.append("</ul></div>")
+    out.append("</div>")
+    return "\n".join(out)
+
+
+def category_nav(counts):
+    """Sticky category jump-list for the demos index (52 demos is a long scroll)."""
+    out = ['<p class="text-xs font-semibold uppercase tracking-wider text-smoke">Categories</p>',
+           '<ul class="mt-4 space-y-px border-l border-edge">']
+    for cat in CATEGORY_ORDER:
+        n = counts.get(cat, 0)
+        if not n:
+            continue
+        out.append(
+            f'<li><a href="#{cat_slug(cat)}" class="-ml-px flex items-center justify-between gap-2 border-l-2 '
+            'border-transparent py-1 pl-3 pr-1 text-sm text-smoke transition hover:border-edge-bright '
+            'hover:bg-coal/40 hover:text-flare">'
+            f'<span>{esc(cat)}</span><span class="text-[11px] text-smoke/60">{n}</span></a></li>'
+        )
+    out.append("</ul>")
+    return "\n".join(out)
+
+
+# Scrolls the active demo into view inside the sticky column without moving the
+# page — the list is taller than the viewport, so the current demo is often
+# below the fold on load.
+NAV_SCROLL_JS = """<script>
+(function () {
+  var box = document.querySelector('[data-demo-nav]');
+  if (!box) return;
+  var active = box.querySelector('[aria-current="page"]');
+  if (!active) return;
+  var target = active.offsetTop - box.clientHeight / 2 + active.offsetHeight / 2;
+  box.scrollTop = target > 0 ? target : 0;
+})();
+</script>"""
+
+
 def demo_icon(cat, size="h-10 w-10"):
     d = CATEGORY_ICON.get(cat, "M12 5v14M5 12h14")
     return (
@@ -934,9 +1027,8 @@ def card(d):
 
 
 def render_index():
-    by_cat = {}
-    for d in DEMOS:
-        by_cat.setdefault(d["category"], []).append(d)
+    by_cat = demos_by_cat()
+    counts = {cat: len(items) for cat, items in by_cat.items()}
 
     groups = []
     for cat in CATEGORY_ORDER:
@@ -945,7 +1037,7 @@ def render_index():
             continue
         grid = "\n        ".join(card(d) for d in items)
         groups.append(
-            '<div>'
+            f'<div id="{cat_slug(cat)}" class="scroll-mt-24">'
             '<div class="flex items-baseline justify-between border-b border-edge/60 pb-3">'
             f'<h2 class="text-xl font-extrabold text-white">{esc(cat)}</h2>'
             f'<span class="text-xs text-smoke">{len(items)} demo{"s" if len(items) != 1 else ""}</span>'
@@ -982,8 +1074,17 @@ def render_index():
 
 <!-- ======================================================= DEMO CARDS -->
 <section class="pb-8">
-  <div class="mx-auto max-w-6xl space-y-14 px-5">
+  <div class="mx-auto max-w-7xl px-5 lg:flex lg:items-start lg:gap-10">
+
+    <aside class="hidden lg:block lg:w-60 lg:shrink-0">
+      <div class="sticky top-24 max-h-[calc(100vh-8rem)] overflow-y-auto pr-2">
+        {category_nav(counts)}
+      </div>
+    </aside>
+
+    <div class="min-w-0 flex-1 space-y-14">
       {groups_html}
+    </div>
   </div>
 </section>
 
@@ -1064,14 +1165,19 @@ def render_detail(d, prev, nxt):
     if d.get("docs"):
         docs_btn = f'<a href="{d["docs"]}" class="rounded-xl border border-edge-bright bg-coal px-6 py-3 font-semibold text-ash hover:border-ember/60 hover:text-white">Read the docs →</a>'
 
+    # One list, rendered twice: the mobile disclosure and the sticky column.
+    nav_html = demo_nav(slug)
+
     parts = [head(title, desc, canonical)]
     parts.append(f"""
 <!-- ======================================================= HERO -->
 <section class="hero-grid relative overflow-hidden pt-32 pb-10">
   <div class="pointer-events-none absolute -top-40 left-1/2 h-[40rem] w-[56rem] -translate-x-1/2 rounded-[50%] bg-blood/20 blur-[150px]"></div>
-  <div class="mx-auto max-w-5xl px-5">
-    <nav class="flex items-center gap-2 text-sm text-smoke">
+  <div class="mx-auto max-w-7xl px-5">
+    <nav class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-smoke">
       <a class="hover:text-flare" href="/demos/">Demos</a>
+      <span class="text-edge-bright">/</span>
+      <a class="hover:text-flare" href="/demos/#{cat_slug(d["category"])}">{esc(d["category"])}</a>
       <span class="text-edge-bright">/</span>
       <span class="text-ash">{esc(d["title"])}</span>
     </nav>
@@ -1086,7 +1192,25 @@ def render_detail(d, prev, nxt):
 
 <!-- ======================================================= DETAIL -->
 <section class="pb-16">
-  <div class="mx-auto grid max-w-5xl gap-8 px-5 lg:grid-cols-2">
+  <div class="mx-auto max-w-7xl px-5 lg:flex lg:items-start lg:gap-10">
+
+    <!-- left-hand demo nav: a disclosure on mobile, a sticky column from lg -->
+    <details class="mb-8 rounded-xl border border-edge bg-panel lg:hidden">
+      <summary class="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-ash">
+        Browse all {len(DEMOS)} demos
+      </summary>
+      <div class="border-t border-edge px-4 py-4">
+        {nav_html}
+      </div>
+    </details>
+
+    <aside class="hidden lg:block lg:w-64 lg:shrink-0">
+      <div data-demo-nav class="sticky top-24 max-h-[calc(100vh-8rem)] overflow-y-auto pr-2">
+        {nav_html}
+      </div>
+    </aside>
+
+    <div class="grid min-w-0 flex-1 gap-8 lg:grid-cols-2">
     <div>
       <div class="codebox">
         <div class="codebar"><span>Run it</span><button data-copy="#{slug}Run" class="rounded border border-edge px-2 py-0.5 text-[10px] text-smoke hover:text-flare">copy</button></div>
@@ -1110,12 +1234,14 @@ def render_detail(d, prev, nxt):
         {docs_btn}
       </div>
     </div>
+    </div>
   </div>
 </section>
+{NAV_SCROLL_JS}
 
 <!-- ======================================================= PREV / NEXT -->
 <section class="border-t border-edge/60 bg-coal/40 py-10">
-  <div class="mx-auto flex max-w-5xl items-center justify-between gap-4 px-5 text-sm">
+  <div class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 text-sm">
 """)
     if prev:
         parts.append(f'    <a class="text-smoke hover:text-flare" href="/demos/{prev["slug"]}/">← {esc(prev["title"])}</a>\n')

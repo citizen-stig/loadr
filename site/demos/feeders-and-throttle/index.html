@@ -22,9 +22,11 @@
 <!-- ======================================================= HERO -->
 <section class="hero-grid relative overflow-hidden pt-32 pb-10">
   <div class="pointer-events-none absolute -top-40 left-1/2 h-[40rem] w-[56rem] -translate-x-1/2 rounded-[50%] bg-blood/20 blur-[150px]"></div>
-  <div class="mx-auto max-w-5xl px-5">
-    <nav class="flex items-center gap-2 text-sm text-smoke">
+  <div class="mx-auto max-w-7xl px-5">
+    <nav class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-smoke">
       <a class="hover:text-flare" href="/demos/">Demos</a>
+      <span class="text-edge-bright">/</span>
+      <a class="hover:text-flare" href="/demos/#traffic-modelling">Traffic modelling</a>
       <span class="text-edge-bright">/</span>
       <span class="text-ash">Feeders &amp; throttling</span>
     </nav>
@@ -39,7 +41,229 @@
 
 <!-- ======================================================= DETAIL -->
 <section class="pb-16">
-  <div class="mx-auto grid max-w-5xl gap-8 px-5 lg:grid-cols-2">
+  <div class="mx-auto max-w-7xl px-5 lg:flex lg:items-start lg:gap-10">
+
+    <!-- left-hand demo nav: a disclosure on mobile, a sticky column from lg -->
+    <details class="mb-8 rounded-xl border border-edge bg-panel lg:hidden">
+      <summary class="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-ash">
+        Browse all 52 demos
+      </summary>
+      <div class="border-t border-edge px-4 py-4">
+        <a href="/demos/" class="flex items-center gap-2 text-sm font-semibold text-flare hover:underline"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5m0 0l6 6m-6-6l6-6"/></svg>All 52 demos</a>
+<div class="mt-5 space-y-5">
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Load profiles</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/quickstart/">The 30-second quickstart</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/ramping-load/">Ramping load</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/arrival-rate/">Open-model arrival rate</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/spike-test/">Spike test</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/soak/">Soak &amp; outputs</a></li>
+</ul></div>
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Traffic modelling</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/scenario-weights/">Weighted traffic mix</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/flow-control/">Flow control &amp; weighted tasks</a></li>
+<li><a aria-current="page" class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-blood bg-coal/60 font-semibold text-white" href="/demos/feeders-and-throttle/">Feeders &amp; throttling</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/data-driven/">Data-driven load</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/correlation/">Correlation &amp; extraction</a></li>
+</ul></div>
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Validation &amp; CI</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/functional-test/">Functional / smoke test</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/check-chains/">JMESPath &amp; fused check-chains</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/failure-breakdown/">Failure breakdown, by cause</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/tags/">Tags &amp; per-route metrics</a></li>
+</ul></div>
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Authoring &amp; analysis</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/record/">Record a session into a scenario</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/gen/">Generate a test from an API contract</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/explain/">Explain a run in plain language</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/history/">Catch regressions statistically</a></li>
+</ul></div>
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Auth, sessions &amp; uploads</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/auth-tokens/">Per-VU auth tokens + refresh</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/cookies-session/">Cookie-based sessions</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/file-uploads/">Multipart file uploads</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/http-advanced/">Advanced HTTP</a></li>
+</ul></div>
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Protocols</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/websocket/">WebSockets</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/grpc/">gRPC</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/graphql/">GraphQL</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/tcp-udp/">Raw TCP &amp; UDP</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/sse/">Server-Sent Events</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/soap/">SOAP / XML</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/twirp/">Twirp RPC</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/browser/">Browser (headless)</a></li>
+</ul></div>
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Databases &amp; messaging</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/postgres/">PostgreSQL</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/mongo/">MongoDB</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/mysql/">MySQL</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/redis/">Redis</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/kafka/">Apache Kafka</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/rabbitmq/">RabbitMQ</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/elasticsearch/">Elasticsearch</a></li>
+</ul></div>
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Scripting &amp; metrics</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/javascript/">JavaScript in the flow</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/custom-metrics/">Custom metrics</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/lifecycle/">Lifecycle hooks</a></li>
+</ul></div>
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Scale &amp; operations</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/distributed/">Distributed fleet</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/environments/">Environments</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/scenarios-and-groups/">Scenarios &amp; groups</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/timeseries-report/">Time-series HTML report</a></li>
+</ul></div>
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Ops integrations</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/prometheus-grafana/">Prometheus + Grafana</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/cicd/">CI/CD performance gate</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/kubernetes/">Kubernetes</a></li>
+</ul></div>
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Adopt loadr</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/convert/">Import from k6 &amp; JMeter</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/web-ui/">The live Web UI</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/agent-fleet/">The agent fleet, in the UI</a></li>
+</ul></div>
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Extending loadr</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/write-plugin-go/">Write a plugin in Go</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/native-protocol-c/">A native protocol in C</a></li>
+</ul></div>
+</div>
+      </div>
+    </details>
+
+    <aside class="hidden lg:block lg:w-64 lg:shrink-0">
+      <div data-demo-nav class="sticky top-24 max-h-[calc(100vh-8rem)] overflow-y-auto pr-2">
+        <a href="/demos/" class="flex items-center gap-2 text-sm font-semibold text-flare hover:underline"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5m0 0l6 6m-6-6l6-6"/></svg>All 52 demos</a>
+<div class="mt-5 space-y-5">
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Load profiles</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/quickstart/">The 30-second quickstart</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/ramping-load/">Ramping load</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/arrival-rate/">Open-model arrival rate</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/spike-test/">Spike test</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/soak/">Soak &amp; outputs</a></li>
+</ul></div>
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Traffic modelling</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/scenario-weights/">Weighted traffic mix</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/flow-control/">Flow control &amp; weighted tasks</a></li>
+<li><a aria-current="page" class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-blood bg-coal/60 font-semibold text-white" href="/demos/feeders-and-throttle/">Feeders &amp; throttling</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/data-driven/">Data-driven load</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/correlation/">Correlation &amp; extraction</a></li>
+</ul></div>
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Validation &amp; CI</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/functional-test/">Functional / smoke test</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/check-chains/">JMESPath &amp; fused check-chains</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/failure-breakdown/">Failure breakdown, by cause</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/tags/">Tags &amp; per-route metrics</a></li>
+</ul></div>
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Authoring &amp; analysis</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/record/">Record a session into a scenario</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/gen/">Generate a test from an API contract</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/explain/">Explain a run in plain language</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/history/">Catch regressions statistically</a></li>
+</ul></div>
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Auth, sessions &amp; uploads</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/auth-tokens/">Per-VU auth tokens + refresh</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/cookies-session/">Cookie-based sessions</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/file-uploads/">Multipart file uploads</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/http-advanced/">Advanced HTTP</a></li>
+</ul></div>
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Protocols</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/websocket/">WebSockets</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/grpc/">gRPC</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/graphql/">GraphQL</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/tcp-udp/">Raw TCP &amp; UDP</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/sse/">Server-Sent Events</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/soap/">SOAP / XML</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/twirp/">Twirp RPC</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/browser/">Browser (headless)</a></li>
+</ul></div>
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Databases &amp; messaging</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/postgres/">PostgreSQL</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/mongo/">MongoDB</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/mysql/">MySQL</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/redis/">Redis</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/kafka/">Apache Kafka</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/rabbitmq/">RabbitMQ</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/elasticsearch/">Elasticsearch</a></li>
+</ul></div>
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Scripting &amp; metrics</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/javascript/">JavaScript in the flow</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/custom-metrics/">Custom metrics</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/lifecycle/">Lifecycle hooks</a></li>
+</ul></div>
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Scale &amp; operations</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/distributed/">Distributed fleet</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/environments/">Environments</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/scenarios-and-groups/">Scenarios &amp; groups</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/timeseries-report/">Time-series HTML report</a></li>
+</ul></div>
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Ops integrations</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/prometheus-grafana/">Prometheus + Grafana</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/cicd/">CI/CD performance gate</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/kubernetes/">Kubernetes</a></li>
+</ul></div>
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Adopt loadr</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/convert/">Import from k6 &amp; JMeter</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/web-ui/">The live Web UI</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/agent-fleet/">The agent fleet, in the UI</a></li>
+</ul></div>
+<div>
+<p class="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-smoke/70">Extending loadr</p>
+<ul class="space-y-px border-l border-edge">
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/write-plugin-go/">Write a plugin in Go</a></li>
+<li><a class="-ml-px block border-l-2 py-1 pl-3 text-sm transition border-transparent text-smoke hover:border-edge-bright hover:bg-coal/40 hover:text-flare" href="/demos/native-protocol-c/">A native protocol in C</a></li>
+</ul></div>
+</div>
+      </div>
+    </aside>
+
+    <div class="grid min-w-0 flex-1 gap-8 lg:grid-cols-2">
     <div>
       <div class="codebox">
         <div class="codebar"><span>Run it</span><button data-copy="#feeders-and-throttleRun" class="rounded border border-edge px-2 py-0.5 text-[10px] text-smoke hover:text-flare">copy</button></div>
@@ -118,12 +342,23 @@ thresholds:
         <a href="/docs/yaml/data.html" class="rounded-xl border border-edge-bright bg-coal px-6 py-3 font-semibold text-ash hover:border-ember/60 hover:text-white">Read the docs →</a>
       </div>
     </div>
+    </div>
   </div>
 </section>
+<script>
+(function () {
+  var box = document.querySelector('[data-demo-nav]');
+  if (!box) return;
+  var active = box.querySelector('[aria-current="page"]');
+  if (!active) return;
+  var target = active.offsetTop - box.clientHeight / 2 + active.offsetHeight / 2;
+  box.scrollTop = target > 0 ? target : 0;
+})();
+</script>
 
 <!-- ======================================================= PREV / NEXT -->
 <section class="border-t border-edge/60 bg-coal/40 py-10">
-  <div class="mx-auto flex max-w-5xl items-center justify-between gap-4 px-5 text-sm">
+  <div class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 text-sm">
     <a class="text-smoke hover:text-flare" href="/demos/flow-control/">← Flow control &amp; weighted tasks</a>
     <a class="font-semibold text-flare hover:underline" href="/demos/">All demos</a>
     <a class="text-smoke hover:text-flare" href="/demos/data-driven/">Data-driven load →</a>

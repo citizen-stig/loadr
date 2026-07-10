@@ -116,6 +116,7 @@ pub struct RunSummaryInfo {
     /// pending | running | finished | aborted | failed
     pub state: String,
     pub started_ms: u64,
+    pub ended_ms: Option<u64>,
     pub agents: Vec<String>,
 }
 
@@ -188,6 +189,7 @@ struct ControllerRun {
     lost: Mutex<HashSet<String>>,
     /// Per-agent summaries as reported.
     summaries: Mutex<Vec<Summary>>,
+    merged_summary: Mutex<Option<Summary>>,
     threshold_statuses: Mutex<Vec<ThresholdStatus>>,
     abort_reason: Mutex<Option<String>>,
     snapshot_tx: watch::Sender<Arc<Snapshot>>,
@@ -354,11 +356,11 @@ impl Inner {
         if !became_terminal {
             return;
         }
-        *run.finished_ms.lock() = Some(now_unix_ms());
+        let finished_ms = now_unix_ms();
+        *run.finished_ms.lock() = Some(finished_ms);
         let mut agg = run.agg.lock();
         let (statuses, _) = evaluate_all(&run.thresholds, &agg, agg.elapsed());
         let snapshot = Arc::new(agg.snapshot());
-        drop(agg);
         *run.threshold_statuses.lock() = statuses;
         if snapshot.interval_secs > 0.0
             && snapshot
@@ -370,6 +372,24 @@ impl Inner {
                 .lock()
                 .push(TimelinePoint::from_snapshot(&snapshot));
         }
+        let thresholds = run.threshold_statuses.lock().clone();
+        let aborted = run.abort_reason.lock().clone();
+        let timeline = run.timeline.lock().clone();
+        let mut summary = Summary::build(
+            run.name.clone(),
+            run.run_id.clone(),
+            run.started_ms,
+            run.scenarios.clone(),
+            &mut agg,
+            thresholds,
+            aborted,
+            timeline,
+        );
+        summary.ended_ms = finished_ms;
+        summary.duration_secs = snapshot.elapsed_secs;
+        summary.snapshot = (*snapshot).clone();
+        *run.merged_summary.lock() = Some(summary);
+        drop(agg);
         let _ = run.snapshot_tx.send(snapshot);
         tracing::info!(run_id = %run.run_id, state = final_state.as_str(), "run completed");
     }
@@ -734,6 +754,7 @@ impl ControllerHandle {
             done: Mutex::new(HashMap::new()),
             lost: Mutex::new(HashSet::new()),
             summaries: Mutex::new(Vec::new()),
+            merged_summary: Mutex::new(None),
             threshold_statuses: Mutex::new(Vec::new()),
             abort_reason: Mutex::new(None),
             snapshot_tx,
@@ -879,6 +900,7 @@ impl ControllerHandle {
                 name: r.name.clone(),
                 state: r.state.lock().as_str().to_string(),
                 started_ms: r.started_ms,
+                ended_ms: *r.finished_ms.lock(),
                 agents: r.assigned.clone(),
             })
             .collect();
@@ -926,20 +948,8 @@ impl ControllerHandle {
         if !run.state.lock().is_terminal() {
             return None;
         }
-        let thresholds = run.threshold_statuses.lock().clone();
-        let aborted = run.abort_reason.lock().clone();
-        let timeline = run.timeline.lock().clone();
-        let mut agg = run.agg.lock();
-        Some(Summary::build(
-            run.name.clone(),
-            run.run_id.clone(),
-            run.started_ms,
-            run.scenarios.clone(),
-            &mut agg,
-            thresholds,
-            aborted,
-            timeline,
-        ))
+        let summary = run.merged_summary.lock().clone();
+        summary
     }
 
     /// Stop the listener and all background tasks.

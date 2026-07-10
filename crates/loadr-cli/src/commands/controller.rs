@@ -254,7 +254,7 @@ impl loadr_plugin_webui::UiBackend for ControllerBackend {
                     state: r.state.clone(),
                     passed: summary.as_ref().map(|s| s.thresholds_passed),
                     started_ms: r.started_ms,
-                    ended_ms: summary.as_ref().map(|s| s.ended_ms),
+                    ended_ms: r.ended_ms,
                     scenarios: summary.map(|s| s.scenarios).unwrap_or_default(),
                     agents: r.agents,
                 }

@@ -294,6 +294,10 @@ async fn run_lifecycle_and_summary() {
     assert_eq!(run["state"], "finished");
     assert_eq!(run["passed"], true);
     assert_eq!(run["name"], "tiny");
+    assert!(
+        run["ended_ms"].as_u64().expect("ended_ms")
+            >= run["started_ms"].as_u64().expect("started_ms")
+    );
 
     // Summary: exactly 20 requests.
     let (status, summary) = server

@@ -925,6 +925,7 @@ impl FlowRunner {
         child.rng = rand::SeedableRng::seed_from_u64(
             parent.vu_id ^ parent.iteration.wrapping_mul(0x9E37) ^ branch.wrapping_mul(0xC2B2),
         );
+        child.data_state = parent.data_state.fork_for_parallel();
         child
     }
 

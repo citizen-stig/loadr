@@ -3,14 +3,15 @@
 //! mock protocol handler. (JS-condition while/if coverage lives in the CLI
 //! e2e suite, which wires the real QuickJS engine.)
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use loadr_core::{
-    Engine, EngineOptions, PreparedRequest, ProtocolError, ProtocolHandler, ProtocolRegistry,
-    ProtocolResponse, Tags, VuContext,
+    DataSourcePlugin, Engine, EngineOptions, PluginRowCtx, PluginRowResult, PreparedRequest,
+    ProtocolError, ProtocolHandler, ProtocolRegistry, ProtocolResponse, Tags, VuContext,
 };
 
 /// A protocol handler that records every request URL and returns 200.
@@ -134,6 +135,27 @@ where
         },
     )
     .expect("engine")
+}
+
+struct SeqPlugin;
+
+impl DataSourcePlugin for SeqPlugin {
+    fn name(&self) -> &str {
+        "signer"
+    }
+
+    fn init(
+        &mut self,
+        _source_configs: &indexmap::IndexMap<String, serde_json::Value>,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn next_row(&self, ctx: &PluginRowCtx<'_>) -> Result<PluginRowResult, String> {
+        let mut row = loadr_core::data::Row::new();
+        row.insert("seq".to_string(), ctx.seq.to_string());
+        Ok(PluginRowResult::Row(row))
+    }
 }
 
 async fn run(yaml: &str, handler: Arc<RecordingHandler>) -> loadr_core::RunResult {
@@ -303,6 +325,59 @@ scenarios:
         elapsed < std::time::Duration::from_millis(450),
         "took {elapsed:?} (not concurrent)"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn parallel_plugin_data_source_sequences_are_unique_per_vu_source() {
+    let handler = Arc::new(RecordingHandler::default());
+    let loaded = loadr_config::load_str(
+        r#"
+plugins:
+  - name: signer
+
+data:
+  signed:
+    type: plugin
+    source: signer
+
+scenarios:
+  s:
+    executor: shared-iterations
+    vus: 1
+    iterations: 1
+    flow:
+      - parallel:
+          branches:
+            - [ { request: { url: "http://x/a/${data.signed.seq}" } } ]
+            - [ { request: { url: "http://x/b/${data.signed.seq}" } } ]
+"#,
+        &loadr_config::LoadOptions::new(),
+    )
+    .expect("parse");
+
+    let mut data_sources: HashMap<String, Box<dyn DataSourcePlugin>> = HashMap::new();
+    data_sources.insert("signer".to_string(), Box::new(SeqPlugin));
+
+    let engine = Engine::new(
+        loaded.plan,
+        std::path::PathBuf::from("."),
+        EngineOptions {
+            protocols: registry(handler.clone()),
+            data_sources,
+            ..Default::default()
+        },
+    )
+    .expect("engine");
+    engine.run().await.expect("run");
+
+    let urls = handler.urls.lock();
+    assert_eq!(urls.len(), 2);
+    let mut seqs: Vec<&str> = urls
+        .iter()
+        .map(|url| url.rsplit('/').next().expect("url path segment"))
+        .collect();
+    seqs.sort_unstable();
+    assert_eq!(seqs, vec!["0", "1"]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -57,6 +57,15 @@ every streamed response; `extras.message_count` the count.
 - `status` is the gRPC status code (0 = OK); non-zero marks the request
   failed. `status_text` carries the code name and message.
 - Metrics: `grpc_reqs`, `grpc_req_duration`, plus `data_sent`/`data_received`.
-- Channels are pooled per VU per endpoint; proto descriptor pools are
-  compiled once and cached process-wide.
+- By default, channels are pooled **per VU** per endpoint; proto descriptor
+  pools are compiled once and cached process-wide.
+- One connection per VU stops scaling past a couple thousand VUs against a
+  single endpoint. Set `channel_pool_size` to instead share a fixed pool of
+  HTTP/2 channels across **all** VUs (round-robined; each multiplexes many
+  concurrent streams):
+
+  ```yaml
+  grpc:
+    channel_pool_size: 8   # 8 shared connections instead of one per VU
+  ```
 - `grpcs://` uses the standard TLS config (custom CAs, mTLS).

@@ -7,6 +7,11 @@ Terminal demos are [VHS](https://github.com/charmbracelet/vhs) tapes
 embeds them from `/videos/<name>.mp4`; `site/build-demos.py` maps a demo to its
 recording via the `"video"` field.
 
+A tape itself only declares `Output out/<name>.mp4` — VHS has no poster step, so
+render tapes through `render-tapes.sh`, which adds one. The players use
+`preload="none"`, so a missing poster shows a black box until the visitor hits
+play.
+
 ## Recording a tape
 
 Each tape `cd`s into `/tmp/loadr-demo`, puts the debug binary on `PATH`
@@ -18,8 +23,14 @@ then:
 
 ```bash
 export LOADR_BIN_DIR=$PWD/target/debug
-vhs site/videos/23-spike.tape        # → site/videos/out/23-spike.mp4
+./site/videos/render-tapes.sh 23-spike   # → out/23-spike.mp4 + 23-spike-poster.jpg
+./site/videos/render-tapes.sh            # every tape
+./site/videos/render-tapes.sh --posters-only   # re-derive posters from existing mp4s
 ```
+
+The poster is the highest-content frame sampled from the back half of the
+recording, rather than a fixed timestamp — a fixed offset tends to land on a
+half-typed command or a freshly `clear`ed screen.
 
 ## Ready-to-record tapes (not yet wired into demos)
 

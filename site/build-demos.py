@@ -683,12 +683,77 @@ DEMOS = [
         "docs": "/docs/distributed/overview.html",
         "video": "10-agent-fleet",
     },
+
+    # ---- Authoring & analysis ----------------------------------------------
+    {
+        "slug": "record",
+        "title": "Record a session into a scenario",
+        "category": "Authoring & analysis",
+        "tagline": "A capturing HTTP(S) proxy turns a real journey into a correlated scenario.",
+        "description": "Point a browser or app at <code class=\"text-flare\">loadr record</code> and it writes a ready-to-run scenario — with tokens, CSRF and ids <strong class=\"text-ash\">auto-correlated</strong> from a response into later requests. HTTPS is captured via an install-once local CA. No devtools HAR export.",
+        "command": "loadr record -o session.yaml",
+        "highlights": [
+            "HTTP + HTTPS (MITM via a local CA)",
+            "Dynamic values auto-correlated into <code class=\"text-flare\">extract</code> + <code class=\"text-flare\">${...}</code>",
+            "Static assets dropped automatically",
+        ],
+        "docs": "/docs/guides/record.html",
+        "video": "54-record",
+    },
+    {
+        "slug": "gen",
+        "title": "Generate a test from an API contract",
+        "category": "Authoring & analysis",
+        "tagline": "OpenAPI, Postman, GraphQL or gRPC in — a runnable, fuzzed scenario out.",
+        "description": "<code class=\"text-flare\">loadr gen</code> reads an API contract and writes one request per operation with schema-derived example data. <code class=\"text-flare\">--fuzz</code> adds spec-invalid and adversarial variants gated on <em class=\"text-ash\">never a 5xx</em>.",
+        "example": "specs/petstore.yaml",
+        "example_lang": "yaml",
+        "command": "loadr gen openapi specs/petstore.yaml -o plan.yaml",
+        "highlights": [
+            "openapi · postman · graphql · grpc",
+            "Params &amp; bodies from the schema; <code class=\"text-flare\">$ref</code> resolved",
+            "<code class=\"text-flare\">--fuzz</code> = a robustness suite from the contract",
+        ],
+        "docs": "/docs/guides/gen.html",
+        "video": "51-gen",
+    },
+    {
+        "slug": "explain",
+        "title": "Explain a run in plain language",
+        "category": "Authoring & analysis",
+        "tagline": "A deterministic root-cause read of any run — no model, no network.",
+        "description": "<code class=\"text-flare\">loadr explain</code> reads a run's summary and reports the threshold verdict, error rate, latency tail, and a heuristic likely cause — saturation vs a slow path vs a healthy run.",
+        "command": "loadr explain summary.json",
+        "highlights": [
+            "Latency tail: p99 vs the median",
+            "Saturation vs slow-path heuristic",
+            "The offline half of the AI copilot",
+        ],
+        "docs": "/docs/guides/explain.html",
+        "video": "52-explain",
+    },
+    {
+        "slug": "history",
+        "title": "Catch regressions statistically",
+        "category": "Authoring & analysis",
+        "tagline": "A local run history + a robust MAD z-score against a window, not one baseline.",
+        "description": "<code class=\"text-flare\">loadr history</code> records every run in SQLite and flags regressions with a robust median/MAD z-score across the last N runs — so one noisy CI run can't false-alarm. Exit 99 gates the merge.",
+        "command": "loadr history check summary.json --plan checkout",
+        "highlights": [
+            "Median + MAD modified z-score",
+            "Cold-start &amp; identical-history guardrails",
+            "Exit 99 gates the merge",
+        ],
+        "docs": "/docs/guides/history.html",
+        "video": "53-history",
+    },
 ]
 
 CATEGORY_ORDER = [
     "Load profiles",
     "Traffic modelling",
     "Validation & CI",
+    "Authoring & analysis",
     "Auth, sessions & uploads",
     "Protocols",
     "Databases & messaging",
@@ -702,6 +767,7 @@ CATEGORY_BLURB = {
     "Load profiles": "The shapes of load — constant, ramping, arrival-rate, spike and soak.",
     "Traffic modelling": "Make synthetic traffic look real — weighted mixes, feeders, correlation.",
     "Validation & CI": "Turn a load test into a pass/fail gate your pipeline can trust.",
+    "Authoring & analysis": "Write plans from a recording, a contract or a sentence — then have loadr read the result back to you.",
     "Auth, sessions & uploads": "Tokens, cookies, multipart uploads and the deeper HTTP surface.",
     "Protocols": "Everything past HTTP — WebSocket, gRPC, GraphQL, SSE, SOAP, Twirp, browser.",
     "Databases & messaging": "Drive datastores and brokers at their native protocol via runtime plugins.",
@@ -717,6 +783,8 @@ CATEGORY_ICON = {
     "Protocols": "M8 3v4M16 3v4M4 11h16M6 21h12", "Databases & messaging": "M12 3c4 0 7 1.3 7 3v12c0 1.7-3 3-7 3s-7-1.3-7-3V6c0-1.7 3-3 7-3z",
     "Scripting & metrics": "M8 9l-4 3 4 3M16 9l4 3-4 3", "Scale & operations": "M3 12h4l3 8 4-16 3 8h4",
     "Ops integrations": "M12 3v6m0 6v6M3 12h6m6 0h6", "Extending loadr": "M12 5v14M5 12h14",
+    "Authoring & analysis": "M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z",
+    "Adopt loadr": "M12 3v12m0 0l4-4m-4 4l-4-4M4 21h16",
 }
 
 
@@ -837,6 +905,266 @@ def curve_svg(kind):
     )
 
 
+def cat_slug(cat):
+    """A stable anchor id for a category heading ('Auth, sessions & uploads' -> 'auth-sessions-uploads')."""
+    s = cat.lower().replace("&", " ").replace(",", " ")
+    return "-".join(s.split())
+
+
+def demos_by_cat():
+    by_cat = {}
+    for d in DEMOS:
+        by_cat.setdefault(d["category"], []).append(d)
+    return by_cat
+
+
+def nav_link(d, active):
+    """One demo entry in the left-hand nav — a pill, with a bar + rail dot when active."""
+    if active:
+        return (
+            '<li data-demo-item>'
+            f'<a aria-current="page" href="/demos/{d["slug"]}/" '
+            'class="relative flex items-start gap-2.5 rounded-lg bg-gradient-to-r from-blood/25 via-blood/10 '
+            'to-transparent py-1.5 pl-3.5 pr-2 text-sm font-semibold text-white ring-1 ring-inset ring-blood/25">'
+            '<span class="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-r-full bg-blood '
+            'shadow-[0_0_10px_rgba(220,38,38,0.7)]"></span>'
+            f'<span class="leading-snug">{esc(d["title"])}</span></a></li>'
+        )
+    return (
+        '<li data-demo-item>'
+        f'<a href="/demos/{d["slug"]}/" '
+        'class="group flex items-start gap-2.5 rounded-lg py-1.5 pl-3.5 pr-2 text-sm text-smoke '
+        'transition-colors duration-150 hover:bg-coal/70 hover:text-flare">'
+        '<span class="mt-[0.44rem] h-1 w-1 shrink-0 rounded-full bg-edge-bright transition-colors '
+        'group-hover:bg-blood"></span>'
+        f'<span class="leading-snug">{esc(d["title"])}</span></a></li>'
+    )
+
+
+def demo_nav(current_slug=None, sticky_headers=True, cat_base=""):
+    """The grouped list of every demo — the body of the left-hand nav.
+
+    ONE component, used in every sidebar slot: the demos index and every detail
+    page. Two different navs in the same slot read as a bug, however sensible
+    each looked alone.
+
+    Rendered twice per detail page (a mobile <details>, a sticky desktop panel),
+    so it carries no ids. Category headers stick to the top of the scroll
+    container on desktop; inside the mobile disclosure there is no scroller of
+    its own, so they must not.
+
+    cat_base prefixes the category anchors: "" on the index (jump down the page),
+    "/demos/" on a detail page (jump back to the index's section).
+    """
+    by_cat = demos_by_cat()
+    # The header must be fully opaque: it scrolls over the list beneath it, and a
+    # translucent background lets the items bleed straight through it.
+    head_cls = (
+        "sticky top-0 z-10 bg-panel shadow-[0_6px_6px_-6px_rgba(0,0,0,0.55)] "
+        if sticky_headers
+        else ""
+    ) + "-mx-2 px-4 py-1.5"
+    link_cls = (
+        "block text-[10px] font-bold uppercase tracking-[0.14em] text-smoke/60 "
+        "transition-colors hover:text-flare "
+        "aria-[current=true]:text-flare"
+    )
+
+    out = ['<div class="space-y-4">']
+    for cat in CATEGORY_ORDER:
+        items = by_cat.get(cat, [])
+        if not items:
+            continue
+        out.append(f'<div data-demo-group data-cat="{esc(cat)}">')
+        out.append(
+            f'<p class="{head_cls}">'
+            f'<a data-cat-link href="{cat_base}#{cat_slug(cat)}" class="{link_cls}">{esc(cat)}</a></p>'
+        )
+        out.append('<ul class="mt-1 space-y-0.5">')
+        for d in items:
+            out.append(nav_link(d, d["slug"] == current_slug))
+        out.append("</ul></div>")
+    out.append(
+        '<p data-demo-empty hidden class="px-3 py-6 text-center text-sm text-smoke/70">No demos match.</p>'
+    )
+    out.append("</div>")
+    return "\n".join(out)
+
+
+def nav_filter_box(on_index=False):
+    """Search field + 'all demos' link — the panel header, above the scroller.
+
+    On the index that link points at the page you are already on, so it carries
+    aria-current instead of pretending to go somewhere.
+    """
+    cur = ' aria-current="page"' if on_index else ""
+    return (
+        f'<a href="/demos/"{cur} class="group flex items-center gap-2 text-[13px] font-semibold text-flare">'
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" '
+        'stroke-linecap="round" stroke-linejoin="round" class="transition-transform group-hover:-translate-x-0.5">'
+        '<path d="M19 12H5m0 0l6 6m-6-6l6-6"/></svg>'
+        f'<span class="group-hover:underline">All {len(DEMOS)} demos</span></a>'
+        '<div class="relative mt-3">'
+        '<svg class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-smoke/60" width="14" '
+        'height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">'
+        '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>'
+        '<input data-demo-filter type="search" placeholder="Filter demos…" aria-label="Filter demos" '
+        'class="w-full rounded-lg border border-edge bg-ink/80 py-1.5 pl-8 pr-8 text-sm text-ash placeholder:text-smoke/50 '
+        'transition focus:border-blood/50 focus:outline-none focus:ring-2 focus:ring-blood/25">'
+        '<kbd data-demo-hint class="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border '
+        'border-edge bg-coal px-1.5 py-0.5 font-mono text-[10px] text-smoke/60">/</kbd>'
+        '</div>'
+    )
+
+
+def sidebar_panel(current_slug=None, cat_base="", on_index=False):
+    """The sticky sidebar card, identical on the index and every detail page."""
+    return nav_panel(
+        panel_head(nav_filter_box(on_index)),
+        panel_scroller(
+            demo_nav(current_slug, cat_base=cat_base), "data-demo-nav", pad_top=False
+        ),
+        panel_foot(f"{len(DEMOS)} demos · {len(CATEGORY_ORDER)} categories"),
+    )
+
+
+def nav_panel(head, scroller, foot):
+    """The chrome around a sticky sidebar: full-height card, its own scroller.
+
+    top-28 clears the fixed site nav with air to spare; the height is sized so
+    the card's foot lands ~1.5rem off the bottom of the viewport once pinned,
+    rather than stopping short or running under the fold.
+    """
+    return (
+        '<div class="sticky top-28 h-[calc(100vh-8.5rem)]">'
+        '<div class="flex h-full flex-col overflow-hidden rounded-2xl border border-edge bg-panel '
+        'shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset]">'
+        f'{head}{scroller}{foot}'
+        '</div></div>'
+    )
+
+
+def panel_head(label):
+    return f'<div class="shrink-0 border-b border-edge/70 px-4 py-3.5">{label}</div>'
+
+
+def panel_foot(text):
+    return (
+        '<div class="shrink-0 border-t border-edge/70 bg-coal/40 px-4 py-2.5">'
+        f'<span data-demo-count class="font-mono text-[11px] text-smoke/70">{text}</span></div>'
+    )
+
+
+def panel_scroller(body, attr="", pad_top=True):
+    # Bottom-only fade for the row the scroller clips; a top fade would wash out
+    # the category headers that pin to that edge.
+    #
+    # pad_top=False for the demo list: a scroll container's top padding sits
+    # ABOVE where `sticky top-0` pins, so rows scroll through that strip in plain
+    # sight, uncovered by the header that is supposed to hide them.
+    pt = "pt-3" if pad_top else "pt-0"
+    return (
+        f'<div {attr} class="min-h-0 flex-1 overflow-y-auto px-2 pb-3 {pt} '
+        '[mask-image:linear-gradient(to_bottom,#000_calc(100%-18px),transparent_100%)]">'
+        f'{body}</div>'
+    )
+
+
+# Scrolls the active demo into view inside the sticky column (the list is taller
+# than the viewport), and wires the filter box: type to narrow, "/" to focus,
+# Escape to clear. Groups whose demos all hide are hidden with them.
+NAV_JS = """<script>
+(function () {
+  var box = document.querySelector('[data-demo-nav]');
+  if (!box) return;
+
+  var active = box.querySelector('[aria-current="page"]');
+  if (active) {
+    var target = active.offsetTop - box.clientHeight / 2 + active.offsetHeight / 2;
+    box.scrollTop = target > 0 ? target : 0;
+  }
+
+  var input = document.querySelector('[data-demo-filter]');
+  if (!input) return;
+  var groups = box.querySelectorAll('[data-demo-group]');
+  var empty = box.querySelector('[data-demo-empty]');
+  var count = document.querySelector('[data-demo-count]');
+  var hint = document.querySelector('[data-demo-hint]');
+
+  function apply() {
+    var q = input.value.trim().toLowerCase();
+    var shown = 0;
+    groups.forEach(function (g) {
+      var vis = 0;
+      g.querySelectorAll('[data-demo-item]').forEach(function (li) {
+        var hit = !q || li.textContent.toLowerCase().indexOf(q) !== -1;
+        li.hidden = !hit;
+        if (hit) vis++;
+      });
+      g.hidden = vis === 0;
+      shown += vis;
+    });
+    if (empty) empty.hidden = shown !== 0;
+    if (count) count.textContent = q ? shown + ' of ' + %d : '%d demos · %d categories';
+    if (hint) hint.hidden = !!q;
+  }
+
+  input.addEventListener('input', apply);
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') { input.value = ''; apply(); input.blur(); }
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === '/' && document.activeElement !== input &&
+        !/^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)) {
+      e.preventDefault();
+      input.focus();
+    }
+  });
+})();
+</script>"""
+
+
+def nav_js():
+    n_cats = len({d["category"] for d in DEMOS})
+    return NAV_JS % (len(DEMOS), len(DEMOS), n_cats)
+
+
+# Highlights the category you are looking at, in the index jump-list. Driven by
+# scroll position rather than an IntersectionObserver: the hero is taller than
+# any sensible observer band, so at the top of the page nothing intersects and
+# nothing would be highlighted. "Last heading above the fold line" always has an
+# answer, and it falls back to the first category.
+INDEX_NAV_JS = """<script>
+(function () {
+  var links = Array.prototype.slice.call(document.querySelectorAll('[data-cat-link]'));
+  if (!links.length) return;
+  var sections = links.map(function (a) {
+    return document.getElementById(a.getAttribute('href').slice(1));
+  });
+
+  var FOLD = 130;  // just below the fixed site nav
+  function paint() {
+    var cur = sections[0];
+    sections.forEach(function (s) {
+      if (s && s.getBoundingClientRect().top <= FOLD) cur = s;
+    });
+    links.forEach(function (a, i) {
+      if (sections[i] === cur) { a.setAttribute('aria-current', 'true'); }
+      else { a.removeAttribute('aria-current'); }
+    });
+  }
+
+  var ticking = false;
+  window.addEventListener('scroll', function () {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(function () { paint(); ticking = false; });
+  }, { passive: true });
+  paint();
+})();
+</script>"""
+
+
 def demo_icon(cat, size="h-10 w-10"):
     d = CATEGORY_ICON.get(cat, "M12 5v14M5 12h14")
     return (
@@ -869,9 +1197,7 @@ def card(d):
 
 
 def render_index():
-    by_cat = {}
-    for d in DEMOS:
-        by_cat.setdefault(d["category"], []).append(d)
+    by_cat = demos_by_cat()
 
     groups = []
     for cat in CATEGORY_ORDER:
@@ -880,7 +1206,7 @@ def render_index():
             continue
         grid = "\n        ".join(card(d) for d in items)
         groups.append(
-            '<div>'
+            f'<div id="{cat_slug(cat)}" class="scroll-mt-24">'
             '<div class="flex items-baseline justify-between border-b border-edge/60 pb-3">'
             f'<h2 class="text-xl font-extrabold text-white">{esc(cat)}</h2>'
             f'<span class="text-xs text-smoke">{len(items)} demo{"s" if len(items) != 1 else ""}</span>'
@@ -891,6 +1217,10 @@ def render_index():
             '</div></div>'
         )
     groups_html = "\n\n      ".join(groups)
+
+    # Same sidebar as the detail pages. Its category headers anchor down this
+    # page's card sections, so it doubles as the jump-list.
+    cat_panel = sidebar_panel(cat_base="", on_index=True)
 
     desc = ("Every loadr demo, categorised: load profiles, traffic modelling, validation, protocols, "
             "databases, scripting, distributed scale and ops integrations. Each tile opens a detail page "
@@ -916,11 +1246,20 @@ def render_index():
 </section>
 
 <!-- ======================================================= DEMO CARDS -->
-<section class="pb-8">
-  <div class="mx-auto max-w-6xl space-y-14 px-5">
+<section class="pt-10 pb-8 lg:pt-14">
+  <div class="mx-auto max-w-[88rem] px-5 lg:flex lg:gap-12 xl:gap-16">
+
+    <aside class="hidden lg:block lg:w-[17.5rem] lg:shrink-0">
+      {cat_panel}
+    </aside>
+
+    <div class="min-w-0 flex-1 space-y-14">
       {groups_html}
+    </div>
   </div>
 </section>
+{nav_js()}
+{INDEX_NAV_JS}
 
 <!-- ======================================================= CTA -->
 <section class="border-t border-edge/60 bg-coal/50 py-20">
@@ -999,14 +1338,21 @@ def render_detail(d, prev, nxt):
     if d.get("docs"):
         docs_btn = f'<a href="{d["docs"]}" class="rounded-xl border border-edge-bright bg-coal px-6 py-3 font-semibold text-ash hover:border-ember/60 hover:text-white">Read the docs →</a>'
 
+    # The same list twice: a mobile disclosure (no scroller of its own, so no
+    # sticky headers) and the desktop panel.
+    mobile_nav = demo_nav(slug, sticky_headers=False, cat_base="/demos/")
+    nav_panel_html = sidebar_panel(slug, cat_base="/demos/")
+
     parts = [head(title, desc, canonical)]
     parts.append(f"""
 <!-- ======================================================= HERO -->
 <section class="hero-grid relative overflow-hidden pt-32 pb-10">
   <div class="pointer-events-none absolute -top-40 left-1/2 h-[40rem] w-[56rem] -translate-x-1/2 rounded-[50%] bg-blood/20 blur-[150px]"></div>
-  <div class="mx-auto max-w-5xl px-5">
-    <nav class="flex items-center gap-2 text-sm text-smoke">
+  <div class="mx-auto max-w-[88rem] px-5">
+    <nav class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-smoke">
       <a class="hover:text-flare" href="/demos/">Demos</a>
+      <span class="text-edge-bright">/</span>
+      <a class="hover:text-flare" href="/demos/#{cat_slug(d["category"])}">{esc(d["category"])}</a>
       <span class="text-edge-bright">/</span>
       <span class="text-ash">{esc(d["title"])}</span>
     </nav>
@@ -1020,8 +1366,32 @@ def render_detail(d, prev, nxt):
 </section>
 
 <!-- ======================================================= DETAIL -->
-<section class="pb-16">
-  <div class="mx-auto grid max-w-5xl gap-8 px-5 lg:grid-cols-2">
+<section class="pt-10 pb-16 lg:pt-14">
+  <div class="mx-auto max-w-[88rem] px-5 lg:flex lg:gap-12 xl:gap-16">
+
+    <!-- left-hand demo nav: a disclosure on mobile, a full-height sticky panel from lg -->
+    <details class="mb-8 overflow-hidden rounded-xl border border-edge bg-panel/60 lg:hidden">
+      <summary class="flex cursor-pointer select-none items-center justify-between px-4 py-3 text-sm font-semibold text-ash">
+        <span>Browse all {len(DEMOS)} demos</span>
+        <span class="text-xs font-normal text-smoke/70">{len(CATEGORY_ORDER)} categories</span>
+      </summary>
+      <div class="max-h-[70vh] overflow-y-auto border-t border-edge px-4 py-4">
+        {mobile_nav}
+      </div>
+    </details>
+
+    <aside class="hidden lg:block lg:w-[17.5rem] lg:shrink-0">
+      {nav_panel_html}
+    </aside>
+
+    <!-- The sticky panel can only travel inside its parent, and the <aside>
+         stretches to this column. Without a floor the column can come out
+         shorter than the panel, pinning it to zero travel — so it never sticks.
+         Sized to just clear the panel: any taller only opens a void, since the
+         pin always ends before the footer either way. prev/next hangs at the
+         column's foot so any slack reads as spacing. -->
+    <div class="flex min-w-0 flex-1 flex-col lg:min-h-[calc(100vh-4rem)]">
+    <div class="grid gap-8 lg:grid-cols-2">
     <div>
       <div class="codebox">
         <div class="codebar"><span>Run it</span><button data-copy="#{slug}Run" class="rounded border border-edge px-2 py-0.5 text-[10px] text-smoke hover:text-flare">copy</button></div>
@@ -1045,12 +1415,11 @@ def render_detail(d, prev, nxt):
         {docs_btn}
       </div>
     </div>
-  </div>
-</section>
+    </div>
 
-<!-- ======================================================= PREV / NEXT -->
-<section class="border-t border-edge/60 bg-coal/40 py-10">
-  <div class="mx-auto flex max-w-5xl items-center justify-between gap-4 px-5 text-sm">
+    <!-- prev / next lives inside the content column: it gives the sticky
+         sidebar's containing block the height it needs to actually stick -->
+    <nav class="mt-auto flex items-center justify-between gap-4 border-t border-edge/60 pt-6 text-sm">
 """)
     if prev:
         parts.append(f'    <a class="text-smoke hover:text-flare" href="/demos/{prev["slug"]}/">← {esc(prev["title"])}</a>\n')
@@ -1061,8 +1430,11 @@ def render_detail(d, prev, nxt):
         parts.append(f'    <a class="text-smoke hover:text-flare" href="/demos/{nxt["slug"]}/">{esc(nxt["title"])} →</a>\n')
     else:
         parts.append('    <span></span>\n')
-    parts.append("""  </div>
+    parts.append(f"""    </nav>
+    </div>
+  </div>
 </section>
+{nav_js()}
 """)
     parts.append(FOOTER)
     return "".join(parts)

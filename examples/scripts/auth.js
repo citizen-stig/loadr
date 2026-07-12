@@ -4,7 +4,7 @@
 // beforeRequest hook fires ahead of each YAML `request:` step: if the VU has no
 // token, or its token is about to expire, it mints a fresh one and bumps the
 // `token_refreshes` counter. In a real test, replace mint() with a call to your
-// identity provider (it can use the synchronous `http` client from k6/http).
+// identity provider (it can use the synchronous `http` client from loadr/http).
 
 const TTL_MS = 60_000; // token lifetime; refresh a little before this elapses
 const SKEW_MS = 5_000; // refresh this long before actual expiry

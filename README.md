@@ -121,11 +121,11 @@ command:
 docker compose -f deploy/docker-compose.yml up --build
 ```
 
-### Embedded JavaScript (k6-compatible feel)
+### Embedded JavaScript
 
 ```js
-import http from 'k6/http';
-import { check, sleep } from 'k6';
+import http from 'loadr/http';
+import { check, sleep } from 'loadr';
 
 export function setup() { return { token: 'abc' }; }
 
@@ -167,7 +167,7 @@ decisions: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 ```
 crates/loadr-core        engine: executors, VUs, metrics (HDR), thresholds
 crates/loadr-config      YAML schema, validation, ${...} interpolation
-crates/loadr-js          embedded QuickJS runtime + k6-style stdlib
+crates/loadr-js          embedded QuickJS runtime + loadr scripting stdlib
 crates/loadr-protocols   HTTP/1.1+2, WebSocket, SSE, gRPC, GraphQL, TCP, UDP
 crates/loadr-outputs     JSONL, CSV, Prometheus, InfluxDB, OTLP, StatsD
 crates/loadr-plugin-api  WASM (WIT) + native (abi_stable) plugin SDK

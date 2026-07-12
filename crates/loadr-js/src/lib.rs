@@ -5,11 +5,13 @@
 //! isolated QuickJS runtime + context per VU, with a memory limit and a
 //! wall-clock deadline enforced through the engine's interrupt handler.
 //!
-//! Scripts get a k6-compatible standard library (`http`, `check`, `sleep`,
+//! Scripts get loadr's built-in standard library (`http`, `check`, `sleep`,
 //! `group`, metric classes, `crypto`, `encoding`, `__ENV`, `open`,
-//! `console`, `session`) plus built-in `k6`, `k6/http`, `k6/metrics`,
-//! `k6/crypto` and `k6/encoding` modules. All side effects are routed through
-//! the [`ScriptHost`] passed to each call via the host bridge.
+//! `console`, `session`) as globals and as `loadr`, `loadr/http`,
+//! `loadr/metrics`, `loadr/crypto` and `loadr/encoding` modules. The `k6/*`
+//! names resolve to the same modules as a migration-compatibility alias. All
+//! side effects are routed through the [`ScriptHost`] passed to each call via
+//! the host bridge.
 
 mod convert;
 mod globals;
@@ -97,7 +99,7 @@ impl JsEngine {
         let runtime = Runtime::new()
             .map_err(|e| ScriptError::Runtime(format!("failed to create JS runtime: {e}")))?;
         runtime.set_memory_limit(self.memory_limit);
-        runtime.set_loader(modules::K6Resolver, modules::K6Loader);
+        runtime.set_loader(modules::ModuleResolver, modules::ModuleLoader);
 
         let deadline: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
         let timed_out = Arc::new(AtomicBool::new(false));

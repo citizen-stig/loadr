@@ -8,7 +8,7 @@
 <title>loadr — the load testing platform. k6, JMeter, Gatling & Locust ideas in one Rust binary.</title>
 <meta name="description" content="loadr is a modern load testing platform: declarative YAML tests, embedded JavaScript, HTTP/2, WebSocket, gRPC, GraphQL, TCP & UDP, WASM plugins, distributed agents with exact percentiles, and a built-in live web UI. One binary.">
 <meta property="og:title" content="loadr — the load testing platform">
-<meta property="og:description" content="A k6-style developer experience with JMeter-grade depth, in one Rust binary: declarative YAML, embedded JavaScript, exact percentiles, distributed by design.">
+<meta property="og:description" content="Developer-first load testing with JMeter-grade depth, in one Rust binary: declarative YAML, embedded JavaScript, exact percentiles, distributed by design.">
 <meta property="og:url" content="https://loadr.io/">
 <meta property="og:type" content="website">
 <link rel="icon" type="image/png" sizes="64x64" href="/assets/favicon-64.png">
@@ -262,7 +262,7 @@
       </a>
       <a href="/docs/yaml/thresholds.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">Thresholds as CI gates</h3>
-        <p class="mt-2 text-sm text-smoke"><code>p(95)&lt;400</code>, <code>rate&gt;0.99</code>, any percentile, tag-filtered selectors, <code>abort_on_fail</code> circuit breakers with warm-up delay. Exit code 99 on failure — k6-compatible.</p>
+        <p class="mt-2 text-sm text-smoke"><code>p(95)&lt;400</code>, <code>rate&gt;0.99</code>, any percentile, tag-filtered selectors, <code>abort_on_fail</code> circuit breakers with warm-up delay. Exit code 99 on failure.</p>
       </a>
       <a href="/docs/yaml/thresholds.html#slo-objectives" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">SLO error budgets</h3>
@@ -302,7 +302,7 @@
       </a>
       <a href="/docs/yaml/assertions-checks.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">Checks + JMeter assertions</h3>
-        <p class="mt-2 text-sm text-smoke">k6-style checks that never fail requests, and JMeter-style assertions that do: status, body contains/regex, JSONPath, XPath, duration, size, headers, JS expressions — with abort actions.</p>
+        <p class="mt-2 text-sm text-smoke">Non-blocking checks that never fail requests, plus hard assertions that do: status, body contains/regex, JSONPath, XPath, duration, size, headers, JS expressions — with abort actions.</p>
       </a>
       <a href="/docs/yaml/extraction.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">Correlation &amp; extraction</h3>
@@ -326,7 +326,7 @@
       </a>
       <a href="/docs/js/overview.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">Embedded JavaScript</h3>
-        <p class="mt-2 text-sm text-smoke">QuickJS per VU with k6-style imports (<code>k6/http</code>, <code>check</code>, <code>sleep</code>, metrics), <code>setup()</code>/<code>teardown()</code>, scenario functions, <code>beforeRequest</code>/<code>afterRequest</code> hooks, inline <code>${js: …}</code> — sandboxed with time &amp; memory limits.</p>
+        <p class="mt-2 text-sm text-smoke">QuickJS per VU with a native module API (<code>loadr/http</code>, <code>check</code>, <code>sleep</code>, metrics), <code>setup()</code>/<code>teardown()</code>, scenario functions, <code>beforeRequest</code>/<code>afterRequest</code> hooks, inline <code>${js: …}</code> — sandboxed with time &amp; memory limits.</p>
       </a>
       <a href="/docs/yaml/timers.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">Timers &amp; pacing</h3>
@@ -378,7 +378,7 @@
       </a>
       <a href="/docs/getting-started/cli.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">Reports &amp; tooling</h3>
-        <p class="mt-2 text-sm text-smoke">k6-style console summaries, JSON export, self-contained HTML reports (<code>loadr report</code>), shell completions, JSON Schema output, structured logs, <code>--quiet</code>/<code>-v</code> spectrum.</p>
+        <p class="mt-2 text-sm text-smoke">Rich console summaries, JSON export, self-contained HTML reports (<code>loadr report</code>), shell completions, JSON Schema output, structured logs, <code>--quiet</code>/<code>-v</code> spectrum.</p>
       </a>
     </div>
   </div>
@@ -436,10 +436,10 @@ thresholds:
       </div>
 
       <div class="tabpanel codebox hidden">
-        <div class="codebar"><span>script.js</span><span>k6-compatible feel · QuickJS sandbox</span></div>
-        <pre><code data-lang="js">import http from 'k6/http';
-import { check, sleep, group } from 'k6';
-import { Trend } from 'k6/metrics';
+        <div class="codebar"><span>script.js</span><span>loadr scripting · QuickJS sandbox</span></div>
+        <pre><code data-lang="js">import http from 'loadr/http';
+import { check, sleep, group } from 'loadr';
+import { Trend } from 'loadr/metrics';
 
 const apiLatency = new Trend('api_latency');
 
@@ -745,7 +745,7 @@ $ loadr validate converted.yaml
           <h3 class="text-lg font-bold text-white">k6</h3>
           <span class="text-xs font-semibold uppercase tracking-wider text-ember">the model</span>
         </div>
-        <p class="mt-3 text-sm leading-relaxed text-smoke">The execution model is k6's: the seven executors, open/closed load, the four metric types, thresholds with <code class="text-flare">abortOnFail</code> and exit code 99, checks and groups — and an embedded-JS experience so close the API is import-compatible (<code class="text-flare">import http from 'k6/http'</code>).</p>
+        <p class="mt-3 text-sm leading-relaxed text-smoke">loadr's execution model gives you the seven executors, open/closed load, the four metric types, thresholds with <code class="text-flare">abortOnFail</code> and exit code 99, checks and groups — with a native embedded-JS API (<code class="text-flare">import http from 'loadr/http'</code>). Coming from k6? <code class="text-flare">loadr convert</code> brings your scripts across unchanged.</p>
       </div>
       <div class="rounded-2xl border border-edge bg-panel p-7">
         <div class="flex items-baseline justify-between">
@@ -771,7 +771,7 @@ $ loadr validate converted.yaml
     </div>
 
     <p class="mt-8 max-w-3xl text-sm leading-relaxed text-smoke">
-      The combination is the point: k6's model <em class="not-italic text-ash">and</em> JMeter's arsenal <em class="not-italic text-ash">and</em> Gatling's DSL <em class="not-italic text-ash">and</em> Locust's behaviour model — in one binary, with correct distributed percentiles, a plugin system and six protocols, rarely found together in a single tool.
+      The combination is the point: everything you'd reach for k6, JMeter, Gatling or Locust to do — scriptable execution <em class="not-italic text-ash">and</em> a deep assertion arsenal <em class="not-italic text-ash">and</em> a flow-control DSL <em class="not-italic text-ash">and</em> weighted-behaviour modelling — in one binary, with correct distributed percentiles, a plugin system and six protocols, rarely found together in a single tool.
       <a href="/docs/credits.html" class="font-semibold text-flare hover:underline">Full credits →</a>
     </p>
     <p class="mt-4 text-xs text-smoke">Trademarks and project names belong to their respective owners. loadr is independent and not affiliated with or endorsed by k6/Grafana Labs, the Apache Software Foundation, Gatling Corp, or the Locust project.</p>

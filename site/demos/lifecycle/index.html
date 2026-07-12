@@ -280,7 +280,7 @@
 # Each VU logs in once via the scenario `on_start` hook, runs its `exec`
 # function every iteration, then logs out once via `on_stop` when it retires.
 # After the run, the exported handleSummary(data) function prints a custom
-# end-of-run report instead of the default console summary (k6-compatible).
+# end-of-run report instead of loadr's default console summary.
 name: lifecycle-hooks
 description: per-VU on_start/on_stop and a custom handleSummary report
 

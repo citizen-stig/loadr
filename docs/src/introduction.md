@@ -3,7 +3,7 @@
 loadr is a load testing platform in a single binary. It combines the two
 dominant traditions in load testing:
 
-- **k6's model**: scriptable tests, open/closed load models with precise
+- **Scriptable & precise**: scriptable tests, open/closed load models with precise
   executors, a first-class metrics engine with thresholds as pass/fail
   criteria, and a great CLI experience.
 - **JMeter's breadth**: rich assertions (response code, body, JSONPath, XPath,

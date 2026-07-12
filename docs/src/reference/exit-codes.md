@@ -4,7 +4,7 @@
 |---|---|---|
 | `0` | success | run completed, every threshold passed |
 | `1` | error | invalid test definition, I/O failure, connection to controller failed, ... |
-| `99` | thresholds failed | run completed (or was aborted by `abort_on_fail`); k6-compatible |
+| `99` | thresholds failed | run completed (or was aborted by `abort_on_fail`) |
 | `130` | interrupted | second Ctrl-C (the first triggers a graceful stop with summary) |
 
 CI example:

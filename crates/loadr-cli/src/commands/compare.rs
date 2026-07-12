@@ -456,7 +456,7 @@ pub(crate) fn render_markdown_table(headers: &[&str], rows: &[Vec<String>]) -> S
     out
 }
 
-/// Milliseconds, k6-style (`1.20s` / `12.34ms` / `800µs`).
+/// Milliseconds (`1.20s` / `12.34ms` / `800µs`).
 pub(crate) fn fmt_latency(ms: f64) -> String {
     if ms >= 1000.0 {
         format!("{:.2}s", ms / 1000.0)

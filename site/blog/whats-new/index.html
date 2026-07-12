@@ -72,7 +72,7 @@
 
 <h2>The foundation (v1.0.0)</h2>
 
-<p>The initial release wasn't a skeleton. The engine, executors, metrics and threshold evaluation went in together (<code>da2fe24</code>), and the first tag already spoke a lot of protocols: an HTTP/1.1 and HTTP/2 client with real request-phase timing, WebSocket, dynamically-reflected gRPC, GraphQL, and raw TCP/UDP (<code>57c923f</code>). Scripting came from an embedded QuickJS engine with a k6-compatible standard library and sandbox limits (<code>8afa4a2</code>) — QuickJS rather than V8 was a deliberate call: it keeps the binary single-file and the startup cheap.</p>
+<p>The initial release wasn't a skeleton. The engine, executors, metrics and threshold evaluation went in together (<code>da2fe24</code>), and the first tag already spoke a lot of protocols: an HTTP/1.1 and HTTP/2 client with real request-phase timing, WebSocket, dynamically-reflected gRPC, GraphQL, and raw TCP/UDP (<code>57c923f</code>). Scripting came from an embedded QuickJS engine with its own sandboxed standard library (<code>8afa4a2</code>) — QuickJS rather than V8 was a deliberate call: it keeps the binary single-file and the startup cheap.</p>
 
 <p>Outputs were never an afterthought — JSONL, CSV, Prometheus, InfluxDB, OTLP and StatsD exporters all shipped in the first release (<code>f3fe0a2</code>). So did the two importers that make migration real: a JMeter <code>.jmx</code> reader and a k6 script converter (<code>591be61</code>). And the distributed story — a controller/agent architecture over gRPC that merges per-agent HDR histograms rather than averaging summaries — was there from day one (<code>974753b</code>).</p>
 

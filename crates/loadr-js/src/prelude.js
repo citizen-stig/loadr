@@ -25,7 +25,7 @@
     debug: (...a) => __loadr_log("debug", fmt(a)),
   };
 
-  // ----- core k6-style helpers ----------------------------------------------
+  // ----- core scripting helpers ---------------------------------------------
   globalThis.sleep = (seconds) => __loadr_sleep(Number(seconds));
 
   globalThis.check = function (val, checks, _tags) {

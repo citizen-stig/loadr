@@ -4,7 +4,7 @@ The same condition types power two blocks with different consequences:
 
 - **`assert:`** — JMeter-style assertions. A failure marks the request failed
   (`http_req_failed`) and can change control flow via `on_failure`.
-- **`checks:`** — k6-style checks. Results are recorded into the `checks`
+- **`checks:`** — inline checks. Results are recorded into the `checks`
   rate metric (per-check, via the `check` tag) and *never* fail the request.
   Gate the run with a threshold: `checks: ["rate>0.99"]`.
 

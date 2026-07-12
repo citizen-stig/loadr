@@ -115,8 +115,7 @@ warning and does not abort the run.
 Export `handleSummary` to produce a **custom end-of-run report**. It runs once,
 after `teardown()`, with the run summary as its single argument. If it returns
 a string, that string replaces the default console summary; returning nothing
-(or `null`) leaves the default summary in place. This matches k6's
-`handleSummary`.
+(or `null`) leaves the default summary in place — loadr's `handleSummary` hook.
 
 ```js
 export function handleSummary(data) {

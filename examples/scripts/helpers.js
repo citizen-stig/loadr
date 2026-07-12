@@ -1,7 +1,7 @@
-// Helpers for examples/08-javascript.yaml — a k6-flavoured loadr script.
-import http from 'k6/http';
-import { check, sleep, group } from 'k6';
-import { Trend } from 'k6/metrics';
+// Helpers for examples/08-javascript.yaml — a loadr scripting module.
+import http from 'loadr/http';
+import { check, sleep, group } from 'loadr';
+import { Trend } from 'loadr/metrics';
 
 const apiLatency = new Trend('api_latency_custom');
 

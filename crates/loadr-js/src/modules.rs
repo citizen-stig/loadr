@@ -16,12 +16,21 @@ use rquickjs::{Ctx, Error, Module};
 
 // The shim sources, one per logical module. Registered under the loadr-native
 // names below, and again under the k6 alias names.
+// The base `loadr` module is a one-stop specifier: it re-exports the whole
+// standard library — the http client and metric classes as well as the
+// check/sleep/group/fail helpers — so a script can `import { http, check,
+// sleep, Trend } from 'loadr'` instead of reaching for three sub-modules.
 const M_BASE: &str = r#"const g = globalThis;
+export const http = g.http;
 export const check = (...a) => g.check(...a);
 export const sleep = (...a) => g.sleep(...a);
 export const group = (...a) => g.group(...a);
 export function fail(msg) { throw new Error(msg === undefined ? "test failed" : String(msg)); }
-export default { check, sleep, group, fail };
+export const Counter = g.Counter;
+export const Gauge = g.Gauge;
+export const Rate = g.Rate;
+export const Trend = g.Trend;
+export default { http, check, sleep, group, fail, Counter, Gauge, Rate, Trend };
 "#;
 
 const M_HTTP: &str = r#"const http = globalThis.http;
@@ -153,6 +162,16 @@ mod tests {
                     .resolve(&ctx, "test.js", name, None)
                     .expect("k6 alias resolves");
             }
+            // The base `loadr` module re-exports the whole stdlib in one specifier.
+            let base = builtin_source("loadr").expect("loadr base module");
+            for sym in ["http", "check", "sleep", "group", "Trend", "Counter"] {
+                assert!(
+                    base.contains(&format!("export const {sym}"))
+                        || base.contains(&format!("export function {sym}")),
+                    "loadr module re-exports {sym}"
+                );
+            }
+
             // Unknown modules are rejected, and the hint names loadr's modules.
             let err = resolver
                 .resolve(&ctx, "test.js", "left-pad", None)

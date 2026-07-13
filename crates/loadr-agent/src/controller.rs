@@ -344,20 +344,10 @@ impl Inner {
     }
 
     fn finalize_run(&self, run: &Arc<ControllerRun>, final_state: RunState) {
-        let became_terminal = {
-            let mut state = run.state.lock();
-            if state.is_terminal() {
-                false
-            } else {
-                *state = final_state;
-                true
-            }
-        };
-        if !became_terminal {
+        if run.state.lock().is_terminal() {
             return;
         }
         let finished_ms = now_unix_ms();
-        *run.finished_ms.lock() = Some(finished_ms);
         let mut agg = run.agg.lock();
         let (statuses, _) = evaluate_all(&run.thresholds, &agg, agg.elapsed());
         let snapshot = Arc::new(agg.snapshot());
@@ -388,7 +378,20 @@ impl Inner {
         summary.ended_ms = finished_ms;
         summary.duration_secs = snapshot.elapsed_secs;
         summary.snapshot = (*snapshot).clone();
-        *run.merged_summary.lock() = Some(summary);
+        // Publish the summary and the terminal state atomically: anything
+        // that polls for a terminal state and then reads the summary must
+        // never find it missing. The check-and-set keeps finalization
+        // idempotent when two finalizers race (agent loss vs. run events);
+        // the loser discards its summary and keeps the winner's.
+        {
+            let mut state = run.state.lock();
+            if state.is_terminal() {
+                return;
+            }
+            *run.finished_ms.lock() = Some(finished_ms);
+            *run.merged_summary.lock() = Some(summary);
+            *state = final_state;
+        }
         drop(agg);
         let _ = run.snapshot_tx.send(snapshot);
         tracing::info!(run_id = %run.run_id, state = final_state.as_str(), "run completed");

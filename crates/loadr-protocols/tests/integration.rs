@@ -3,10 +3,10 @@
 use std::io::Write as _;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
-use loadr_config::{HttpDefaults, HttpVersionPref, TlsConfig};
+use loadr_config::{GrpcTransport, HttpDefaults, HttpVersionPref, TlsConfig};
 use loadr_core::data::DataFeeds;
 use loadr_core::metrics::{MetricRegistry, MetricsBus, Tags};
 use loadr_core::protocol::{
@@ -587,6 +587,339 @@ async fn grpc_unary_via_reflection() {
     );
     let json: serde_json::Value = serde_json::from_slice(&response.body).expect("json body");
     assert_eq!(json["message"], "reflected");
+}
+
+/// Run one call of `method` against a fresh echo server on the given
+/// transport, with proto files on disk.
+async fn run_grpc_shape(
+    transport: GrpcTransport,
+    method: &str,
+    message: Option<serde_json::Value>,
+    messages: Vec<serde_json::Value>,
+) -> loadr_core::protocol::ProtocolResponse {
+    let server = GrpcEchoServer::spawn().await.expect("grpc server");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let proto_path = dir.path().join("echo.proto");
+    std::fs::write(&proto_path, ECHO_PROTO).expect("write proto");
+
+    let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
+    let mut vu = vu();
+
+    let request = grpc_request(
+        &format!("grpc://{}", server.addr),
+        GrpcRequest {
+            proto_files: vec![proto_path],
+            service: "loadr.test.Echo".to_string(),
+            method: method.to_string(),
+            message,
+            messages,
+            transport,
+            ..Default::default()
+        },
+    );
+    handler.execute(&mut vu, &request).await.expect("response")
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_unary_on_both_transports() {
+    for transport in [GrpcTransport::Channel, GrpcTransport::Raw] {
+        let response = run_grpc_shape(
+            transport,
+            "UnaryEcho",
+            Some(serde_json::json!({"message": "hi grpc"})),
+            Vec::new(),
+        )
+        .await;
+        assert_eq!(
+            response.status, 0,
+            "{transport:?}: {}",
+            response.status_text
+        );
+        assert!(!response.failed());
+        let json: serde_json::Value = serde_json::from_slice(&response.body).expect("json body");
+        assert_eq!(json["message"], "hi grpc");
+        assert_eq!(response.extras["message_count"], 1);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_server_streaming_on_both_transports() {
+    for transport in [GrpcTransport::Channel, GrpcTransport::Raw] {
+        let response = run_grpc_shape(
+            transport,
+            "ServerStreamEcho",
+            Some(serde_json::json!({"message": "stream", "repeat": 3})),
+            Vec::new(),
+        )
+        .await;
+        assert_eq!(
+            response.status, 0,
+            "{transport:?}: {}",
+            response.status_text
+        );
+        assert_eq!(response.extras["message_count"], 3);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_client_streaming_on_both_transports() {
+    for transport in [GrpcTransport::Channel, GrpcTransport::Raw] {
+        let response = run_grpc_shape(
+            transport,
+            "ClientStreamEcho",
+            None,
+            vec![
+                serde_json::json!({"message": "one"}),
+                serde_json::json!({"message": "two"}),
+                serde_json::json!({"message": "three"}),
+            ],
+        )
+        .await;
+        assert_eq!(
+            response.status, 0,
+            "{transport:?}: {}",
+            response.status_text
+        );
+        // The echo server concatenates the messages; `index` is the count.
+        let json: serde_json::Value = serde_json::from_slice(&response.body).expect("json body");
+        assert_eq!(json["message"], "onetwothree");
+        assert_eq!(json["index"], 3);
+        assert_eq!(response.extras["message_count"], 1);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_bidi_on_both_transports() {
+    for transport in [GrpcTransport::Channel, GrpcTransport::Raw] {
+        let response = run_grpc_shape(
+            transport,
+            "BidiEcho",
+            None,
+            vec![
+                serde_json::json!({"message": "a"}),
+                serde_json::json!({"message": "b"}),
+                serde_json::json!({"message": "c"}),
+            ],
+        )
+        .await;
+        assert_eq!(
+            response.status, 0,
+            "{transport:?}: {}",
+            response.status_text
+        );
+        assert_eq!(response.extras["message_count"], 3);
+        let json: serde_json::Value = serde_json::from_slice(&response.body).expect("json body");
+        assert_eq!(json["message"], "c");
+        assert_eq!(json["index"], 2);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_raw_via_reflection() {
+    let server = GrpcEchoServer::spawn().await.expect("grpc server");
+    let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
+    let mut vu = vu();
+
+    let request = grpc_request(
+        &format!("grpc://{}", server.addr),
+        GrpcRequest {
+            reflection: true,
+            service: "loadr.test.Echo".to_string(),
+            method: "UnaryEcho".to_string(),
+            message: Some(serde_json::json!({"message": "raw reflected"})),
+            transport: GrpcTransport::Raw,
+            ..Default::default()
+        },
+    );
+    let response = handler.execute(&mut vu, &request).await.expect("response");
+    assert_eq!(
+        response.status, 0,
+        "status_text: {} error: {:?}",
+        response.status_text, response.error
+    );
+    let json: serde_json::Value = serde_json::from_slice(&response.body).expect("json body");
+    assert_eq!(json["message"], "raw reflected");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_raw_unary_pooled_channels() {
+    let server = GrpcEchoServer::spawn().await.expect("grpc server");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let proto_path = dir.path().join("echo.proto");
+    std::fs::write(&proto_path, ECHO_PROTO).expect("write proto");
+
+    let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
+    let mut vu = vu();
+
+    let request = grpc_request(
+        &format!("grpc://{}", server.addr),
+        GrpcRequest {
+            proto_files: vec![proto_path],
+            service: "loadr.test.Echo".to_string(),
+            method: "UnaryEcho".to_string(),
+            message: Some(serde_json::json!({"message": "raw pooled"})),
+            channel_pool_size: Some(2),
+            transport: GrpcTransport::Raw,
+            ..Default::default()
+        },
+    );
+
+    // Both round-robin slots get used; the second call hits the VU memo.
+    for _ in 0..2 {
+        let response = handler.execute(&mut vu, &request).await.expect("response");
+        assert_eq!(response.status, 0, "status_text: {}", response.status_text);
+        let json: serde_json::Value = serde_json::from_slice(&response.body).expect("json body");
+        assert_eq!(json["message"], "raw pooled");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_raw_reconnects_after_server_restart() {
+    let mut server = GrpcEchoServer::spawn().await.expect("grpc server");
+    let addr = server.addr;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let proto_path = dir.path().join("echo.proto");
+    std::fs::write(&proto_path, ECHO_PROTO).expect("write proto");
+
+    let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
+    let mut vu = vu();
+
+    let request = grpc_request(
+        &format!("grpc://{addr}"),
+        GrpcRequest {
+            proto_files: vec![proto_path],
+            service: "loadr.test.Echo".to_string(),
+            method: "UnaryEcho".to_string(),
+            message: Some(serde_json::json!({"message": "before restart"})),
+            transport: GrpcTransport::Raw,
+            ..Default::default()
+        },
+    );
+
+    let response = handler.execute(&mut vu, &request).await.expect("response");
+    assert_eq!(response.status, 0, "status_text: {}", response.status_text);
+
+    server.shutdown();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // The first post-shutdown call can race connection teardown; it must fail
+    // either way.
+    let response = handler.execute(&mut vu, &request).await.expect("response");
+    assert!(
+        response.failed(),
+        "expected a failure right after shutdown, got: {}",
+        response.status_text
+    );
+
+    // Once the closed connection has latched, failures are dial failures:
+    // Unavailable (14) with `error: None`, exactly like the channel
+    // transport's `connection failed` mapping.
+    let response = handler.execute(&mut vu, &request).await.expect("response");
+    assert_eq!(response.status, 14, "status_text: {}", response.status_text);
+    assert!(response.error.is_none());
+    assert!(
+        response.status_text.contains("connection failed"),
+        "status_text: {}",
+        response.status_text
+    );
+
+    // Restart on the same port (the old listener may still be closing).
+    let mut restarted = None;
+    for _ in 0..50 {
+        match GrpcEchoServer::spawn_on(addr).await {
+            Ok(server) => {
+                restarted = Some(server);
+                break;
+            }
+            Err(_) => tokio::time::sleep(Duration::from_millis(100)).await,
+        }
+    }
+    let _restarted = restarted.expect("respawn on the same address");
+
+    // Calls succeed again once the dial cooldown lapses.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let response = handler.execute(&mut vu, &request).await.expect("response");
+        if response.status == 0 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "did not reconnect in time: {}",
+            response.status_text
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_raw_tls_insecure_skip_verify() {
+    let server = GrpcEchoServer::spawn_tls().await.expect("grpc tls server");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let proto_path = dir.path().join("echo.proto");
+    std::fs::write(&proto_path, ECHO_PROTO).expect("write proto");
+
+    let defaults = HttpDefaults {
+        tls: TlsConfig {
+            insecure_skip_verify: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let handler = GrpcHandler::new(&defaults, Path::new(".")).expect("handler");
+    let mut vu = vu();
+
+    let request = grpc_request(
+        &format!("grpcs://{}", server.addr),
+        GrpcRequest {
+            proto_files: vec![proto_path],
+            service: "loadr.test.Echo".to_string(),
+            method: "UnaryEcho".to_string(),
+            message: Some(serde_json::json!({"message": "over tls"})),
+            transport: GrpcTransport::Raw,
+            ..Default::default()
+        },
+    );
+    let response = handler.execute(&mut vu, &request).await.expect("response");
+    assert_eq!(response.status, 0, "status_text: {}", response.status_text);
+    let json: serde_json::Value = serde_json::from_slice(&response.body).expect("json body");
+    assert_eq!(json["message"], "over tls");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_raw_tls_with_ca_file() {
+    let server = GrpcEchoServer::spawn_tls().await.expect("grpc tls server");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let proto_path = dir.path().join("echo.proto");
+    std::fs::write(&proto_path, ECHO_PROTO).expect("write proto");
+    let ca_path = dir.path().join("ca.pem");
+    std::fs::write(&ca_path, server.cert_pem().expect("cert pem")).expect("write ca");
+
+    let defaults = HttpDefaults {
+        tls: TlsConfig {
+            ca_file: Some(ca_path),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let handler = GrpcHandler::new(&defaults, Path::new(".")).expect("handler");
+    let mut vu = vu();
+
+    let request = grpc_request(
+        &format!("grpcs://{}", server.addr),
+        GrpcRequest {
+            proto_files: vec![proto_path],
+            service: "loadr.test.Echo".to_string(),
+            method: "UnaryEcho".to_string(),
+            message: Some(serde_json::json!({"message": "verified tls"})),
+            transport: GrpcTransport::Raw,
+            ..Default::default()
+        },
+    );
+    let response = handler.execute(&mut vu, &request).await.expect("response");
+    assert_eq!(response.status, 0, "status_text: {}", response.status_text);
+    let json: serde_json::Value = serde_json::from_slice(&response.body).expect("json body");
+    assert_eq!(json["message"], "verified tls");
 }
 
 // ---------------------------------------------------------------------------

@@ -299,6 +299,37 @@ scenarios:
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn close_releases_workers_parked_during_pause() {
+    let handler = TrackingHandler::new(Duration::ZERO);
+    let engine = engine(
+        r#"
+scenarios:
+  s:
+    executor: constant-arrival-rate
+    rate: 100
+    duration: 700ms
+    pre_allocated_vus: 4
+    max_vus: 4
+    graceful_stop: 5s
+    flow:
+      - request: { url: "http://x/ping" }
+"#,
+        handler,
+    );
+    let handle = engine.handle();
+    let began = Instant::now();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        handle.pause(true); // never resumed: the run ends while paused
+    });
+    run_within(engine, Duration::from_secs(15)).await;
+    // Workers idle in the paused branch must observe closure at the natural
+    // deadline, not wait out the 5s grace window.
+    let elapsed = began.elapsed();
+    assert!(elapsed < Duration::from_secs(3), "run took {elapsed:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cancellation_wakes_parked_workers() {
     let handler = TrackingHandler::new(Duration::ZERO);
     let engine = engine(

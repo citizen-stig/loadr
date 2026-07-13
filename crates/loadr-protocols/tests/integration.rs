@@ -569,6 +569,89 @@ async fn grpc_call_cache_discriminates_proto_includes() {
     }
 }
 
+/// Rendered metadata and request headers may change between iterations even
+/// though the call identity stays the same. Alternating both sources exercises
+/// the metadata memo's hit and rebuild paths through the full handler.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_call_cache_allows_alternating_metadata() {
+    let server = GrpcEchoServer::spawn().await.expect("grpc server");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let proto_path = dir.path().join("echo.proto");
+    std::fs::write(&proto_path, ECHO_PROTO).expect("write proto");
+
+    let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
+    let mut vu = vu();
+    let base = GrpcRequest {
+        proto_files: vec![proto_path],
+        service: "loadr.test.Echo".to_string(),
+        method: "UnaryEcho".to_string(),
+        message: Some(Arc::new(serde_json::json!({"message": "metadata"}))),
+        ..Default::default()
+    };
+
+    let mut first = grpc_request(
+        &format!("grpc://{}", server.addr),
+        GrpcRequest {
+            metadata: vec![("x-grpc-source".to_string(), "first".to_string())],
+            ..base.clone()
+        },
+    );
+    first.headers = vec![("x-header-source".to_string(), "alpha".to_string())];
+    let mut second = grpc_request(
+        &format!("grpc://{}", server.addr),
+        GrpcRequest {
+            metadata: vec![("x-grpc-source".to_string(), "second".to_string())],
+            ..base
+        },
+    );
+    second.headers = vec![("x-header-source".to_string(), "beta".to_string())];
+
+    for request in [&first, &first, &second, &first] {
+        let response = handler.execute(&mut vu, request).await.expect("response");
+        assert_eq!(response.status, 0, "status_text: {}", response.status_text);
+        let json: serde_json::Value = serde_json::from_slice(&response.body).expect("json body");
+        assert_eq!(json["message"], "metadata");
+    }
+}
+
+/// A rendered URL is part of the per-VU call identity. Two URLs resolving to
+/// different servers must retain independent clients even when every other
+/// request field is identical.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_call_cache_discriminates_rendered_urls() {
+    let mut first_server = GrpcEchoServer::spawn().await.expect("first grpc server");
+    let second_server = GrpcEchoServer::spawn().await.expect("second grpc server");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let proto_path = dir.path().join("echo.proto");
+    std::fs::write(&proto_path, ECHO_PROTO).expect("write proto");
+
+    let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
+    let mut vu = vu();
+    let base = GrpcRequest {
+        proto_files: vec![proto_path],
+        service: "loadr.test.Echo".to_string(),
+        method: "UnaryEcho".to_string(),
+        message: Some(Arc::new(serde_json::json!({"message": "routed"}))),
+        ..Default::default()
+    };
+    let first = grpc_request(&format!("grpc://{}", first_server.addr), base.clone());
+    let second = grpc_request(&format!("grpc://{}", second_server.addr), base);
+
+    for request in [&first, &second, &first, &second] {
+        let response = handler.execute(&mut vu, request).await.expect("response");
+        assert_eq!(response.status, 0, "status_text: {}", response.status_text);
+        let json: serde_json::Value = serde_json::from_slice(&response.body).expect("json body");
+        assert_eq!(json["message"], "routed");
+    }
+
+    // If the second URL had reused the first URL's call entry, it would fail
+    // after the first server shuts down rather than continuing on its client.
+    first_server.shutdown();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let response = handler.execute(&mut vu, &second).await.expect("response");
+    assert_eq!(response.status, 0, "status_text: {}", response.status_text);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn grpc_server_streaming_collects_all_messages() {
     let server = GrpcEchoServer::spawn().await.expect("grpc server");

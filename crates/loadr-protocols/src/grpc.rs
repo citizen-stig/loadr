@@ -27,7 +27,7 @@ use prost_reflect::{DescriptorPool, DynamicMessage, MethodDescriptor};
 use tonic::client::GrpcService;
 use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
 use tonic::codegen::{Body as HttpBody, StdError};
-use tonic::metadata::{MetadataKey, MetadataValue};
+use tonic::metadata::{MetadataKey, MetadataMap, MetadataValue};
 use tonic::transport::{Channel, Endpoint};
 use tonic::Status;
 use tonic_reflection::pb::v1::server_reflection_client::ServerReflectionClient;
@@ -232,10 +232,15 @@ struct CachedCall {
     /// Encoded literal message frames keyed by the message `Arc`'s pointer
     /// identity (stable for the run: the Arc is owned by the compiled plan).
     encoded: HashMap<usize, EncodedMessages>,
+    metadata: CachedMetadata,
 }
 
 struct CachedCallIdentity {
+    /// The rendered URL is the lookup key. The parsed endpoint is retained so
+    /// URL parsing is part of miss construction, never the cache-hit path.
+    url: String,
     endpoint: String,
+    tls: bool,
     service: String,
     method_name: String,
     reflection: bool,
@@ -252,15 +257,23 @@ struct EncodedMessages {
     bytes_sent: u64,
 }
 
+#[derive(Default)]
+struct CachedMetadata {
+    /// Exact ordered inputs consumed by `build_metadata`: gRPC metadata first,
+    /// followed by the request headers merged into the gRPC request.
+    source: Vec<(String, String)>,
+    map: MetadataMap,
+}
+
 impl CachedCall {
-    fn matches(&self, endpoint: &str, grpc: &GrpcRequest, transport: GrpcTransport) -> bool {
-        self.identity.matches(endpoint, grpc, transport)
+    fn matches(&self, url: &str, grpc: &GrpcRequest, transport: GrpcTransport) -> bool {
+        self.identity.matches(url, grpc, transport)
     }
 }
 
 impl CachedCallIdentity {
-    fn matches(&self, endpoint: &str, grpc: &GrpcRequest, transport: GrpcTransport) -> bool {
-        self.endpoint == endpoint
+    fn matches(&self, url: &str, grpc: &GrpcRequest, transport: GrpcTransport) -> bool {
+        self.url == url
             && self.service == grpc.service
             && self.method_name == grpc.method
             && self.reflection == grpc.reflection
@@ -333,6 +346,35 @@ fn parse_transport(value: Option<&str>) -> Option<GrpcTransport> {
             tracing::warn!("ignoring unknown LOADR_GRPC_TRANSPORT value `{other}`");
             None
         }
+    }
+}
+
+impl CachedMetadata {
+    fn matches(&self, grpc: &GrpcRequest, headers: &[(String, String)]) -> bool {
+        let source_len = grpc.metadata.len() + headers.len();
+        self.source.len() == source_len
+            && self
+                .source
+                .iter()
+                .eq(grpc.metadata.iter().chain(headers.iter()))
+    }
+
+    fn for_request(
+        &mut self,
+        grpc: &GrpcRequest,
+        headers: &[(String, String)],
+    ) -> Result<MetadataMap, ProtocolError> {
+        if !self.matches(grpc, headers) {
+            let map = build_metadata(grpc, headers)?;
+            self.source = grpc
+                .metadata
+                .iter()
+                .chain(headers.iter())
+                .cloned()
+                .collect();
+            self.map = map;
+        }
+        Ok(self.map.clone())
     }
 }
 
@@ -677,31 +719,54 @@ impl ProtocolHandler for GrpcHandler {
         let grpc = request.options.grpc.as_ref().ok_or_else(|| {
             ProtocolError::InvalidRequest("grpc request requires `grpc:` options".to_string())
         })?;
-        let (endpoint, tls) = self.endpoint_uri(&request.url)?;
         let transport = self.transport_override.unwrap_or(grpc.transport);
+
+        // Look up by the raw rendered URL so repeated calls never parse it.
+        // Templated URLs that render differently get distinct call entries.
+        let state = ctx.extensions.get_or_insert_with(GrpcChannels::default);
+        let call_idx = state
+            .calls
+            .iter()
+            .position(|c| c.matches(&request.url, grpc, transport));
+        let parsed_endpoint = if call_idx.is_none() {
+            Some(self.endpoint_uri(&request.url)?)
+        } else {
+            None
+        };
 
         let start = Instant::now();
 
         // Resolve call state (descriptors, path, codec, client) — cached per
         // VU after the first iteration of each request shape.
-        let state = ctx.extensions.get_or_insert_with(GrpcChannels::default);
-        let call_idx = match state
-            .calls
-            .iter()
-            .position(|c| c.matches(&endpoint, grpc, transport))
-        {
+        let call_idx = match call_idx {
             Some(idx) => idx,
             None => {
+                let (endpoint, tls) = parsed_endpoint.expect("endpoint parsed on cache miss");
+                let identity = CachedCallIdentity {
+                    url: request.url.clone(),
+                    endpoint,
+                    tls,
+                    service: grpc.service.clone(),
+                    method_name: grpc.method.clone(),
+                    reflection: grpc.reflection,
+                    proto_files: grpc.proto_files.clone(),
+                    proto_includes: grpc.proto_includes.clone(),
+                    pool_size: grpc.channel_pool_size,
+                    transport,
+                };
                 let channel = match transport {
                     GrpcTransport::Channel => CallChannel::Buffered(self.channel(
                         ctx,
-                        &endpoint,
-                        tls,
+                        &identity.endpoint,
+                        identity.tls,
                         grpc.channel_pool_size,
                     )?),
-                    GrpcTransport::Raw => {
-                        CallChannel::Raw(self.raw(ctx, &endpoint, tls, grpc.channel_pool_size)?)
-                    }
+                    GrpcTransport::Raw => CallChannel::Raw(self.raw(
+                        ctx,
+                        &identity.endpoint,
+                        identity.tls,
+                        grpc.channel_pool_size,
+                    )?),
                 };
 
                 // Resolve the descriptor pool.
@@ -711,7 +776,7 @@ impl ProtocolHandler for GrpcHandler {
                             CallChannel::Buffered(channel) => {
                                 self.pool_from_reflection(
                                     ServerReflectionClient::new(channel.clone()),
-                                    &endpoint,
+                                    &identity.endpoint,
                                     &grpc.service,
                                 )
                                 .await
@@ -722,7 +787,7 @@ impl ProtocolHandler for GrpcHandler {
                                         raw.clone(),
                                         raw.origin().clone(),
                                     ),
-                                    &endpoint,
+                                    &identity.endpoint,
                                     &grpc.service,
                                 )
                                 .await
@@ -774,22 +839,14 @@ impl ProtocolHandler for GrpcHandler {
                 };
 
                 let cached = CachedCall {
-                    identity: CachedCallIdentity {
-                        endpoint: endpoint.clone(),
-                        service: grpc.service.clone(),
-                        method_name: grpc.method.clone(),
-                        reflection: grpc.reflection,
-                        proto_files: grpc.proto_files.clone(),
-                        proto_includes: grpc.proto_includes.clone(),
-                        pool_size: grpc.channel_pool_size,
-                        transport,
-                    },
+                    identity,
                     input_desc: method.input(),
                     path,
                     codec: DynamicCodec::for_method(&method),
                     shape: (method.is_client_streaming(), method.is_server_streaming()),
                     client,
                     encoded: HashMap::new(),
+                    metadata: CachedMetadata::default(),
                 };
                 let state = ctx.extensions.get_or_insert_with(GrpcChannels::default);
                 state.calls.push(cached);
@@ -877,7 +934,7 @@ impl ProtocolHandler for GrpcHandler {
             }
         };
 
-        let metadata = build_metadata(grpc, &request.headers)?;
+        let metadata = cached.metadata.for_request(grpc, &request.headers)?;
         let shape = cached.shape;
         let path = cached.path.clone();
         // Per-call flag on the clone, not the cached codec: a decode call and
@@ -1082,7 +1139,7 @@ mod tests {
     }
 
     #[test]
-    fn call_cache_identity_discriminates_transport_and_pool_size() {
+    fn call_cache_identity_discriminates_raw_url_transport_and_pool_size() {
         let request = GrpcRequest {
             proto_files: vec![PathBuf::from("echo.proto")],
             proto_includes: vec![PathBuf::from("protos")],
@@ -1094,7 +1151,9 @@ mod tests {
             ..GrpcRequest::default()
         };
         let identity = CachedCallIdentity {
+            url: "grpc://127.0.0.1:50051".to_string(),
             endpoint: "http://127.0.0.1:50051".to_string(),
+            tls: false,
             service: request.service.clone(),
             method_name: request.method.clone(),
             reflection: request.reflection,
@@ -1104,17 +1163,95 @@ mod tests {
             transport: GrpcTransport::Channel,
         };
 
-        assert!(identity.matches("http://127.0.0.1:50051", &request, GrpcTransport::Channel));
-        assert!(!identity.matches("http://127.0.0.1:50051", &request, GrpcTransport::Raw));
+        assert!(identity.matches("grpc://127.0.0.1:50051", &request, GrpcTransport::Channel));
+        assert!(!identity.matches(
+            "grpc://127.0.0.1:50051/other",
+            &request,
+            GrpcTransport::Channel
+        ));
+        assert!(!identity.matches("grpc://127.0.0.1:50051", &request, GrpcTransport::Raw));
 
         let different_pool = GrpcRequest {
             channel_pool_size: Some(4),
             ..request
         };
         assert!(!identity.matches(
-            "http://127.0.0.1:50051",
+            "grpc://127.0.0.1:50051",
             &different_pool,
             GrpcTransport::Channel
         ));
+    }
+
+    #[test]
+    fn metadata_cache_hits_and_rebuilds_for_alternating_inputs() {
+        let first = GrpcRequest {
+            metadata: vec![("X-Grpc".to_string(), "one".to_string())],
+            ..GrpcRequest::default()
+        };
+        let first_headers = vec![("X-Header".to_string(), "alpha".to_string())];
+        let second = GrpcRequest {
+            metadata: vec![("X-Grpc".to_string(), "two".to_string())],
+            ..GrpcRequest::default()
+        };
+        let second_headers = vec![("X-Header".to_string(), "beta".to_string())];
+        let mut cache = CachedMetadata::default();
+
+        assert!(!cache.matches(&first, &first_headers));
+        let first_map = cache
+            .for_request(&first, &first_headers)
+            .expect("first metadata build");
+        assert!(cache.matches(&first, &first_headers));
+        assert_eq!(first_map.get("x-grpc").unwrap().to_str().unwrap(), "one");
+        assert_eq!(
+            first_map.get("x-header").unwrap().to_str().unwrap(),
+            "alpha"
+        );
+
+        let first_source_ptr = cache.source.as_ptr();
+        let hit = cache
+            .for_request(&first, &first_headers)
+            .expect("metadata cache hit");
+        assert!(cache.matches(&first, &first_headers));
+        assert_eq!(cache.source.as_ptr(), first_source_ptr);
+        assert_eq!(hit.get("x-grpc").unwrap().to_str().unwrap(), "one");
+
+        assert!(!cache.matches(&second, &second_headers));
+        let second_map = cache
+            .for_request(&second, &second_headers)
+            .expect("second metadata build");
+        assert!(cache.matches(&second, &second_headers));
+        assert_ne!(cache.source.as_ptr(), first_source_ptr);
+        assert_eq!(second_map.get("x-grpc").unwrap().to_str().unwrap(), "two");
+        assert_eq!(
+            second_map.get("x-header").unwrap().to_str().unwrap(),
+            "beta"
+        );
+
+        let first_again = cache
+            .for_request(&first, &first_headers)
+            .expect("alternating metadata rebuild");
+        assert!(cache.matches(&first, &first_headers));
+        assert_eq!(first_again.get("x-grpc").unwrap().to_str().unwrap(), "one");
+    }
+
+    #[test]
+    fn metadata_cache_keeps_valid_entry_after_parse_error() {
+        let valid = GrpcRequest {
+            metadata: vec![("x-valid".to_string(), "value".to_string())],
+            ..GrpcRequest::default()
+        };
+        let invalid = GrpcRequest {
+            metadata: vec![("bad key".to_string(), "value".to_string())],
+            ..GrpcRequest::default()
+        };
+        let mut cache = CachedMetadata::default();
+
+        cache.for_request(&valid, &[]).expect("valid metadata");
+        let error = cache
+            .for_request(&invalid, &[])
+            .expect_err("invalid metadata key");
+        assert!(error.to_string().contains("invalid metadata key `bad key`"));
+        assert!(cache.matches(&valid, &[]));
+        assert_eq!(cache.map.get("x-valid").unwrap().to_str().unwrap(), "value");
     }
 }

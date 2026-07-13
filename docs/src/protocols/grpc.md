@@ -49,8 +49,17 @@ grpc:
 ```
 
 The response body is the (last) response message rendered as JSON, so
-`jsonpath` extraction/assertions work naturally. `extras.messages` holds
-every streamed response; `extras.message_count` the count.
+`jsonpath` extraction/assertions work naturally. `extras.message_count` holds
+the number of streamed responses.
+
+**Automatic skip**: when nothing needs the response body — no `extract`, no
+`assert`/`checks` beyond `status`/`duration`/`header` (jsonpath, body/size
+checks, `js`, ... all count as reading it), and no script `afterRequest`
+hook — loadr skips building it entirely: no `DynamicMessage`, no JSON
+conversion. This is automatic, with no config knob; the common status-only
+load-generation case gets the full speedup for free. `body` is empty and
+`message_count` still reflects every frame received; stream draining, status
+and timings are unaffected.
 
 ## Semantics & metrics
 

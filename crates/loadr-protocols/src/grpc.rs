@@ -4,7 +4,9 @@
 //! with protox, or from gRPC server reflection (v1). Calls go through
 //! `tonic::client::Grpc` with a [`DynamicCodec`] that encodes/decodes
 //! [`prost_reflect::DynamicMessage`] values, so all four call shapes (unary,
-//! server-/client-streaming, bidi) work from plain JSON messages.
+//! server-/client-streaming, bidi) work from plain JSON messages. When
+//! nothing in the plan reads the response body, the codec discards each
+//! frame instead of building a `DynamicMessage` for it.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -13,7 +15,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 use std::time::Instant;
 
 use async_trait::async_trait;
-use bytes::{BufMut as _, Bytes};
+use bytes::{Buf as _, BufMut as _, Bytes};
 use loadr_config::HttpDefaults;
 use loadr_core::error::ProtocolError;
 use loadr_core::protocol::{
@@ -75,12 +77,20 @@ fn cache_put(key: String, pool: DescriptorPool) {
 #[derive(Clone)]
 struct DynamicCodec {
     output: prost_reflect::MessageDescriptor,
+    /// Skip decoding each response frame (still fully drained, so stream
+    /// completion/status/timing parity holds). Set per-call from
+    /// `GrpcRequest.discard_response_body` on the codec *clone* `execute`
+    /// hands to `invoke` — never on the cached codec shared across calls to
+    /// the same method, so a decode call and a discard call to the same
+    /// (endpoint, service, method) share one `CachedCall` without fighting.
+    discard: bool,
 }
 
 impl DynamicCodec {
     fn for_method(method: &MethodDescriptor) -> Self {
         DynamicCodec {
             output: method.output(),
+            discard: false,
         }
     }
 }
@@ -93,9 +103,17 @@ enum Outbound {
     Encoded(Bytes),
 }
 
+/// Inbound message: fully decoded, or a discarded frame whose wire length is
+/// kept for `bytes_received` accounting (nothing in the plan reads the
+/// response body).
+enum Inbound {
+    Message(DynamicMessage),
+    Skipped { encoded_len: usize },
+}
+
 impl Codec for DynamicCodec {
     type Encode = Outbound;
-    type Decode = DynamicMessage;
+    type Decode = Inbound;
     type Encoder = DynamicEncoder;
     type Decoder = DynamicDecoder;
 
@@ -106,6 +124,7 @@ impl Codec for DynamicCodec {
     fn decoder(&mut self) -> Self::Decoder {
         DynamicDecoder {
             desc: self.output.clone(),
+            discard: self.discard,
         }
     }
 }
@@ -131,18 +150,27 @@ impl Encoder for DynamicEncoder {
 
 struct DynamicDecoder {
     desc: prost_reflect::MessageDescriptor,
+    discard: bool,
 }
 
 impl Decoder for DynamicDecoder {
-    type Item = DynamicMessage;
+    type Item = Inbound;
     type Error = Status;
 
-    fn decode(&mut self, src: &mut DecodeBuf<'_>) -> Result<Option<DynamicMessage>, Status> {
+    fn decode(&mut self, src: &mut DecodeBuf<'_>) -> Result<Option<Inbound>, Status> {
+        if self.discard {
+            // `DecodeBuf` is exactly this frame's payload; the decoder must
+            // fully consume it (its `advance` drives the shared stream
+            // buffer's read cursor) or the next frame's header is misread.
+            let encoded_len = src.remaining();
+            src.advance(encoded_len);
+            return Ok(Some(Inbound::Skipped { encoded_len }));
+        }
         let mut message = DynamicMessage::new(self.desc.clone());
         message
             .merge(&mut *src)
             .map_err(|e| Status::internal(format!("failed to decode message: {e}")))?;
-        Ok(Some(message))
+        Ok(Some(Inbound::Message(message)))
     }
 }
 
@@ -672,7 +700,10 @@ impl ProtocolHandler for GrpcHandler {
         let metadata = build_metadata(grpc, &request.headers)?;
         let shape = cached.shape;
         let path = cached.path.clone();
-        let codec = cached.codec.clone();
+        // Per-call flag on the clone, not the cached codec: a decode call and
+        // a discard call to the same method share one `CachedCall` entry.
+        let mut codec = cached.codec.clone();
+        codec.discard = grpc.discard_response_body;
         let call = invoke(&mut cached.client, shape, outbound, path, codec, metadata);
         let outcome = match tokio::time::timeout(request.timeout, call).await {
             Ok(outcome) => outcome,
@@ -688,22 +719,33 @@ impl ProtocolHandler for GrpcHandler {
 
         match outcome {
             Ok(responses) => {
-                let json: Vec<serde_json::Value> = responses
+                let count = responses.len();
+                // Parity with the pre-discard formula (`encoded_len + 5`
+                // frame overhead per message); skip mode uses the wire
+                // length seen by the decoder instead of a re-encoded length
+                // (identical for canonical encoders, more accurate otherwise).
+                let bytes_received: u64 = responses
                     .iter()
-                    .map(|m| serde_json::to_value(m).unwrap_or(serde_json::Value::Null))
-                    .collect();
-                let body = json
-                    .last()
-                    .map(|v| serde_json::to_vec(v).unwrap_or_default())
-                    .unwrap_or_default();
-                let bytes_received: u64 =
-                    responses.iter().map(|m| m.encoded_len() as u64 + 5).sum();
-                let count = json.len();
+                    .map(|m| {
+                        (match m {
+                            Inbound::Message(m) => m.encoded_len(),
+                            Inbound::Skipped { encoded_len } => *encoded_len,
+                        }) as u64
+                            + 5
+                    })
+                    .sum();
+                let body: Bytes = match responses.last() {
+                    Some(Inbound::Message(m)) => {
+                        let json = serde_json::to_value(m).unwrap_or(serde_json::Value::Null);
+                        serde_json::to_vec(&json).unwrap_or_default().into()
+                    }
+                    _ => Bytes::new(),
+                };
                 Ok(ProtocolResponse {
                     status: 0,
                     status_text: "OK".to_string(),
                     headers: Vec::new(),
-                    body: body.into(),
+                    body,
                     timings,
                     bytes_sent,
                     bytes_received,
@@ -711,7 +753,6 @@ impl ProtocolHandler for GrpcHandler {
                     error: None,
                     url: request.url.clone(),
                     extras: serde_json::json!({
-                        "messages": json,
                         "message_count": count,
                     }),
                 })
@@ -772,7 +813,7 @@ async fn invoke(
     path: http::uri::PathAndQuery,
     codec: DynamicCodec,
     metadata: tonic::metadata::MetadataMap,
-) -> Result<Vec<DynamicMessage>, Status> {
+) -> Result<Vec<Inbound>, Status> {
     client
         .ready()
         .await
@@ -818,9 +859,7 @@ async fn invoke(
     }
 }
 
-async fn collect_stream(
-    mut stream: tonic::Streaming<DynamicMessage>,
-) -> Result<Vec<DynamicMessage>, Status> {
+async fn collect_stream(mut stream: tonic::Streaming<Inbound>) -> Result<Vec<Inbound>, Status> {
     let mut out = Vec::new();
     while let Some(message) = stream.message().await? {
         out.push(message);

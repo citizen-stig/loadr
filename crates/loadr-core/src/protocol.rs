@@ -96,6 +96,12 @@ pub struct GrpcRequest {
     /// Share a fixed pool of N HTTP/2 channels across all VUs (round-robin)
     /// instead of one connection per VU. `None` = per-VU (default).
     pub channel_pool_size: Option<usize>,
+    /// Skip building `DynamicMessage`s and JSON-converting the response:
+    /// nothing in the plan reads the body (no `extract`/`assert`/`checks`
+    /// that need it, and no script `afterRequest` hook). `false` = decode
+    /// (today's behavior), so `derive(Default)` stays safe for the many
+    /// tests that construct `GrpcRequest` directly.
+    pub discard_response_body: bool,
 }
 
 #[derive(Debug, Clone, Default)]

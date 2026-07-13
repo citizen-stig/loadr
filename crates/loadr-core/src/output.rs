@@ -22,6 +22,18 @@ pub trait Output: Send {
 
     async fn on_samples(&mut self, _samples: &[Sample]) {}
 
+    /// Whether this output needs raw samples via `on_samples`. Conservative
+    /// default: `true` (covers `NativeOutputAdapter`/plugin FFI, whose real
+    /// needs the engine can't see). When every configured output overrides
+    /// this to `false`, the engine records straight into shard aggregators
+    /// instead of running the sample channel + aggregator batching (see
+    /// `MetricShards`) — no channel, no per-sample clock read, no
+    /// end-of-run drain backlog. Snapshot-only outputs (metrics backends,
+    /// the live-UI channel, the distributed uplink) should override this.
+    fn wants_samples(&self) -> bool {
+        true
+    }
+
     async fn on_snapshot(&mut self, _snapshot: &Snapshot) {}
 
     /// Opt in to receiving drained [`MetricsDelta`]s via `on_delta` (e.g. the
@@ -68,6 +80,10 @@ impl ChannelOutput {
 impl Output for ChannelOutput {
     fn name(&self) -> &str {
         &self.name
+    }
+
+    fn wants_samples(&self) -> bool {
+        false
     }
 
     async fn on_snapshot(&mut self, snapshot: &Snapshot) {

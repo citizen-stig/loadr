@@ -91,6 +91,10 @@ impl Output for PrometheusOutput {
         "prometheus"
     }
 
+    fn wants_samples(&self) -> bool {
+        false
+    }
+
     async fn start(&mut self) -> Result<(), EngineError> {
         if let Some(listen) = &self.listen {
             let listener = tokio::net::TcpListener::bind(listen).await.map_err(|err| {

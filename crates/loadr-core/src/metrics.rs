@@ -185,11 +185,37 @@ pub struct Sample {
     pub timestamp_ms: u64,
 }
 
+/// Where a `MetricsBus` delivers samples.
+#[derive(Clone)]
+enum Sink {
+    /// The classic per-run channel, drained by the aggregator task.
+    Tx(tokio::sync::mpsc::UnboundedSender<Sample>),
+    /// Straight into a shard-local aggregator — no channel, no per-sample
+    /// clock read, no drain backlog. Chosen once at startup (see
+    /// `Output::wants_samples`) when nothing needs raw samples.
+    Shard {
+        shards: Arc<crate::aggregate::MetricShards>,
+        idx: usize,
+    },
+}
+
 /// Cloneable fan-in handle that VUs use to emit samples.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MetricsBus {
-    tx: tokio::sync::mpsc::UnboundedSender<Sample>,
+    sink: Sink,
     requests_in_flight: Arc<AtomicU64>,
+}
+
+impl std::fmt::Debug for MetricsBus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.sink {
+            Sink::Tx(_) => f.write_str("MetricsBus::Tx"),
+            Sink::Shard { idx, .. } => f
+                .debug_struct("MetricsBus::Shard")
+                .field("idx", idx)
+                .finish(),
+        }
+    }
 }
 
 impl MetricsBus {
@@ -197,26 +223,66 @@ impl MetricsBus {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         (
             MetricsBus {
-                tx,
+                sink: Sink::Tx(tx),
                 requests_in_flight: Arc::new(AtomicU64::new(0)),
             },
             rx,
         )
     }
 
+    /// Build a bus that records straight into `shards` instead of a channel
+    /// (see `MetricShards`). Returns the root handle, pinned to shard 0 —
+    /// per-VU handles come from `for_vu`.
+    pub fn sharded(shards: Arc<crate::aggregate::MetricShards>) -> Self {
+        MetricsBus {
+            sink: Sink::Shard { shards, idx: 0 },
+            requests_in_flight: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    /// A handle pinned to VU `vu_id`'s shard (a plain clone in channel mode).
+    /// Applied once, in `VuContext::new`, so every emit site — VUs, the JS
+    /// host, plugin protocols — is covered with no call-site changes. The
+    /// in-flight counter is shared with the parent handle either way.
+    pub fn for_vu(&self, vu_id: u64) -> Self {
+        let sink = match &self.sink {
+            Sink::Tx(tx) => Sink::Tx(tx.clone()),
+            Sink::Shard { shards, .. } => Sink::Shard {
+                shards: shards.clone(),
+                idx: (vu_id % shards.len() as u64) as usize,
+            },
+        };
+        MetricsBus {
+            sink,
+            requests_in_flight: self.requests_in_flight.clone(),
+        }
+    }
+
     pub fn emit(&self, sample: Sample) {
-        // The receiver only closes at the very end of a run; late samples
-        // from draining VUs are intentionally dropped.
-        let _ = self.tx.send(sample);
+        match &self.sink {
+            // The receiver only closes at the very end of a run; late
+            // samples from draining VUs are intentionally dropped.
+            Sink::Tx(tx) => {
+                let _ = tx.send(sample);
+            }
+            Sink::Shard { shards, idx } => shards.record(*idx, &sample),
+        }
     }
 
     pub fn emit_value(&self, metric: &Arc<str>, kind: MetricKind, value: f64, tags: &Arc<Tags>) {
+        // Shard mode skips the clock read entirely: JsonOutput/CsvOutput are
+        // the only readers of `timestamp_ms`, and both force bus mode via
+        // `wants_samples`.
+        let timestamp_ms = match &self.sink {
+            Sink::Tx(_) => now_millis(),
+            Sink::Shard { .. } => 0,
+        };
         self.emit(Sample {
             metric: metric.clone(),
             kind,
             value,
             tags: tags.clone(),
-            timestamp_ms: now_millis(),
+            timestamp_ms,
         });
     }
 
@@ -352,5 +418,62 @@ mod tests {
         assert_eq!(s1.kind, MetricKind::Rate);
         let s2 = rx.recv().await.expect("sample");
         assert_eq!(s2.value, 2.0);
+    }
+
+    fn shard_idx(bus: &MetricsBus) -> usize {
+        match &bus.sink {
+            Sink::Shard { idx, .. } => *idx,
+            Sink::Tx(_) => panic!("expected a shard sink"),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn sharded_bus_records_and_drains_exactly() {
+        let shards = Arc::new(crate::aggregate::MetricShards::new(4));
+        let root = MetricsBus::sharded(shards.clone());
+
+        // Same-shard pinning: VU k and VU k+4 land on the same shard (idx %
+        // len), and the root handle itself is shard 0.
+        assert_eq!(shard_idx(&root), 0);
+        for k in 0..4u64 {
+            let a = root.for_vu(k);
+            let b = root.for_vu(k + 4);
+            assert_eq!(shard_idx(&a), k as usize, "vu {k} pins to shard {k}");
+            assert_eq!(
+                shard_idx(&b),
+                k as usize,
+                "vu {} shares vu {k}'s shard",
+                k + 4
+            );
+        }
+
+        // Concurrent emits from every VU, each pinned to its own bus handle.
+        let metric: Arc<str> = Arc::from("http_reqs");
+        let tags = Arc::new(Tags::new());
+        const PER_VU: usize = 200;
+        let mut handles = Vec::new();
+        for vu_id in 0..8u64 {
+            let vu_bus = root.for_vu(vu_id);
+            let metric = metric.clone();
+            let tags = tags.clone();
+            handles.push(tokio::spawn(async move {
+                for _ in 0..PER_VU {
+                    vu_bus.counter(&metric, 1.0, &tags);
+                }
+            }));
+        }
+        for h in handles {
+            h.await.expect("vu task");
+        }
+
+        let mut target = crate::aggregate::Aggregator::new();
+        shards.drain_into(&mut target);
+        let total = target.snapshot().find("http_reqs").expect("series").agg.sum;
+        assert_eq!(total, (8 * PER_VU) as f64);
+
+        // A second drain sees nothing new: exactly-once delivery.
+        let mut target2 = crate::aggregate::Aggregator::new();
+        shards.drain_into(&mut target2);
+        assert!(target2.snapshot().find("http_reqs").is_none());
     }
 }

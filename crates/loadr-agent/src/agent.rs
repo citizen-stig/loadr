@@ -609,6 +609,10 @@ impl Output for DeltaOutput {
         "controller-delta"
     }
 
+    fn wants_samples(&self) -> bool {
+        false
+    }
+
     fn wants_delta(&self) -> bool {
         true
     }

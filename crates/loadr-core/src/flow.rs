@@ -1328,7 +1328,7 @@ impl FlowRunner {
                 m.rate(&b.http_req_failed, response.error.is_some(), &tags);
             }
             other => {
-                // grpc/tcp/udp built-ins keep their own family name. The
+                // grpc/tcp/udp/noop built-ins keep their own family name. The
                 // `sse`/`browser` built-ins historically share the generic
                 // `plugin` family — preserve that so existing dashboards and
                 // thresholds keep working. Everything else is a loaded protocol
@@ -1338,7 +1338,7 @@ impl FlowRunner {
                 // plugins emit `postgres_reqs` / `mysql_reqs`, and the `redis`
                 // plugin emits `redis_reqs` / `redis_req_duration`).
                 let family = match other {
-                    "grpc" | "tcp" | "udp" => other.to_string(),
+                    "grpc" | "tcp" | "udp" | "noop" => other.to_string(),
                     "sse" | "browser" => "plugin".to_string(),
                     name => metric_family(name),
                 };

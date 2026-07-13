@@ -261,6 +261,7 @@ impl ProtocolRegistry {
             "sse" | "sses" => "sse".to_string(),
             "tcp" => "tcp".to_string(),
             "udp" => "udp".to_string(),
+            "noop" => "noop".to_string(),
             other => plugin_scheme(other).unwrap_or_else(|| "http".to_string()),
         }
     }
@@ -284,6 +285,7 @@ mod tests {
         assert_eq!(ProtocolRegistry::infer(None, "wss://x/"), "ws");
         assert_eq!(ProtocolRegistry::infer(None, "grpc://x/"), "grpc");
         assert_eq!(ProtocolRegistry::infer(None, "tcp://x:9"), "tcp");
+        assert_eq!(ProtocolRegistry::infer(None, "noop://local"), "noop");
         assert_eq!(ProtocolRegistry::infer(None, "sse://x/"), "sse");
         assert_eq!(ProtocolRegistry::infer(None, "sses://x/"), "sse");
         // Redis is a plugin now: its scheme falls back to http until the plugin

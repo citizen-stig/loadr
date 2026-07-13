@@ -19,7 +19,6 @@ use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use loadr_core::error::ProtocolError;
 use loadr_core::protocol::Timings;
 use rustls::pki_types::ServerName;
-use tokio::net::TcpStream;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tonic::codegen::Service;
 use tonic::Status;
@@ -238,10 +237,8 @@ impl RawShared {
             .ok_or_else(|| format!("url `{}` has no port", self.url))?;
         // Setup time is deliberately not phase-tracked: gRPC timings report a
         // single elapsed figure, for both transports alike.
-        let addr = crate::net::resolve(&host, port, &mut Timings::default()).await?;
-        let tcp = TcpStream::connect(addr)
-            .await
-            .map_err(|e| format!("connection to {addr} failed: {e}"))?;
+        let addrs = crate::net::resolve_all(&host, port, &mut Timings::default()).await?;
+        let tcp = crate::net::connect_tcp(&addrs).await?;
         let _ = tcp.set_nodelay(true);
 
         let stream: Box<dyn IoStream> = match &self.tls {

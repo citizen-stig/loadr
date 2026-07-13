@@ -119,6 +119,7 @@ pub struct GrpcEchoServer {
     /// Bound address (always `127.0.0.1`; port is ephemeral unless spawned
     /// via [`spawn_on`](Self::spawn_on)).
     pub addr: SocketAddr,
+    scheme: &'static str,
     cert_pem: Option<String>,
     shutdown: Option<oneshot::Sender<()>>,
 }
@@ -147,10 +148,8 @@ impl GrpcEchoServer {
         ])
         .map_err(|e| TestServerError::Tls(e.to_string()))?;
         let cert_pem = certified.cert.pem();
-        let identity = tonic::transport::Identity::from_pem(
-            &cert_pem,
-            certified.signing_key.serialize_pem(),
-        );
+        let identity =
+            tonic::transport::Identity::from_pem(&cert_pem, certified.signing_key.serialize_pem());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let mut server = Self::serve(listener, Some(identity)).await?;
         server.cert_pem = Some(cert_pem);
@@ -162,6 +161,7 @@ impl GrpcEchoServer {
         tls: Option<tonic::transport::Identity>,
     ) -> Result<Self, TestServerError> {
         let addr = listener.local_addr()?;
+        let scheme = if tls.is_some() { "https" } else { "http" };
         let (tx, rx) = oneshot::channel::<()>();
         let reflection = tonic_reflection::server::Builder::configure()
             .register_encoded_file_descriptor_set(FILE_DESCRIPTOR_SET)
@@ -199,6 +199,7 @@ impl GrpcEchoServer {
         tracing::debug!(%addr, "grpc test server listening");
         Ok(Self {
             addr,
+            scheme,
             cert_pem: None,
             shutdown: Some(tx),
         })
@@ -209,9 +210,10 @@ impl GrpcEchoServer {
         self.cert_pem.as_deref()
     }
 
-    /// Base URL suitable for `EchoClient::connect`, e.g. `http://127.0.0.1:54321`.
+    /// Base URL suitable for `EchoClient::connect`, e.g. `http://127.0.0.1:54321`
+    /// or `https://127.0.0.1:54321` for a TLS server.
     pub fn url(&self) -> String {
-        format!("http://{}", self.addr)
+        format!("{}://{}", self.scheme, self.addr)
     }
 
     /// Alias for [`url`](Self::url).

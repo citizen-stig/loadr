@@ -48,21 +48,23 @@ IMPLEMENTATION
 - Implement `try_claim` with `fetch_update` or a compare-exchange loop that
   decrements only when the observed budget is positive. Do not use a load
   followed by unchecked `fetch_sub`: concurrent claimers can underflow it.
-  Document the chosen atomic orderings; do not rely on notification alone to
-  make the counter state correct.
+  SeqCst everywhere is acceptable; document anything weaker. Do not rely on
+  notification alone to make the counter state correct.
 - Worker protocol, before every iteration:
   1. If dispatch is open, the run is not paused, and `try_claim` succeeds, run
      exactly one iteration and loop back to the same checks. A claim won before
      dispatcher closure may finish during the existing graceful-stop window.
-  2. Otherwise create the shared `Notified` future first, then increment the
-     parked count, and re-check open/pause/budget before awaiting. This ordering
-     is required because `notify_waiters()` stores no permit; Tokio guarantees
+  2. Otherwise create a `Notified` future from the shared `Notify` first, then
+     increment the parked count, and re-check open/pause/budget: exit on closed,
+     take the claim path on unpaused positive budget, otherwise await it (racing
+     scenario cancellation, as parked workers do today). The creation order is
+     required because `notify_waiters()` stores no permit; Tokio guarantees
      that a `Notified` created before the broadcast observes it even if it has
      not yet been polled. A broadcast before creation is covered by the final
      budget re-check.
-  3. Decrement the parked count exactly once on every exit from the parked
-     state: successful final claim, notification, or cancellation. After a
-     notification, decrement before trying to claim so the dispatcher's next
+  3. Increment the parked count once per park and decrement it exactly once at
+     the single point the parked state is left — re-check exit, notification,
+     or cancellation — before any claim attempt, so the dispatcher's next
      parked snapshot is not knowingly stale. Spurious wakes are expected.
 - Dispatcher protocol on each active tick:
   1. Track the current budget's expiry as a local `Instant`. If wall time has
@@ -72,10 +74,13 @@ IMPLEMENTATION
      several events back-to-back after a stall.
   2. Preserve the existing fractional schedule calculation, but turn whole
      arrivals into a batch (`floor` and subtract) rather than a per-arrival
-     `while` loop. If no budget is active, give the new batch an expiry of
-     `now + dispatch_tick()`; arrivals added during a burst share the existing
-     expiry rather than extending older work indefinitely.
-  3. Snapshot parked workers and grow by at most
+     `while` loop. A budget is active while a dispatcher-local expiry from an
+     earlier batch has not yet been enforced by step 1; if none is active, give
+     the new batch an expiry of `now + dispatch_tick()`, otherwise (e.g. burst
+     events) new arrivals share the existing expiry rather than extending older
+     work indefinitely. Expiry is enforced only by step 1 on the tick;
+     `try_claim` never checks the clock.
+  3. Snapshot parked workers and grow by exactly
      `min(due.saturating_sub(parked), max_vus.saturating_sub(allocated))`. Queue
      those spawns, add the whole due batch to the shared budget, then call
      `notify_waiters()` at most once when the batch is non-zero. Newly spawned
@@ -86,9 +91,10 @@ IMPLEMENTATION
      wakes registered waiters, and all claimers contend on one cache line. The
      required low-rate/high-idle benchmark decides whether that trade is viable.
 - Pause keeps the schedule clock behavior already present: expire any published
-  unclaimed budget, set `last = now`, publish no paused-time arrivals, and leave
-  workers parked. Running workers re-check pause before their next claim; resume
-  is driven by the next productive tick's broadcast.
+  unclaimed budget, keep pinning `last = now` on every paused tick as the
+  current loop does, publish no paused-time arrivals, and leave workers parked.
+  Running workers re-check pause before their next claim; resume is driven by
+  the next productive tick's broadcast.
 - On natural deadline, soft stop, or scenario cancellation, atomically take and
   record all unclaimed budget, close dispatch so no later claim can succeed, and
   broadcast once so parked workers exit. Linearize closure at `budget.swap(0)`:
@@ -111,16 +117,20 @@ OUT OF SCOPE
 CORRECTNESS TESTS
 - Keep `arrival_rate_keeps_schedule_without_drops` green. It is a functional
   smoke test at 200/s, not evidence for the 150k/s performance claim.
-- Add a saturation test with a deliberately small `max_vus` and slow iterations.
-  Assert completion, positive drops, and conservation within one final-tick
-  allowance: completed iterations plus dropped iterations must match scheduled
-  arrivals within `ceil(rate * tick) + 1`. A test that checks only `drops > 0`
-  is insufficient.
-- Add focused cases for: preallocated-to-max spawn growth without exceeding
-  `max_vus`; many parked workers repeatedly racing small budgets without a lost
-  wake or hang; pause/resume publishing no paused-time backlog; natural deadline
-  and soft stop starting no post-closure claims; cancellation waking parked
-  workers; and a ramping schedule using the same loop.
+- Add a saturation test with a deliberately small `max_vus` and slow iterations:
+  constant rate, natural deadline, no pause, and `graceful_stop` long enough for
+  claimed in-flight iterations to finish (an aborted claim is neither completed
+  nor dropped and breaks the identity). Assert completion, positive drops, and
+  conservation: completed plus dropped iterations must match scheduled arrivals
+  within `ceil(rate * tick) + 1`, widened by one tick's arrivals in wall-clock
+  tests because a stalled final tick enlarges the unpublished tail; the exact
+  identity belongs in the private helper test below. A test that checks only
+  `drops > 0` is insufficient.
+- Add focused cases for: spawn growth from `pre_allocated_vus` up to but never
+  beyond `max_vus`; many parked workers repeatedly racing small budgets without
+  a lost wake or hang; pause/resume publishing no paused-time backlog; natural
+  deadline and soft stop starting no post-closure claims; cancellation waking
+  parked workers; and a ramping schedule using the same loop.
 - Bound concurrency tests with timeouts and repeat the lost-wake case enough to
   exercise both sides of the registration/re-check race. Prefer a small private
   helper test for exact budget/expiry accounting where wall-clock e2e assertions
@@ -128,8 +138,9 @@ CORRECTNESS TESTS
 - Tick-specific e2es must set `LOADR_DISPATCH_TICK_US` on the spawned loadr child
   process. `dispatch_tick()` is cached in a process-wide `OnceLock`, so do not
   mutate the parent test process environment and expect independent tick values.
-- Set `graceful_stop: 0s` in focused e2es that are not testing grace behavior;
-  the existing 2s arrival test otherwise spends the default 30s grace waiting.
+- Set `graceful_stop: 0s` in focused e2es not testing grace behavior or
+  conservation; the existing 2s arrival test otherwise spends the default 30s
+  grace waiting.
 
 LOCAL PERFORMANCE VALIDATION (required; no AWS rig)
 - Build two release binaries with identical current-stable toolchain, lockfile,

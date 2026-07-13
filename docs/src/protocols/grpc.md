@@ -68,6 +68,12 @@ every streamed response; `extras.message_count` the count.
   grpc:
     channel_pool_size: 8   # 8 shared connections instead of one per VU
   ```
+- With `transport: channel`, each pooled channel queues outbound calls in a
+  bounded `tower::buffer`; its depth defaults to 4096 and is configurable via
+  the `LOADR_GRPC_BUFFER_SIZE` environment variable. It only applies to
+  `channel_pool_size` channels, not the default per-VU ones — raise it if
+  many VUs share a pooled channel and calls start stalling in `ready()`
+  before the connection itself is the bottleneck.
 - `grpcs://` uses the standard TLS config (custom CAs, mTLS).
 
 ## Transport

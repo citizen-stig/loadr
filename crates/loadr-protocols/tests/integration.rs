@@ -436,7 +436,7 @@ async fn grpc_unary_pooled_channels() {
     std::fs::write(&proto_path, ECHO_PROTO).expect("write proto");
 
     let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
-    let mut vu = vu();
+    let mut vus = [vu(), vu()];
 
     let request = grpc_request(
         &format!("grpc://{}", server.addr),
@@ -444,22 +444,24 @@ async fn grpc_unary_pooled_channels() {
             proto_files: vec![proto_path],
             service: "loadr.test.Echo".to_string(),
             method: "UnaryEcho".to_string(),
-            message: Some(serde_json::json!({"message": "pooled"})),
+            message: Some(Arc::new(serde_json::json!({"message": "pooled"}))),
             channel_pool_size: Some(2),
             ..Default::default()
         },
     );
 
-    // Two calls through a size-2 pool: the first creates the pool (exercising the
-    // double-checked locking) and memoizes it on the VU; the second hits the
-    // VU-local memo. Both round-robin slots are used.
-    for _ in 0..2 {
-        let response = handler.execute(&mut vu, &request).await.expect("response");
-        assert_eq!(response.status, 0, "status_text: {}", response.status_text);
-        assert!(!response.failed());
-        assert_eq!(response.protocol_version, "grpc");
-        let json: serde_json::Value = serde_json::from_slice(&response.body).expect("json body");
-        assert_eq!(json["message"], "pooled");
+    // Each VU pins its resolved call to one successive pool slot, then reuses
+    // the cached client. This covers both round-robin slots and the hot path.
+    for vu in &mut vus {
+        for _ in 0..2 {
+            let response = handler.execute(vu, &request).await.expect("response");
+            assert_eq!(response.status, 0, "status_text: {}", response.status_text);
+            assert!(!response.failed());
+            assert_eq!(response.protocol_version, "grpc");
+            let json: serde_json::Value =
+                serde_json::from_slice(&response.body).expect("json body");
+            assert_eq!(json["message"], "pooled");
+        }
     }
 }
 
@@ -470,29 +472,37 @@ async fn grpc_unary_literal_message_cache() {
     let proto_path = dir.path().join("echo.proto");
     std::fs::write(&proto_path, ECHO_PROTO).expect("write proto");
 
-    let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
-    let mut vu = vu();
+    for transport in [GrpcTransport::Channel, GrpcTransport::Raw] {
+        let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
+        let mut vu = vu();
 
-    let request = grpc_request(
-        &format!("grpc://{}", server.addr),
-        GrpcRequest {
-            proto_files: vec![proto_path],
-            service: "loadr.test.Echo".to_string(),
-            method: "UnaryEcho".to_string(),
-            message: Some(Arc::new(serde_json::json!({"message": "cached"}))),
-            message_literal: true,
-            ..Default::default()
-        },
-    );
+        let request = grpc_request(
+            &format!("grpc://{}", server.addr),
+            GrpcRequest {
+                proto_files: vec![proto_path.clone()],
+                service: "loadr.test.Echo".to_string(),
+                method: "UnaryEcho".to_string(),
+                message: Some(Arc::new(serde_json::json!({"message": "cached"}))),
+                message_literal: true,
+                transport,
+                ..Default::default()
+            },
+        );
 
-    // The first call resolves and encodes; later calls reuse both per-VU
-    // caches while preserving the response.
-    for _ in 0..3 {
-        let response = handler.execute(&mut vu, &request).await.expect("response");
-        assert_eq!(response.status, 0, "status_text: {}", response.status_text);
-        assert!(!response.failed());
-        let json: serde_json::Value = serde_json::from_slice(&response.body).expect("json body");
-        assert_eq!(json["message"], "cached");
+        // The first call resolves and encodes; later calls reuse the per-VU
+        // client, call-state and encoded-body caches on both transports.
+        for _ in 0..3 {
+            let response = handler.execute(&mut vu, &request).await.expect("response");
+            assert_eq!(
+                response.status, 0,
+                "{transport:?}: {}",
+                response.status_text
+            );
+            assert!(!response.failed());
+            let json: serde_json::Value =
+                serde_json::from_slice(&response.body).expect("json body");
+            assert_eq!(json["message"], "cached");
+        }
     }
 }
 
@@ -611,8 +621,8 @@ async fn run_grpc_shape(
             proto_files: vec![proto_path],
             service: "loadr.test.Echo".to_string(),
             method: method.to_string(),
-            message,
-            messages,
+            message: message.map(Arc::new),
+            messages: Arc::new(messages),
             transport,
             ..Default::default()
         },
@@ -726,7 +736,7 @@ async fn grpc_raw_via_reflection() {
             reflection: true,
             service: "loadr.test.Echo".to_string(),
             method: "UnaryEcho".to_string(),
-            message: Some(serde_json::json!({"message": "raw reflected"})),
+            message: Some(Arc::new(serde_json::json!({"message": "raw reflected"}))),
             transport: GrpcTransport::Raw,
             ..Default::default()
         },
@@ -749,7 +759,7 @@ async fn grpc_raw_unary_pooled_channels() {
     std::fs::write(&proto_path, ECHO_PROTO).expect("write proto");
 
     let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
-    let mut vu = vu();
+    let mut vus = [vu(), vu()];
 
     let request = grpc_request(
         &format!("grpc://{}", server.addr),
@@ -757,19 +767,23 @@ async fn grpc_raw_unary_pooled_channels() {
             proto_files: vec![proto_path],
             service: "loadr.test.Echo".to_string(),
             method: "UnaryEcho".to_string(),
-            message: Some(serde_json::json!({"message": "raw pooled"})),
+            message: Some(Arc::new(serde_json::json!({"message": "raw pooled"}))),
             channel_pool_size: Some(2),
             transport: GrpcTransport::Raw,
             ..Default::default()
         },
     );
 
-    // Both round-robin slots get used; the second call hits the VU memo.
-    for _ in 0..2 {
-        let response = handler.execute(&mut vu, &request).await.expect("response");
-        assert_eq!(response.status, 0, "status_text: {}", response.status_text);
-        let json: serde_json::Value = serde_json::from_slice(&response.body).expect("json body");
-        assert_eq!(json["message"], "raw pooled");
+    // Each VU pins its resolved call to one successive raw pool slot, then
+    // reuses the cached client.
+    for vu in &mut vus {
+        for _ in 0..2 {
+            let response = handler.execute(vu, &request).await.expect("response");
+            assert_eq!(response.status, 0, "status_text: {}", response.status_text);
+            let json: serde_json::Value =
+                serde_json::from_slice(&response.body).expect("json body");
+            assert_eq!(json["message"], "raw pooled");
+        }
     }
 }
 
@@ -790,7 +804,7 @@ async fn grpc_raw_reconnects_after_server_restart() {
             proto_files: vec![proto_path],
             service: "loadr.test.Echo".to_string(),
             method: "UnaryEcho".to_string(),
-            message: Some(serde_json::json!({"message": "before restart"})),
+            message: Some(Arc::new(serde_json::json!({"message": "before restart"}))),
             transport: GrpcTransport::Raw,
             ..Default::default()
         },
@@ -875,7 +889,7 @@ async fn grpc_raw_tls_insecure_skip_verify() {
             proto_files: vec![proto_path],
             service: "loadr.test.Echo".to_string(),
             method: "UnaryEcho".to_string(),
-            message: Some(serde_json::json!({"message": "over tls"})),
+            message: Some(Arc::new(serde_json::json!({"message": "over tls"}))),
             transport: GrpcTransport::Raw,
             ..Default::default()
         },
@@ -911,7 +925,7 @@ async fn grpc_raw_tls_with_ca_file() {
             proto_files: vec![proto_path],
             service: "loadr.test.Echo".to_string(),
             method: "UnaryEcho".to_string(),
-            message: Some(serde_json::json!({"message": "verified tls"})),
+            message: Some(Arc::new(serde_json::json!({"message": "verified tls"}))),
             transport: GrpcTransport::Raw,
             ..Default::default()
         },

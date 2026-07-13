@@ -462,6 +462,7 @@ async fn grpc_tls_url_uses_https_and_connects() {
     let response = within(client.unary_echo(EchoRequest {
         message: "hello TLS gRPC".to_string(),
         repeat: 0,
+        ..Default::default()
     }))
     .await
     .expect("unary")

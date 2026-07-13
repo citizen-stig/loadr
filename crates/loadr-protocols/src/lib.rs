@@ -23,6 +23,7 @@
 
 mod graphql;
 mod grpc;
+mod grpc_transport;
 mod http;
 mod net;
 mod socket;

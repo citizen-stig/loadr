@@ -109,8 +109,10 @@ impl Echo for EchoService {
 ///
 /// Also serves gRPC v1 server reflection. Shuts down on drop.
 pub struct GrpcEchoServer {
-    /// Bound address (always `127.0.0.1` with an ephemeral port).
+    /// Bound address (always `127.0.0.1`; port is ephemeral unless spawned
+    /// via [`spawn_on`](Self::spawn_on)).
     pub addr: SocketAddr,
+    cert_pem: Option<String>,
     shutdown: Option<oneshot::Sender<()>>,
 }
 
@@ -118,6 +120,40 @@ impl GrpcEchoServer {
     /// Spawns the server on `127.0.0.1` with an ephemeral port.
     pub async fn spawn() -> Result<Self, TestServerError> {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        Self::serve(listener, None).await
+    }
+
+    /// Spawns on a specific address — e.g. to come back up on the same port
+    /// after a shutdown in reconnect tests.
+    pub async fn spawn_on(addr: SocketAddr) -> Result<Self, TestServerError> {
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        Self::serve(listener, None).await
+    }
+
+    /// Spawns a TLS server with a self-signed certificate (valid for
+    /// `localhost` and `127.0.0.1`, ALPN `h2`). Trust it client-side via
+    /// [`cert_pem`](Self::cert_pem) or connect with verification disabled.
+    pub async fn spawn_tls() -> Result<Self, TestServerError> {
+        let certified = rcgen::generate_simple_self_signed(vec![
+            "localhost".to_string(),
+            "127.0.0.1".to_string(),
+        ])
+        .map_err(|e| TestServerError::Tls(e.to_string()))?;
+        let cert_pem = certified.cert.pem();
+        let identity = tonic::transport::Identity::from_pem(
+            &cert_pem,
+            certified.signing_key.serialize_pem(),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let mut server = Self::serve(listener, Some(identity)).await?;
+        server.cert_pem = Some(cert_pem);
+        Ok(server)
+    }
+
+    async fn serve(
+        listener: tokio::net::TcpListener,
+        tls: Option<tonic::transport::Identity>,
+    ) -> Result<Self, TestServerError> {
         let addr = listener.local_addr()?;
         let (tx, rx) = oneshot::channel::<()>();
         let reflection = tonic_reflection::server::Builder::configure()
@@ -128,8 +164,14 @@ impl GrpcEchoServer {
             let accepted = listener.accept().await.map(|(stream, _)| stream);
             Some((accepted, listener))
         });
+        let mut builder = tonic::transport::Server::builder();
+        if let Some(identity) = tls {
+            builder = builder
+                .tls_config(tonic::transport::ServerTlsConfig::new().identity(identity))
+                .map_err(|e| TestServerError::Tls(e.to_string()))?;
+        }
         tokio::spawn(async move {
-            let result = tonic::transport::Server::builder()
+            let result = builder
                 .add_service(EchoServer::new(EchoService))
                 .add_service(reflection)
                 .serve_with_incoming_shutdown(incoming, async {
@@ -144,8 +186,14 @@ impl GrpcEchoServer {
         tracing::debug!(%addr, "grpc test server listening");
         Ok(Self {
             addr,
+            cert_pem: None,
             shutdown: Some(tx),
         })
+    }
+
+    /// PEM certificate when spawned with [`spawn_tls`](Self::spawn_tls).
+    pub fn cert_pem(&self) -> Option<&str> {
+        self.cert_pem.as_deref()
     }
 
     /// Base URL suitable for `EchoClient::connect`, e.g. `http://127.0.0.1:54321`.

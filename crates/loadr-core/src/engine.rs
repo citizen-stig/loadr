@@ -659,6 +659,10 @@ async fn aggregator_loop(
     let mut ticker = tokio::time::interval(interval);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut abort_sent = false;
+    // Only take/dispatch deltas when some output (e.g. the distributed
+    // agent's uplink) actually consumes them — otherwise this is wasted
+    // HDR-serialization work every tick.
+    let wants_delta = outputs.iter().any(|o| o.wants_delta());
 
     loop {
         tokio::select! {
@@ -700,6 +704,9 @@ async fn aggregator_loop(
                     output.on_snapshot(&snapshot).await;
                 }
                 let _ = snapshots_tx.send(snapshot);
+                if wants_delta {
+                    dispatch_delta(&mut agg, &mut outputs, false).await;
+                }
                 let (statuses, abort) = evaluate_all(&thresholds, &agg, agg.elapsed());
                 let _ = thresholds_tx.send(Arc::new(statuses));
                 if abort && !abort_sent {
@@ -731,7 +738,37 @@ async fn aggregator_loop(
         timeline.push(TimelinePoint::from_snapshot(&final_snapshot));
     }
     let _ = snapshots_tx.send(final_snapshot);
+    if wants_delta {
+        // Final flush: the run is ending, so block until it's accepted
+        // (matches the pre-existing blocking final-flush behavior) rather
+        // than restoring on a rejection nobody will retry.
+        dispatch_delta(&mut agg, &mut outputs, true).await;
+    }
     (agg, outputs, last_statuses, timeline)
+}
+
+/// Drain a delta and hand it to every output that opted in via
+/// `wants_delta`. If any of them rejects it (e.g. a congested channel),
+/// restore it into the aggregator so the next `take_delta` retries it
+/// together with anything recorded meanwhile.
+/// The drained delta is shared by every `wants_delta` output and restored
+/// if ANY refuses — with more than one delta consumer an accepting output
+/// would see that data again next tick, so this path assumes a single
+/// consumer (the agent uplink).
+async fn dispatch_delta(agg: &mut Aggregator, outputs: &mut [Box<dyn Output>], last: bool) {
+    let delta = agg.take_delta();
+    if delta.series.is_empty() {
+        return;
+    }
+    let mut all_accepted = true;
+    for output in outputs.iter_mut() {
+        if output.wants_delta() && !output.on_delta(&delta, last).await {
+            all_accepted = false;
+        }
+    }
+    if !all_accepted {
+        agg.restore_delta(&delta);
+    }
 }
 
 fn resolve_static_value(

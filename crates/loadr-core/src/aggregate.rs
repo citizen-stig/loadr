@@ -686,6 +686,55 @@ impl Aggregator {
         MetricsDelta { series: out }
     }
 
+    /// Undo a `take_delta` that could not be sent on (e.g. a congested
+    /// uplink), so the next `take_delta` retransmits it along with anything
+    /// recorded since. Restores delta-tracking state only (`flushed`,
+    /// `flushed_*`, `delta_hist`) — never the cumulative state that feeds
+    /// snapshots, thresholds and the summary, so this is safe to call on the
+    /// same aggregator that produced `delta`.
+    ///
+    /// Gauges have nothing to restore: `take_delta` always re-emits the
+    /// current value rather than draining it.
+    pub fn restore_delta(&mut self, delta: &MetricsDelta) {
+        for sd in &delta.series {
+            let key = SeriesKey {
+                metric: Arc::from(sd.metric.as_str()),
+                tags: Arc::new(sd.tags.clone()),
+            };
+            // The series was created by the very `record`s this delta was
+            // drained from, so it must already exist.
+            let Some(series) = self.series.get_mut(&key) else {
+                continue;
+            };
+            match (&mut series.data, &sd.data) {
+                (SeriesData::Counter { flushed, .. }, SeriesDeltaData::Counter { delta }) => {
+                    *flushed -= delta;
+                }
+                (
+                    SeriesData::Rate {
+                        flushed_passes,
+                        flushed_total,
+                        ..
+                    },
+                    SeriesDeltaData::Rate { passes, total },
+                ) => {
+                    *flushed_passes -= passes;
+                    *flushed_total -= total;
+                }
+                (SeriesData::Trend { delta_hist, .. }, SeriesDeltaData::Trend { hdr_b64, .. }) => {
+                    use base64::Engine as _;
+                    if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(hdr_b64) {
+                        let mut deser = HdrDeserializer::new();
+                        if let Ok(h) = deser.deserialize::<u64, _>(&mut bytes.as_slice()) {
+                            let _ = delta_hist.add(&h);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Merge a delta from another aggregator (an agent) into this one.
     pub fn merge_delta(&mut self, delta: &MetricsDelta) {
         self.seq += 1;
@@ -1007,5 +1056,107 @@ mod tests {
         ctrl.merge_delta(&a1.take_delta());
         let (_, agg) = ctrl.aggregate_selector("checks", &[]).unwrap();
         assert!((agg.rate.unwrap() - 0.9).abs() < 1e-9);
+    }
+
+    /// Draining a delta (for the distributed uplink) must never perturb the
+    /// cumulative state that feeds snapshots, thresholds, and the summary.
+    #[test]
+    fn take_delta_preserves_cumulative_state() {
+        let mut agg = Aggregator::new();
+        agg.record(&sample("c", MetricKind::Counter, 5.0, &[]));
+        agg.record(&sample("g", MetricKind::Gauge, 3.0, &[]));
+        agg.record(&sample("r", MetricKind::Rate, 1.0, &[]));
+        agg.record(&sample("r", MetricKind::Rate, 0.0, &[]));
+        for i in 1..=50 {
+            agg.record(&sample("t", MetricKind::Trend, i as f64, &[]));
+        }
+
+        let before = agg.snapshot();
+        let drained = agg.take_delta();
+        assert!(!drained.series.is_empty(), "drain should carry data");
+        let after = agg.snapshot();
+
+        for metric in ["c", "g", "r", "t"] {
+            let b = &before.find(metric).expect("before").agg;
+            let a = &after.find(metric).expect("after").agg;
+            assert_eq!(a.count, b.count, "{metric} count perturbed by take_delta");
+            assert_eq!(a.sum, b.sum, "{metric} sum perturbed by take_delta");
+            assert_eq!(a.avg, b.avg, "{metric} avg perturbed by take_delta");
+            assert_eq!(a.min, b.min, "{metric} min perturbed by take_delta");
+            assert_eq!(a.max, b.max, "{metric} max perturbed by take_delta");
+            assert_eq!(a.p99, b.p99, "{metric} p99 perturbed by take_delta");
+            assert_eq!(a.rate, b.rate, "{metric} rate perturbed by take_delta");
+            assert_eq!(a.last, b.last, "{metric} last perturbed by take_delta");
+        }
+    }
+
+    /// `restore_delta` undoes exactly what `take_delta` drained (the correct
+    /// fold-back for a congested uplink): a delta taken after a restore must
+    /// carry both the restored data and everything recorded since. This
+    /// would fail for trends under the old (buggy) `merge_delta` fold-back,
+    /// which feeds `hist` but never `delta_hist` — the restored trend values
+    /// would never reappear in a later `take_delta`.
+    #[test]
+    fn restore_delta_retries_unsent() {
+        let mut agg = Aggregator::new();
+        agg.record(&sample("c", MetricKind::Counter, 5.0, &[]));
+        agg.record(&sample("g", MetricKind::Gauge, 3.0, &[]));
+        agg.record(&sample("r", MetricKind::Rate, 1.0, &[]));
+        agg.record(&sample("r", MetricKind::Rate, 0.0, &[]));
+        agg.record(&sample("t", MetricKind::Trend, 10.0, &[]));
+        agg.record(&sample("t", MetricKind::Trend, 20.0, &[]));
+
+        let d1 = agg.take_delta();
+        agg.restore_delta(&d1);
+
+        agg.record(&sample("c", MetricKind::Counter, 2.0, &[]));
+        agg.record(&sample("g", MetricKind::Gauge, 9.0, &[]));
+        agg.record(&sample("r", MetricKind::Rate, 1.0, &[]));
+        agg.record(&sample("t", MetricKind::Trend, 30.0, &[]));
+
+        let d2 = agg.take_delta();
+
+        // The delta of just the extra records, from an independent aggregator.
+        let mut extra = Aggregator::new();
+        extra.record(&sample("c", MetricKind::Counter, 2.0, &[]));
+        extra.record(&sample("g", MetricKind::Gauge, 9.0, &[]));
+        extra.record(&sample("r", MetricKind::Rate, 1.0, &[]));
+        extra.record(&sample("t", MetricKind::Trend, 30.0, &[]));
+        let extra_delta = extra.take_delta();
+
+        let mut via_d2 = Aggregator::new();
+        via_d2.merge_delta(&d2);
+
+        let mut via_d1_plus_extra = Aggregator::new();
+        via_d1_plus_extra.merge_delta(&d1);
+        via_d1_plus_extra.merge_delta(&extra_delta);
+
+        let snap_d2 = via_d2.snapshot();
+        let snap_combo = via_d1_plus_extra.snapshot();
+        for metric in ["c", "g", "r", "t"] {
+            let x = &snap_d2.find(metric).expect("d2").agg;
+            let y = &snap_combo.find(metric).expect("combo").agg;
+            assert_eq!(x.count, y.count, "{metric} count: d2 vs d1+extra");
+            assert_eq!(x.sum, y.sum, "{metric} sum: d2 vs d1+extra");
+            assert_eq!(x.min, y.min, "{metric} min: d2 vs d1+extra");
+            assert_eq!(x.max, y.max, "{metric} max: d2 vs d1+extra");
+            assert_eq!(x.last, y.last, "{metric} last: d2 vs d1+extra");
+            assert_eq!(x.rate, y.rate, "{metric} rate: d2 vs d1+extra");
+            assert_eq!(x.p99, y.p99, "{metric} p99: d2 vs d1+extra");
+        }
+
+        // The source agg's own cumulative state must not be perturbed by the
+        // take -> restore -> take round trip (no double counting).
+        let src = agg.snapshot();
+        assert_eq!(src.find("c").unwrap().agg.sum, 7.0);
+        assert_eq!(src.find("g").unwrap().agg.last, Some(9.0));
+        let r = &src.find("r").unwrap().agg;
+        assert_eq!(r.count, 3);
+        assert!((r.rate.unwrap() - 2.0 / 3.0).abs() < 1e-9);
+        let t = &src.find("t").unwrap().agg;
+        assert_eq!(t.count, 3);
+        assert_eq!(t.sum, 60.0);
+        assert_eq!(t.min, Some(10.0));
+        assert_eq!(t.max, Some(30.0));
     }
 }

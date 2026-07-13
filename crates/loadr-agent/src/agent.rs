@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use loadr_core::{
-    Aggregator, Engine, EngineOptions, Output, ProtocolRegistry, RunHandle, RunStatus, Sample,
-    ScriptEngine, Snapshot, Summary, Tags,
+    Engine, EngineOptions, MetricsDelta, Output, ProtocolRegistry, RunHandle, RunStatus,
+    ScriptEngine, Tags,
 };
 use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
@@ -412,7 +412,6 @@ fn handle_assignment(
 
     let output = DeltaOutput {
         run_id: a.run_id.clone(),
-        agg: Aggregator::new(),
         uplink: uplink_tx.clone(),
     };
     let engine = Engine::new(
@@ -583,17 +582,17 @@ fn materialize_files(dir: &Path, files: &[pb::DataFile]) -> Result<(), AgentErro
     Ok(())
 }
 
-/// An [`Output`] that owns its own [`Aggregator`], records every sample into
-/// it and ships drained [`loadr_core::MetricsDelta`]s to the controller on
-/// each engine snapshot (plus one final flush at the end of the run).
+/// An [`Output`] that ships the engine aggregator's drained [`MetricsDelta`]s
+/// to the controller: `wants_delta` opts in, so the engine takes the delta
+/// directly from its own `Aggregator` instead of this output keeping a
+/// second one just to re-record every sample.
 struct DeltaOutput {
     run_id: String,
-    agg: Aggregator,
     uplink: mpsc::Sender<pb::AgentMessage>,
 }
 
 impl DeltaOutput {
-    fn batch(&self, delta: &loadr_core::MetricsDelta) -> Option<pb::AgentMessage> {
+    fn batch(&self, delta: &MetricsDelta) -> Option<pb::AgentMessage> {
         let delta_json = serde_json::to_vec(delta).ok()?;
         Some(pb::AgentMessage {
             msg: Some(AgentMsg::Metrics(pb::MetricsBatch {
@@ -610,34 +609,96 @@ impl Output for DeltaOutput {
         "controller-delta"
     }
 
-    async fn on_samples(&mut self, samples: &[Sample]) {
-        for sample in samples {
-            self.agg.record(sample);
-        }
+    fn wants_delta(&self) -> bool {
+        true
     }
 
-    async fn on_snapshot(&mut self, _snapshot: &Snapshot) {
-        let delta = self.agg.take_delta();
-        if delta.series.is_empty() {
-            return;
-        }
-        let Some(msg) = self.batch(&delta) else {
-            return;
+    async fn on_delta(&mut self, delta: &MetricsDelta, last: bool) -> bool {
+        let Some(msg) = self.batch(delta) else {
+            // Not retryable: the data can't be serialized, ever.
+            return true;
         };
-        // Never block the aggregator: when the uplink is congested (e.g. a
-        // reconnect in progress) fold the delta back in and retry next flush.
-        if self.uplink.try_send(msg).is_err() {
-            self.agg.merge_delta(&delta);
+        if last {
+            // The run is ending: block until the controller has it rather
+            // than dropping the final delta.
+            let _ = self.uplink.send(msg).await;
+            true
+        } else {
+            // Never block the aggregator: when the uplink is congested (e.g.
+            // a reconnect in progress) report rejection so the caller can
+            // restore the delta and retry next tick.
+            self.uplink.try_send(msg).is_ok()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use loadr_core::{Aggregator, MetricKind, Sample, Tags};
+
+    /// A one-series delta, built the same way the engine's aggregator would.
+    fn one_delta() -> MetricsDelta {
+        let mut agg = Aggregator::new();
+        agg.record(&Sample {
+            metric: Arc::from("http_reqs"),
+            kind: MetricKind::Counter,
+            value: 1.0,
+            tags: Arc::new(Tags::new()),
+            timestamp_ms: 0,
+        });
+        agg.take_delta()
+    }
+
+    fn filler() -> pb::AgentMessage {
+        pb::AgentMessage {
+            msg: Some(AgentMsg::Heartbeat(pb::Heartbeat::default())),
         }
     }
 
-    async fn finish(&mut self, _summary: &Summary) {
-        let delta = self.agg.take_delta();
-        if delta.series.is_empty() {
-            return;
-        }
-        if let Some(msg) = self.batch(&delta) {
-            let _ = self.uplink.send(msg).await;
-        }
+    #[tokio::test]
+    async fn delta_output_backpressure() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let mut output = DeltaOutput {
+            run_id: "run-1".to_string(),
+            uplink: tx,
+        };
+        let delta = one_delta();
+
+        // Congested: the channel's one slot is already occupied, so a
+        // non-final delta must be rejected (never block the aggregator).
+        output.uplink.try_send(filler()).expect("prefill");
+        assert!(
+            !output.on_delta(&delta, false).await,
+            "on_delta should report rejection when the uplink is congested"
+        );
+
+        // Drained: capacity is free, so the same delta is now accepted and
+        // decodes back to the same delta JSON.
+        rx.recv().await.expect("filler");
+        assert!(output.on_delta(&delta, false).await);
+        let msg = rx.recv().await.expect("delta message");
+        let Some(AgentMsg::Metrics(batch)) = msg.msg else {
+            panic!("expected a Metrics message");
+        };
+        assert_eq!(batch.run_id, "run-1");
+        assert_eq!(batch.delta_json, serde_json::to_vec(&delta).unwrap());
+
+        // Final flush: congest the channel again, then confirm on_delta
+        // blocks (rather than dropping the last delta) until room frees up.
+        output.uplink.try_send(filler()).expect("prefill 2");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), output.on_delta(&delta, true))
+                .await
+                .is_err(),
+            "on_delta(last=true) should block while the channel is full"
+        );
+        rx.recv().await.expect("second filler");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), output.on_delta(&delta, true))
+                .await
+                .expect("send should complete once room frees up"),
+            "final delta should be accepted"
+        );
     }
 }

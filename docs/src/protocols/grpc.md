@@ -69,3 +69,37 @@ every streamed response; `extras.message_count` the count.
     channel_pool_size: 8   # 8 shared connections instead of one per VU
   ```
 - `grpcs://` uses the standard TLS config (custom CAs, mTLS).
+
+## Transport
+
+`transport` selects the client stack driving the calls (default: `channel`):
+
+```yaml
+grpc:
+  transport: raw           # channel (default) | raw
+  channel_pool_size: 8     # works with either transport
+```
+
+- `channel` — tonic's `Channel`: every request goes through a tower::buffer
+  queue owned by a per-channel worker task.
+- `raw` — drives hyper HTTP/2 directly from the VU task: no intermediate
+  queue, no per-channel worker, fewer wakeups per request. An experimental
+  performance path for high-rate runs; measure with an A/B before relying
+  on it.
+
+Raw specifics:
+
+- In-flight streams per connection are capped (default 512,
+  `LOADR_GRPC_MAX_STREAMS_PER_CONN`) so a slow server cannot grow pending
+  streams without bound.
+- After a failed dial, calls fail fast with `Unavailable` for 500 ms before
+  the next dial attempt. Connection failures surface exactly like the
+  channel transport's: status 14, `connection failed: ...`.
+- `grpcs://` with `transport: raw` honors `insecure_skip_verify` and TLS
+  `min_version`/`max_version` (the channel transport warns and ignores
+  them).
+- The raw transport sends no `user-agent` header (tonic sends
+  `tonic/<version>`).
+
+`LOADR_GRPC_TRANSPORT=raw|channel` overrides `transport` for every request
+in the process — handy for whole-fleet A/B runs without editing plans.

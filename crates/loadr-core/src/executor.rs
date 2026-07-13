@@ -1,7 +1,7 @@
 //! The seven executors. Closed models drive iterations from VU loops; open
 //! models drive a precise arrival clock that starts iterations on schedule.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -610,8 +610,10 @@ impl RateSchedule {
 
 /// Arrival dispatch tick. Arrivals due within one tick are released as a
 /// single burst, so the tick bounds both scheduling precision and burst size
-/// (e.g. at 150k/s a 5ms tick wakes ~750 workers back-to-back). Tunable via
-/// `LOADR_DISPATCH_TICK_US`; 1000 is recommended above ~50k/s per process.
+/// (e.g. at 150k/s a 5ms tick wakes ~750 workers back-to-back). It also
+/// bounds how long a published arrival stays claimable before it is recorded
+/// as dropped (see [`ArrivalGate`]). Tunable via `LOADR_DISPATCH_TICK_US`;
+/// 1000 is recommended above ~50k/s per process.
 fn dispatch_tick() -> Duration {
     static TICK: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
     *TICK.get_or_init(|| {
@@ -624,9 +626,90 @@ fn dispatch_tick() -> Duration {
     })
 }
 
-/// Open-model executors: a dispatcher starts iterations on schedule via a pool
-/// of workers, growing the pool to `max_vus` and recording dropped iterations
-/// when starved.
+/// Shared hand-off state between the arrival dispatcher and its workers.
+///
+/// The dispatcher publishes each tick's whole arrivals into `budget`; workers
+/// claim them one at a time and run one iteration per claim. `notify`
+/// broadcasts state changes (new batch, closure); `parked` sizes pool growth.
+/// SeqCst throughout: the counters sit off the iteration hot path and the
+/// closure/parking protocol is much easier to audit under one total order.
+struct ArrivalGate {
+    /// Published-but-unclaimed arrivals.
+    budget: AtomicU64,
+    /// Workers currently parked on `notify`.
+    parked: AtomicU64,
+    /// Cleared once dispatch closes; no claim may start afterwards.
+    open: AtomicBool,
+    notify: Notify,
+}
+
+impl ArrivalGate {
+    fn new() -> Self {
+        Self {
+            budget: AtomicU64::new(0),
+            parked: AtomicU64::new(0),
+            open: AtomicBool::new(true),
+            notify: Notify::new(),
+        }
+    }
+
+    fn is_open(&self) -> bool {
+        self.open.load(Ordering::SeqCst)
+    }
+
+    /// Claim one published arrival. Decrements only when the observed budget
+    /// is positive, so racing claimers can never underflow the counter.
+    fn try_claim(&self) -> bool {
+        self.budget
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |b| b.checked_sub(1))
+            .is_ok()
+    }
+
+    /// Take all unclaimed budget (drop accounting at pause/expiry/closure).
+    fn take_unclaimed(&self) -> u64 {
+        self.budget.swap(0, Ordering::SeqCst)
+    }
+
+    /// Expire the active batch once wall time reaches its deadline, returning
+    /// the unclaimed remainder. Driven only by the dispatcher's tick — never
+    /// by ticker-event count (`Burst` delivers several events back-to-back
+    /// after a stall) and never from `try_claim`.
+    fn expire_due(&self, expiry: &mut Option<Instant>, now: Instant) -> u64 {
+        match *expiry {
+            Some(at) if now >= at => {
+                *expiry = None;
+                self.take_unclaimed()
+            }
+            _ => 0,
+        }
+    }
+
+    /// Publish a batch of whole arrivals and broadcast once. A fresh batch is
+    /// claimable until `now + tick`; while an earlier batch's expiry is still
+    /// pending (burst ticks), new arrivals share it rather than extending
+    /// older work indefinitely.
+    fn publish(&self, due: u64, expiry: &mut Option<Instant>, now: Instant, tick: Duration) {
+        self.budget.fetch_add(due, Ordering::SeqCst);
+        expiry.get_or_insert(now + tick);
+        self.notify.notify_waiters();
+    }
+
+    /// Close dispatch and return the unclaimed budget. Closure linearizes at
+    /// the swap: a claim that won the race is in flight, one that lost sees
+    /// zero. The closed flag is stored before the broadcast so woken workers
+    /// observe it; no budget is ever published after the swap.
+    fn close(&self) -> u64 {
+        self.open.store(false, Ordering::SeqCst);
+        let unclaimed = self.take_unclaimed();
+        self.notify.notify_waiters();
+        unclaimed
+    }
+}
+
+/// Open-model executors: workers claim scheduled arrivals from a shared
+/// tick-bounded budget (see [`ArrivalGate`]); the dispatcher publishes each
+/// tick's batch, grows the pool to `max_vus`, and records arrivals nobody
+/// claimed within one dispatch interval as dropped iterations.
 async fn run_arrival_rate(
     spec: &ScenarioRunSpec,
     env: &ExecEnv,
@@ -644,38 +727,48 @@ async fn run_arrival_rate(
         spec.graceful_stop,
     );
 
-    // Idle workers park their wake handle here; the dispatcher fires it to
-    // start an iteration. One `Notify` per worker for its whole lifetime — a
-    // `notify_one` that races the worker's `notified()` registration is
-    // stored as a permit, so wakes are never lost and no per-iteration
-    // channel allocation is needed.
-    let (idle_tx, mut idle_rx) = mpsc::unbounded_channel::<Arc<Notify>>();
+    let gate = Arc::new(ArrivalGate::new());
     let mut worker_handles = Vec::new();
-    let spawn_worker = |run_first: bool,
-                        env: ExecEnv,
-                        cancel: CancellationToken,
-                        idle_tx: mpsc::UnboundedSender<Arc<Notify>>| {
+    // Workers claim arrivals themselves; newly spawned workers take the same
+    // claim path (no implicit first iteration). A claim flows unconditionally
+    // into the iteration: any check between claim and run would leak budget.
+    let spawn_worker = |env: ExecEnv, cancel: CancellationToken, gate: Arc<ArrivalGate>| {
         tokio::spawn(async move {
             let mut worker = env.new_worker();
             env.active_vus.fetch_add(1, Ordering::Relaxed);
-            let wake = Arc::new(Notify::new());
-            let mut first = run_first;
-            loop {
-                if !first {
-                    if idle_tx.send(wake.clone()).is_err() {
+            'live: loop {
+                while gate.is_open() && !*env.pause.borrow() && gate.try_claim() {
+                    if !env.run_one(&mut worker, &cancel).await {
+                        break 'live;
+                    }
+                }
+                if !gate.is_open() {
+                    break;
+                }
+                // Park. The `Notified` is created before publishing the
+                // parked state: a broadcast after creation is observed even
+                // if the future is never polled (tokio guarantee), and one
+                // from before creation is covered by the re-checks below.
+                // `parked` is decremented exactly once at the single point
+                // the parked state is left, before any claim attempt.
+                let notified = gate.notify.notified();
+                gate.parked.fetch_add(1, Ordering::SeqCst);
+                if !gate.is_open() {
+                    gate.parked.fetch_sub(1, Ordering::SeqCst);
+                    break;
+                }
+                if !*env.pause.borrow() && gate.budget.load(Ordering::SeqCst) > 0 {
+                    gate.parked.fetch_sub(1, Ordering::SeqCst);
+                    continue;
+                }
+                tokio::select! {
+                    _ = cancel.cancelled() => {
+                        gate.parked.fetch_sub(1, Ordering::SeqCst);
                         break;
                     }
-                    tokio::select! {
-                        _ = cancel.cancelled() => break,
-                        _ = wake.notified() => {}
+                    _ = notified => {
+                        gate.parked.fetch_sub(1, Ordering::SeqCst);
                     }
-                }
-                first = false;
-                if cancel.is_cancelled() {
-                    break;
-                }
-                if !env.run_one(&mut worker, &cancel).await {
-                    break;
                 }
             }
             env.active_vus.fetch_sub(1, Ordering::Relaxed);
@@ -684,21 +777,30 @@ async fn run_arrival_rate(
 
     for _ in 0..pre_allocated {
         worker_handles.push(spawn_worker(
-            false,
             env.clone(),
             scenario_cancel.clone(),
-            idle_tx.clone(),
+            gate.clone(),
         ));
     }
     let mut allocated = pre_allocated;
 
     let dropped_metric = &env.builtins.dropped_iterations;
     let scenario_tags = env.runner.program.tags.clone();
+    let record_dropped = |n: u64| {
+        if n > 0 {
+            env.metrics
+                .counter(dropped_metric, n as f64, &scenario_tags);
+        }
+    };
+
     let started = Instant::now();
     let mut emitted: f64 = 0.0; // fractional iterations owed
-    let mut ticker = tokio::time::interval(dispatch_tick());
+    let tick = dispatch_tick();
+    let mut ticker = tokio::time::interval(tick);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Burst);
     let mut last = Instant::now();
+    // Wall-clock deadline of the active batch; enforced only on the tick.
+    let mut expiry: Option<Instant> = None;
 
     loop {
         tokio::select! {
@@ -710,37 +812,45 @@ async fn run_arrival_rate(
         if now >= soft_deadline {
             break;
         }
+        record_dropped(gate.expire_due(&mut expiry, now));
         if *env.pause.borrow() {
+            // Paused ticks publish nothing and expire what was already
+            // published, so resume starts with no claimable backlog.
+            // Workers stay parked until the next productive broadcast.
+            if expiry.take().is_some() {
+                record_dropped(gate.take_unclaimed());
+            }
             last = now;
             continue;
         }
         let dt = (now - last).as_secs_f64();
         last = now;
         emitted += schedule.rate_at(started.elapsed()) * dt;
-        while emitted >= 1.0 {
-            emitted -= 1.0;
-            match idle_rx.try_recv() {
-                Ok(wake) => {
-                    wake.notify_one();
-                }
-                Err(_) => {
-                    if allocated < max_vus {
-                        allocated += 1;
-                        worker_handles.push(spawn_worker(
-                            true,
-                            env.clone(),
-                            scenario_cancel.clone(),
-                            idle_tx.clone(),
-                        ));
-                    } else {
-                        env.metrics.counter(dropped_metric, 1.0, &scenario_tags);
-                    }
-                }
-            }
+        let due = emitted as u64;
+        if due == 0 {
+            continue;
         }
+        emitted -= due as f64;
+        // Grow for arrivals the parked workers can't absorb, up to max_vus.
+        let parked = gate.parked.load(Ordering::SeqCst);
+        let grow = due
+            .saturating_sub(parked)
+            .min(max_vus.saturating_sub(allocated));
+        for _ in 0..grow {
+            worker_handles.push(spawn_worker(
+                env.clone(),
+                scenario_cancel.clone(),
+                gate.clone(),
+            ));
+        }
+        allocated += grow;
+        gate.publish(due, &mut expiry, now, tick);
     }
-    drop(idle_tx);
-    // Allow in-flight iterations their graceful stop, then cancel.
+    // Deadline, soft stop, or cancellation: unclaimed budget is dropped, and
+    // the broadcast exits parked workers immediately (idle workers must not
+    // wait out the grace period) while in-flight iterations finish under the
+    // graceful window armed above.
+    record_dropped(gate.close());
     for h in worker_handles {
         let _ = h.await;
     }
@@ -950,5 +1060,76 @@ mod tests {
                 _ => unreachable!(),
             }
         }
+    }
+
+    #[test]
+    fn gate_claims_are_exact_and_never_underflow() {
+        let gate = ArrivalGate::new();
+        assert!(!gate.try_claim());
+        let mut expiry = None;
+        gate.publish(3, &mut expiry, Instant::now(), Duration::from_millis(5));
+        assert!(gate.try_claim() && gate.try_claim() && gate.try_claim());
+        assert!(!gate.try_claim());
+    }
+
+    #[test]
+    fn gate_concurrent_claims_match_budget_exactly() {
+        let gate = Arc::new(ArrivalGate::new());
+        let mut expiry = None;
+        gate.publish(1000, &mut expiry, Instant::now(), Duration::from_millis(5));
+        let claimed = Arc::new(AtomicU64::new(0));
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let (gate, claimed) = (gate.clone(), claimed.clone());
+                std::thread::spawn(move || {
+                    while gate.try_claim() {
+                        claimed.fetch_add(1, Ordering::SeqCst);
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        assert_eq!(claimed.load(Ordering::SeqCst), 1000);
+        assert!(!gate.try_claim());
+    }
+
+    #[test]
+    fn gate_expiry_accounting_is_exact() {
+        let gate = ArrivalGate::new();
+        let tick = Duration::from_millis(5);
+        let t0 = Instant::now();
+        let mut expiry = None;
+        assert_eq!(gate.expire_due(&mut expiry, t0), 0); // nothing active
+
+        gate.publish(3, &mut expiry, t0, tick);
+        assert_eq!(expiry, Some(t0 + tick));
+        gate.publish(2, &mut expiry, t0 + tick / 2, tick); // burst batch
+        assert_eq!(expiry, Some(t0 + tick)); // shares, never extends
+
+        assert!(gate.try_claim());
+        assert_eq!(
+            gate.expire_due(&mut expiry, t0 + tick - Duration::from_micros(1)),
+            0
+        );
+        // 5 published = 1 claimed + 4 dropped.
+        assert_eq!(gate.expire_due(&mut expiry, t0 + tick), 4);
+        assert_eq!(expiry, None);
+        assert!(!gate.try_claim());
+
+        gate.publish(1, &mut expiry, t0 + tick * 2, tick); // fresh window afterwards
+        assert_eq!(expiry, Some(t0 + tick * 3));
+    }
+
+    #[test]
+    fn gate_close_returns_unclaimed_and_blocks_claims() {
+        let gate = ArrivalGate::new();
+        let mut expiry = None;
+        gate.publish(5, &mut expiry, Instant::now(), Duration::from_millis(5));
+        assert!(gate.try_claim() && gate.try_claim());
+        assert_eq!(gate.close(), 3);
+        assert!(!gate.is_open());
+        assert!(!gate.try_claim());
     }
 }

@@ -1337,6 +1337,15 @@ impl FlowRunner {
                 self.emit_named(vu, "ws_msgs_received", MetricKind::Counter, received, &tags);
                 m.rate(&b.http_req_failed, response.error.is_some(), &tags);
             }
+            // gRPC is the highest-rate protocol here: use the pre-interned
+            // names (like HTTP above) instead of the per-request
+            // `format!` + registry lookup of the generic arm. gRPC responses
+            // never carry docs/rows/msgs extras, so those probes are skipped.
+            "grpc" => {
+                m.counter(&b.grpc_reqs, 1.0, &tags);
+                m.trend(&b.grpc_req_duration, t.duration_ms, &tags);
+                m.rate(&b.http_req_failed, response.failed(), &tags);
+            }
             other => {
                 // grpc/tcp/udp built-ins keep their own family name. The
                 // `sse`/`browser` built-ins historically share the generic

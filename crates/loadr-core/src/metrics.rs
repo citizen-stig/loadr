@@ -271,6 +271,8 @@ pub struct BuiltinMetrics {
     pub faults_injected: Arc<str>,
     pub data_sent: Arc<str>,
     pub data_received: Arc<str>,
+    pub grpc_reqs: Arc<str>,
+    pub grpc_req_duration: Arc<str>,
 }
 
 impl BuiltinMetrics {
@@ -301,6 +303,8 @@ impl BuiltinMetrics {
             faults_injected: name("faults_injected"),
             data_sent: name("data_sent"),
             data_received: name("data_received"),
+            grpc_reqs: name("grpc_reqs"),
+            grpc_req_duration: name("grpc_req_duration"),
         }
     }
 }

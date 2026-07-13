@@ -187,6 +187,10 @@ pub struct CompiledRequest {
     pub checks: Vec<CompiledCondition>,
     pub ws: Option<loadr_config::WsOptions>,
     pub grpc: Option<loadr_config::GrpcOptions>,
+    /// Template-free gRPC unary message retained for all iterations.
+    pub grpc_literal_message: Option<Arc<serde_json::Value>>,
+    /// Template-free gRPC streaming messages retained for all iterations.
+    pub grpc_literal_messages: Option<Arc<Vec<serde_json::Value>>>,
     pub graphql: Option<loadr_config::GraphqlOptions>,
     pub socket: Option<loadr_config::SocketOptions>,
     pub sse: Option<loadr_config::SseOptions>,
@@ -444,6 +448,18 @@ fn compile_request(
         g.proto_includes = g.proto_includes.iter().map(&resolve).collect();
         g
     });
+    // Detect template-free gRPC messages once; `prepare` then skips the
+    // per-iteration render walk and hands out these Arcs unchanged.
+    let grpc_literal_message = grpc
+        .as_ref()
+        .and_then(|g| g.message.as_ref())
+        .filter(|m| json_is_literal(m))
+        .cloned()
+        .map(Arc::new);
+    let grpc_literal_messages = grpc
+        .as_ref()
+        .filter(|g| !g.messages.is_empty() && g.messages.iter().all(json_is_literal))
+        .map(|g| Arc::new(g.messages.clone()));
 
     Ok(CompiledRequest {
         name: req
@@ -490,6 +506,8 @@ fn compile_request(
             .collect::<Result<_, _>>()?,
         ws: req.ws.clone(),
         grpc,
+        grpc_literal_message,
+        grpc_literal_messages,
         graphql: req.graphql.clone(),
         socket: req.socket.clone(),
         sse: req.sse.clone(),
@@ -1252,6 +1270,175 @@ impl FlowRunner {
         result
     }
 
+    /// Emit the standard metric families for a completed request.
+    fn emit_request_metrics(
+        &self,
+        vu: &mut VuContext,
+        request: &PreparedRequest,
+        response: &ProtocolResponse,
+    ) {
+        let b = &self.builtins;
+        let status = response.status.to_string();
+        // Transport errors get a coarse `error_kind` tag so the UI can group
+        // failures by cause (timeout / connection / dns / tls / ...).
+        let error_kind = response
+            .error
+            .as_deref()
+            .map(classify_transport_error)
+            .unwrap_or("");
+        let mut tag_pairs: Vec<(&str, &str)> = vec![
+            ("name", &request.name),
+            ("method", &request.method),
+            ("status", &status),
+            ("proto", &request.protocol),
+        ];
+        if !error_kind.is_empty() {
+            tag_pairs.push(("error_kind", error_kind));
+        }
+        let tags = vu.sample_tags(&tag_pairs);
+        let m = &vu.metrics;
+        let t = &response.timings;
+
+        m.counter(&b.data_sent, response.bytes_sent as f64, &tags);
+        m.counter(&b.data_received, response.bytes_received as f64, &tags);
+
+        match request.protocol.as_str() {
+            "http" | "graphql" => {
+                m.counter(&b.http_reqs, 1.0, &tags);
+                m.trend(&b.http_req_duration, t.duration_ms, &tags);
+                m.trend(&b.http_req_blocked, t.blocked_ms, &tags);
+                m.trend(&b.http_req_connecting, t.connect_ms, &tags);
+                m.trend(&b.http_req_tls_handshaking, t.tls_ms, &tags);
+                m.trend(&b.http_req_sending, t.sending_ms, &tags);
+                m.trend(&b.http_req_waiting, t.waiting_ms, &tags);
+                m.trend(&b.http_req_receiving, t.receiving_ms, &tags);
+                m.rate(&b.http_req_failed, response.failed(), &tags);
+                if request.protocol == "graphql" {
+                    self.emit_named(vu, "graphql_reqs", MetricKind::Counter, 1.0, &tags);
+                    self.emit_named(
+                        vu,
+                        "graphql_req_duration",
+                        MetricKind::Trend,
+                        t.duration_ms,
+                        &tags,
+                    );
+                }
+            }
+            "ws" => {
+                self.emit_named(vu, "ws_connecting", MetricKind::Trend, t.blocked_ms, &tags);
+                self.emit_named(
+                    vu,
+                    "ws_session_duration",
+                    MetricKind::Trend,
+                    t.duration_ms,
+                    &tags,
+                );
+                let sent = response
+                    .extras
+                    .get("msgs_sent")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                let received = response
+                    .extras
+                    .get("msgs_received")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(0.0);
+                self.emit_named(vu, "ws_msgs_sent", MetricKind::Counter, sent, &tags);
+                self.emit_named(vu, "ws_msgs_received", MetricKind::Counter, received, &tags);
+                m.rate(&b.http_req_failed, response.error.is_some(), &tags);
+            }
+            // gRPC is the highest-rate protocol here: use the pre-interned
+            // names (like HTTP above) instead of the per-request
+            // `format!` + registry lookup of the generic arm. gRPC responses
+            // never carry docs/rows/msgs extras, so those probes are skipped.
+            "grpc" => {
+                m.counter(&b.grpc_reqs, 1.0, &tags);
+                m.trend(&b.grpc_req_duration, t.duration_ms, &tags);
+                m.rate(&b.http_req_failed, response.failed(), &tags);
+            }
+            other => {
+                // grpc/tcp/udp built-ins keep their own family name. The
+                // `sse`/`browser` built-ins historically share the generic
+                // `plugin` family — preserve that so existing dashboards and
+                // thresholds keep working. Everything else is a loaded protocol
+                // *plugin*, which gets a family derived from its own protocol
+                // name (so the `mongo` plugin emits `mongo_reqs` /
+                // `mongo_req_duration` / `mongo_docs`, the `postgres` / `mysql`
+                // plugins emit `postgres_reqs` / `mysql_reqs`, and the `redis`
+                // plugin emits `redis_reqs` / `redis_req_duration`).
+                let family = match other {
+                    "grpc" | "tcp" | "udp" => other.to_string(),
+                    "sse" | "browser" => "plugin".to_string(),
+                    name => metric_family(name),
+                };
+                self.emit_named(
+                    vu,
+                    &format!("{family}_reqs"),
+                    MetricKind::Counter,
+                    1.0,
+                    &tags,
+                );
+                self.emit_named(
+                    vu,
+                    &format!("{family}_req_duration"),
+                    MetricKind::Trend,
+                    t.duration_ms,
+                    &tags,
+                );
+                // Plugin protocols may report a count of affected/returned
+                // records: `extras.docs` (e.g. Mongo documents) is surfaced as
+                // `<family>_docs`, `extras.rows` (e.g. SQL rows returned or
+                // affected) as `<family>_rows`, and `extras.msgs` (e.g. Kafka
+                // messages produced or fetched) as `<family>_msgs`.
+                if let Some(docs) = response.extras.get("docs").and_then(|v| v.as_f64()) {
+                    self.emit_named(
+                        vu,
+                        &format!("{family}_docs"),
+                        MetricKind::Counter,
+                        docs,
+                        &tags,
+                    );
+                }
+                if let Some(rows) = response.extras.get("rows").and_then(|v| v.as_f64()) {
+                    self.emit_named(
+                        vu,
+                        &format!("{family}_rows"),
+                        MetricKind::Counter,
+                        rows,
+                        &tags,
+                    );
+                }
+                if let Some(msgs) = response.extras.get("msgs").and_then(|v| v.as_f64()) {
+                    self.emit_named(
+                        vu,
+                        &format!("{family}_msgs"),
+                        MetricKind::Counter,
+                        msgs,
+                        &tags,
+                    );
+                }
+                m.rate(&b.http_req_failed, response.failed(), &tags);
+            }
+        }
+    }
+
+    fn emit_named(
+        &self,
+        vu: &VuContext,
+        name: &str,
+        kind: MetricKind,
+        value: f64,
+        tags: &Arc<Tags>,
+    ) {
+        let metric = vu
+            .run
+            .registry
+            .get(name)
+            .map(|d| d.name)
+            .unwrap_or_else(|| Arc::from(name));
+        vu.metrics.emit_value(&metric, kind, value, tags);
+    }
+
     /// Record an injected chaos fault on the `faults_injected` counter,
     /// split-tagged by `kind` (`latency` or `drop`).
     fn note_fault(&self, vu: &VuContext, kind: &str) {
@@ -1456,22 +1643,39 @@ impl FlowRunner {
             });
         }
         if let Some(grpc) = &req.grpc {
+            let message = match &req.grpc_literal_message {
+                Some(arc) => Some(arc.clone()),
+                None => grpc
+                    .message
+                    .as_ref()
+                    .map(|m| render_json(self, m, vu, script).map(Arc::new))
+                    .transpose()?,
+            };
+            let messages = match &req.grpc_literal_messages {
+                Some(arc) => arc.clone(),
+                None => Arc::new(
+                    grpc.messages
+                        .iter()
+                        .map(|m| render_json(self, m, vu, script))
+                        .collect::<Result<Vec<_>, _>>()?,
+                ),
+            };
+            // The handler uses `messages` when non-empty, else `message`;
+            // the literal flag must describe whichever it will use.
+            let message_literal = if grpc.messages.is_empty() {
+                req.grpc_literal_message.is_some()
+            } else {
+                req.grpc_literal_messages.is_some()
+            };
             options.grpc = Some(GrpcRequest {
                 proto_files: grpc.proto_files.clone(),
                 proto_includes: grpc.proto_includes.clone(),
                 reflection: grpc.reflection,
                 service: grpc.service.clone(),
                 method: grpc.method.clone(),
-                message: grpc
-                    .message
-                    .as_ref()
-                    .map(|m| render_json(self, m, vu, script))
-                    .transpose()?,
-                messages: grpc
-                    .messages
-                    .iter()
-                    .map(|m| render_json(self, m, vu, script))
-                    .collect::<Result<_, _>>()?,
+                message,
+                messages,
+                message_literal,
                 metadata: grpc
                     .metadata
                     .iter()
@@ -2068,6 +2272,21 @@ fn render_str(
 ) -> Result<String, PrepareError> {
     let tpl = Template::parse(s).map_err(|e| PrepareError::Other(e.to_string()))?;
     render_template(runner, &tpl, vu, script)
+}
+
+/// True when rendering `value` with [`render_json`] would return it
+/// unchanged: every string leaf parses as a literal (no `${...}`) template.
+/// Parse failures count as non-literal so they surface through the normal
+/// per-iteration render error path.
+fn json_is_literal(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(s) => Template::parse(s)
+            .map(|tpl| tpl.is_literal())
+            .unwrap_or(false),
+        serde_json::Value::Array(items) => items.iter().all(json_is_literal),
+        serde_json::Value::Object(map) => map.values().all(json_is_literal),
+        _ => true,
+    }
 }
 
 fn render_json(

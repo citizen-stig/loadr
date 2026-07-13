@@ -4,12 +4,14 @@ Follow-ups left open after the 2026-07 request-hot-path work (dispatcher fix,
 gRPC call cache + lazy decode, metrics delta/sharding, raw h2 transport — all
 merged into `risotto` at `a12b541`). Each goal is independent, sized for its
 own branch/PR, and written for a fresh agent with no prior context. Goals
-assume `risotto` as the base branch; once the five `nikolai/perf-*` PRs land
-on `main`, everything except `flow-emitter-dead-code` applies there too.
+assume `risotto` as the base branch, except `dispatcher-idle-ring`, which is
+intentionally based directly on `origin/nikolai/perf-dispatcher-port` at
+`d28814f` to keep that rewrite independent. Once the five `nikolai/perf-*` PRs
+land on `main`, everything except `flow-emitter-dead-code` applies there too.
 
 | Goal | Outcome |
 |---|---|
-| [dispatcher-idle-ring](dispatcher-idle-ring.md) | Arrival dispatcher stops waking once per iteration — the last single-task hot-path choke point |
+| [dispatcher-idle-ring](dispatcher-idle-ring.md) | Measure and, only if it wins, replace the arrival dispatcher's per-iteration idle-queue hand-off |
 | [interned-tag-sets](interned-tag-sets.md) | No per-request `BTreeMap`/`Arc<Tags>` allocation in metric emission |
 | [grpc-call-cache-memoization](grpc-call-cache-memoization.md) | gRPC URL parse and metadata parse move into the per-VU call cache |
 | [coarse-sample-clock](coarse-sample-clock.md) | Measure, and only if it pays: cached coarse timestamps for bus-mode samples |

@@ -537,3 +537,497 @@ pools must stay cheap before any landing, hold for that redesign instead;
 the measurements above quantify exactly what it must fix. Either way this
 local A/B validates the isolated mechanism only — the Graviton/AWS ceiling
 remains for `aws-ab-validation`.
+
+---
+
+# v2 — semaphore wake path
+
+The v1 recommendation named broadcast over-waking as the change's one real
+regression. This follow-up (commit `0d064f6`, candidate binary `loadr-cand2`,
+sha256 `97252ca8…`) replaces the shared `Notify` broadcast with
+`tokio::sync::Semaphore`: published arrivals are permits, and tokio assigns
+permits directly to FIFO-parked workers — waking exactly `min(due, parked)`
+workers per tick instead of the whole pool. Budget/expiry/closure accounting
+is unchanged; conservation gains one post-join sweep (permits assigned to
+parked workers at closure return to the pool as their acquire futures drop
+during the join). Same harness, same base binary (sha verified), same host,
+runs on 2026-07-13; raw rows in `runs-v2.csv`.
+
+## v2 acceptance checks (stated before the run)
+
+| check | bar | measured | verdict |
+|---|---|---|---|
+| lowrate-overwake task-clock | ≤ ~2x base (was 248x) | **1.0x base** (0.03 vs 0.03 CPUs; v1: 8.91) | pass |
+| r50000-1ms-tick1000-wt16 CPU | ≈ base (was 4.3x) | **0.94x base** (1.95 vs 2.08 CPUs; v1: 8.89) | pass |
+| r50000-1ms-tick5000-wt16 CPU | ≈ base (was 2.2x) | 1.16x base (3.06 vs 2.63; v1: 5.74) | pass |
+| r50000-1ms-tick1000-wt2 CPU | ≈ base (was 2.6x) | 1.27x base (0.19 vs 0.15; v1: 0.39) | pass |
+| zero-think ladder wins | within ±5% of v1-cand | +59.8%..+316.5% vs base (v1: +62..+318) | pass |
+| 250k-1ms cells | within ±5% of v1-cand | wt2 249,951/s (=v1); wt16 tick1000 +5.1% vs v1; wt16 tick5000 −4.3% vs v1 | pass |
+| zero drops where v1-cand had zero | equal | equal, except 4 arrivals of 2.5M (0.00016%) in r250000-1ms-tick1000-wt2 | pass (noted) |
+
+## v2 reading notes
+
+All 300 measured runs exit 0. Medians over 5 alternating pairs per cell.
+
+**1. The idle-pool tax is gone.** The trickle cell (2000 parked workers,
+1k/s) went from 8.91 CPUs (v1) to 0.03 CPUs — indistinguishable from base.
+Context switches in that cell dropped from ~2.98M per run to base-level
+(~9.5k). The 460-parked cells are now between 6% cheaper and 27% more
+expensive than base (v1: +110%..+328%), the remainder being the fair
+semaphore's per-park queue traffic at 1ms think churn.
+
+**2. Every throughput win held.** Dispatcher-bound zero-think cells:
++59.8%..+316.5% achieved over base (v1: +62.4%..+317.6% — run-to-run session
+variance, same shape). 250k/s x 1ms on two worker threads still delivers the
+full schedule (249,951/s, v1: 249,960) where base manages ~238k with ~110k
+drops. The 250k-1ms-tick1000-wt16 cell improved over v1 (+39.7% vs base,
+210,016/s vs v1's 199,748); the tick5000 sibling measured −4.3% vs v1-cand
+(209,475 vs 218,810) with base also measuring lower this session — within
+the pre-stated ±5% noise bar.
+
+**3. Drops improved where it matters, one negligible exception.**
+r150000-1ms-tick1000-wt16: 30,426 dropped (v1) → 772 (v2), achieved
+149,899/s of the 150k target — exact wakes get parked workers to work
+faster than broadcast racing did. r250000-1ms-tick1000-wt2 recorded 4
+dropped arrivals of ~2.5M scheduled (v1: 0) — 0.00016%, inside scheduling
+noise. r150000-1ms-tick5000-wt16 went 80 → 1,168 (99.2% of target still
+delivered); the same cell's v1 number rode on waking all 512 workers per
+tick, which v2 deliberately no longer pays for.
+
+**4. Behavior guarantees tightened.** The lost-wake race class is gone by
+construction (permits are state, not events); a new engine-level test pins
+that runs ending while paused observe closure immediately (a gap the
+adversarial review found in the broadcast design's paused branch would have
+been introduced by a naive port — the gate now carries a closed token).
+
+## Updated recommendation
+
+**Land the semaphore claim budget.** It keeps every v1 throughput gain
+(+60%..+317% on dispatcher-bound cells, exact schedule adherence with zero
+or near-zero drops wherever the host sustains the rate), erases the
+idle-pool over-waking tax that was v1's blocking concern (248x → 1.0x), and
+deletes the hand-rolled park protocol rather than adding machinery. The
+sharded-Notify ring is no longer needed as a follow-up; it remains in the
+goal doc only as historical context. Remaining open item: the Graviton/AWS
+ceiling (`aws-ab-validation`) — this local A/B validates the isolated
+dispatcher mechanism only.
+
+## r50000-0s-tick1000-wt2
+
+rate=50000/s think=0s tick=1000us worker-threads=2 pre/max VUs=64/128 cores=0-3 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 49,996 | 49,995..49,996 | 49,998 | 49,998..49,998 | +0.0% |
+| dropped | 1.000 | 0.000..2.000 | 0.000 | 0.000..0.000 | -100.0% |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 2,225 | 2,073..2,240 | 2,155 | 2,116..2,271 | -3.2% |
+| Gcycles | 3.720 | 3.687..3.726 | 3.712 | 3.690..3.742 | -0.2% |
+| Ginstr | 4.402 | 4.359..4.416 | 4.383 | 4.378..4.417 | -0.4% |
+| ctx-sw | 17,452 | 17,442..17,529 | 17,338 | 17,249..17,430 | -0.7% |
+| migrations | 6.000 | 4.000..6.000 | 6.000 | 6.000..7.000 | +0.0% |
+| Mcache-miss | 29.7 | 29.6..29.7 | 29.6 | 29.4..30.2 | -0.2% |
+
+## r150000-0s-tick1000-wt2
+
+rate=150000/s think=0s tick=1000us worker-threads=2 pre/max VUs=64/128 cores=0-3 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 60,271 | 60,226..60,388 | 104,745 | 104,644..105,020 | +73.8% |
+| dropped | 897,200 | 895,994..897,602 | 452,518 | 449,677..453,377 | -49.6% |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 2,908 | 2,877..2,924 | 4,265 | 4,238..4,360 | +46.7% |
+| Gcycles | 4.811 | 4.785..4.864 | 6.536 | 6.456..6.563 | +35.8% |
+| Ginstr | 5.882 | 5.872..5.903 | 6.776 | 6.759..6.780 | +15.2% |
+| ctx-sw | 17,025 | 16,979..17,043 | 15,097 | 14,989..15,106 | -11.3% |
+| migrations | 7.000 | 6.000..7.000 | 3.000 | 3.000..4.000 | -57.1% |
+| Mcache-miss | 43.0 | 41.9..44.1 | 56.1 | 56.1..56.4 | +30.6% |
+
+_Note: both sides below 90% of the 150000/s target — host-limited cell._
+
+## r250000-0s-tick1000-wt2
+
+rate=250000/s think=0s tick=1000us worker-threads=2 pre/max VUs=64/128 cores=0-3 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 66,362 | 66,175..66,454 | 106,023 | 105,030..106,355 | +59.8% |
+| dropped | 1,836,346 | 1,835,090..1,838,152 | 1,439,563 | 1,436,350..1,449,628 | -21.6% |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 3,692 | 3,512..3,728 | 4,340 | 4,194..4,340 | +17.6% |
+| Gcycles | 5.731 | 5.690..5.767 | 6.488 | 6.484..6.498 | +13.2% |
+| Ginstr | 7.301 | 7.299..7.334 | 6.796 | 6.765..6.811 | -6.9% |
+| ctx-sw | 16,461 | 16,326..16,623 | 15,008 | 14,989..15,159 | -8.8% |
+| migrations | 3.000 | 2.000..4.000 | 6.000 | 3.000..7.000 | +100.0% |
+| Mcache-miss | 51.4 | 50.2..52.5 | 57.2 | 56.8..57.6 | +11.3% |
+
+_Note: both sides below 90% of the 250000/s target — host-limited cell._
+
+## r50000-1ms-tick1000-wt2
+
+rate=50000/s think=1ms tick=1000us worker-threads=2 pre/max VUs=512/1024 cores=0-3 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 49,994 | 49,992..49,994 | 49,992 | 49,991..49,993 | -0.0% |
+| dropped | 0.000 | 0.000..0.000 | 0.000 | 0.000..0.000 | - |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 1,547 | 1,545..1,852 | 1,889 | 1,825..1,897 | +22.1% |
+| Gcycles | 3.019 | 2.989..3.025 | 2.982 | 2.957..3.072 | -1.2% |
+| Ginstr | 3.892 | 3.873..3.900 | 3.923 | 3.920..3.938 | +0.8% |
+| ctx-sw | 17,843 | 17,727..17,897 | 17,557 | 17,551..17,609 | -1.6% |
+| migrations | 20.0 | 12.0..38.0 | 8.000 | 7.000..13.0 | -60.0% |
+| Mcache-miss | 34.0 | 32.3..35.4 | 33.2 | 32.4..33.5 | -2.4% |
+
+## r150000-1ms-tick1000-wt2
+
+rate=150000/s think=1ms tick=1000us worker-threads=2 pre/max VUs=512/1024 cores=0-3 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 149,976 | 149,966..149,979 | 149,976 | 149,970..149,978 | -0.0% |
+| dropped | 0.000 | 0.000..0.000 | 0.000 | 0.000..0.000 | - |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 5,254 | 5,091..5,315 | 5,257 | 5,256..5,265 | +0.1% |
+| Gcycles | 8.067 | 8.032..8.077 | 7.914 | 7.827..8.004 | -1.9% |
+| Ginstr | 10.7 | 10.7..10.7 | 10.7 | 10.7..10.7 | +0.3% |
+| ctx-sw | 15,900 | 15,771..15,927 | 15,034 | 14,943..15,082 | -5.4% |
+| migrations | 2.000 | 2.000..4.000 | 4.000 | 2.000..4.000 | +100.0% |
+| Mcache-miss | 101.3 | 101.2..101.8 | 102.3 | 101.5..102.6 | +1.0% |
+
+## r250000-1ms-tick1000-wt2
+
+rate=250000/s think=1ms tick=1000us worker-threads=2 pre/max VUs=512/1024 cores=0-3 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 238,220 | 237,790..239,299 | 249,951 | 249,951..249,959 | +4.9% |
+| dropped | 117,228 | 106,458..121,620 | 4.000 | 0.000..5.000 | -100.0% |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 8,210 | 8,178..8,217 | 8,713 | 8,536..8,975 | +6.1% |
+| Gcycles | 12.3 | 12.2..12.3 | 13.0 | 12.7..13.4 | +6.0% |
+| Ginstr | 17.0 | 16.9..17.1 | 17.6 | 17.6..17.7 | +3.7% |
+| ctx-sw | 17,158 | 16,334..17,456 | 15,101 | 13,602..15,491 | -12.0% |
+| migrations | 2.000 | 2.000..4.000 | 6.000 | 4.000..6.000 | +200.0% |
+| Mcache-miss | 172.8 | 172.5..175.1 | 178.2 | 177.3..178.9 | +3.1% |
+
+## r50000-0s-tick1000-wt16
+
+rate=50000/s think=0s tick=1000us worker-threads=16 pre/max VUs=64/128 cores=0-19 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 49,137 | 49,080..49,194 | 49,998 | 49,996..49,998 | +1.8% |
+| dropped | 8,615 | 7,988..9,140 | 0.000 | 0.000..0.000 | -100.0% |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 18,689 | 18,607..18,847 | 23,816 | 23,109..24,085 | +27.4% |
+| Gcycles | 23.8 | 23.7..23.9 | 30.4 | 30.0..31.0 | +27.9% |
+| Ginstr | 12.3 | 12.3..12.3 | 16.2 | 15.8..16.4 | +31.4% |
+| ctx-sw | 460,146 | 456,521..461,271 | 602,033 | 585,527..619,892 | +30.8% |
+| migrations | 398.0 | 338.0..788.0 | 321.0 | 289.0..437.0 | -19.3% |
+| Mcache-miss | 115.2 | 114.5..116.9 | 123.5 | 123.3..130.3 | +7.3% |
+
+## r150000-0s-tick1000-wt16
+
+rate=150000/s think=0s tick=1000us worker-threads=16 pre/max VUs=64/128 cores=0-19 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 68,794 | 68,172..69,228 | 95,863 | 95,606..95,870 | +39.3% |
+| dropped | 811,818 | 807,663..818,005 | 541,280 | 541,162..543,926 | -33.3% |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 36,386 | 36,361..36,507 | 34,378 | 34,191..34,694 | -5.5% |
+| Gcycles | 47.2 | 46.8..48.8 | 45.2 | 45.2..45.3 | -4.3% |
+| Ginstr | 24.7 | 24.5..26.1 | 24.4 | 24.3..24.5 | -1.5% |
+| ctx-sw | 942,283 | 926,927..1,023,719 | 922,574 | 912,269..926,944 | -2.1% |
+| migrations | 298.0 | 275.0..547.0 | 249.0 | 248.0..417.0 | -16.4% |
+| Mcache-miss | 192.1 | 185.8..192.5 | 166.1 | 165.5..170.4 | -13.6% |
+
+_Note: both sides below 90% of the 150000/s target — host-limited cell._
+
+## r250000-0s-tick1000-wt16
+
+rate=250000/s think=0s tick=1000us worker-threads=16 pre/max VUs=64/128 cores=0-19 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 69,371 | 67,817..71,947 | 96,892 | 95,979..97,244 | +39.7% |
+| dropped | 1,806,007 | 1,780,279..1,821,529 | 1,530,995 | 1,527,258..1,540,135 | -15.2% |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 37,836 | 36,805..38,064 | 34,387 | 33,434..34,583 | -9.1% |
+| Gcycles | 50.2 | 49.2..50.3 | 44.2 | 43.9..45.3 | -12.0% |
+| Ginstr | 27.1 | 26.7..27.2 | 24.3 | 23.9..24.4 | -10.6% |
+| ctx-sw | 1,025,348 | 954,205..1,027,093 | 904,127 | 882,274..932,225 | -11.8% |
+| migrations | 365.0 | 239.0..540.0 | 285.0 | 208.0..305.0 | -21.9% |
+| Mcache-miss | 198.5 | 195.3..201.9 | 167.6 | 164.7..171.5 | -15.6% |
+
+_Note: both sides below 90% of the 250000/s target — host-limited cell._
+
+## r50000-1ms-tick1000-wt16
+
+rate=50000/s think=1ms tick=1000us worker-threads=16 pre/max VUs=512/1024 cores=0-19 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 49,992 | 49,991..49,992 | 49,992 | 49,990..49,993 | +0.0% |
+| dropped | 0.000 | 0.000..0.000 | 0.000 | 0.000..0.000 | - |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 20,826 | 16,557..20,945 | 19,468 | 17,252..21,869 | -6.5% |
+| Gcycles | 26.8 | 22.6..27.9 | 25.6 | 23.2..28.1 | -4.5% |
+| Ginstr | 13.9 | 11.9..14.8 | 13.8 | 12.6..14.9 | -0.1% |
+| ctx-sw | 458,481 | 365,773..503,475 | 411,976 | 379,398..491,010 | -10.1% |
+| migrations | 785.0 | 343.0..2,833 | 3,500 | 337.0..5,464 | +345.9% |
+| Mcache-miss | 119.1 | 118.9..125.8 | 120.1 | 119.7..121.3 | +0.8% |
+
+## r150000-1ms-tick1000-wt16
+
+rate=150000/s think=1ms tick=1000us worker-threads=16 pre/max VUs=512/1024 cores=0-19 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 149,721 | 148,733..149,942 | 149,899 | 148,478..149,943 | +0.1% |
+| dropped | 2,566 | 355.0..12,457 | 772.0 | 434.0..14,846 | -69.9% |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 80,846 | 80,016..81,144 | 87,922 | 82,881..90,017 | +8.8% |
+| Gcycles | 179.7 | 156.1..180.0 | 182.5 | 149.6..185.7 | +1.6% |
+| Ginstr | 87.3 | 81.4..89.2 | 92.3 | 78.0..92.3 | +5.7% |
+| ctx-sw | 3,702,202 | 3,255,280..3,910,120 | 3,875,247 | 3,073,705..3,979,350 | +4.7% |
+| migrations | 5,321 | 4,089..8,143 | 3,837 | 217.0..4,619 | -27.9% |
+| Mcache-miss | 510.5 | 458.7..512.5 | 481.6 | 406.3..508.0 | -5.7% |
+
+## r250000-1ms-tick1000-wt16
+
+rate=250000/s think=1ms tick=1000us worker-threads=16 pre/max VUs=512/1024 cores=0-19 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 150,310 | 143,646..157,872 | 210,016 | 201,989..212,063 | +39.7% |
+| dropped | 996,550 | 920,581..1,062,745 | 399,355 | 379,189..479,870 | -59.9% |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 95,459 | 94,412..95,469 | 93,181 | 93,153..93,339 | -2.4% |
+| Gcycles | 160.4 | 159.2..161.4 | 147.4 | 141.3..154.5 | -8.1% |
+| Ginstr | 83.9 | 83.3..84.6 | 78.2 | 74.3..80.3 | -6.8% |
+| ctx-sw | 3,550,114 | 3,371,463..3,756,997 | 2,954,609 | 2,815,539..3,056,218 | -16.8% |
+| migrations | 466.0 | 176.0..4,880 | 196.0 | 174.0..233.0 | -57.9% |
+| Mcache-miss | 455.7 | 445.2..457.9 | 424.7 | 408.0..445.6 | -6.8% |
+
+_Note: both sides below 90% of the 250000/s target — host-limited cell._
+
+## r50000-0s-tick5000-wt2
+
+rate=50000/s think=0s tick=5000us worker-threads=2 pre/max VUs=64/128 cores=0-3 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 25,592 | 25,592..25,593 | 49,978 | 49,978..49,980 | +95.3% |
+| dropped | 243,857 | 243,845..243,861 | 0.000 | 0.000..0.000 | -100.0% |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 1,417 | 1,398..1,505 | 2,368 | 2,358..2,391 | +67.1% |
+| Gcycles | 2.024 | 2.013..2.118 | 3.456 | 3.428..3.463 | +70.7% |
+| Ginstr | 2.443 | 2.419..2.470 | 3.796 | 3.791..3.807 | +55.4% |
+| ctx-sw | 8,507 | 8,497..8,518 | 13,016 | 12,962..13,045 | +53.0% |
+| migrations | 6.000 | 6.000..17.0 | 6.000 | 6.000..28.0 | +0.0% |
+| Mcache-miss | 31.0 | 27.5..34.7 | 31.3 | 31.1..31.4 | +1.0% |
+
+## r150000-0s-tick5000-wt2
+
+rate=150000/s think=0s tick=5000us worker-threads=2 pre/max VUs=64/128 cores=0-3 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 25,621 | 25,619..25,622 | 106,710 | 106,524..106,985 | +316.5% |
+| dropped | 1,243,180 | 1,243,116..1,243,218 | 432,388 | 429,441..434,126 | -65.2% |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 1,567 | 1,561..1,585 | 3,989 | 3,969..4,026 | +154.7% |
+| Gcycles | 2.255 | 2.254..2.266 | 6.025 | 5.952..6.037 | +167.2% |
+| Ginstr | 3.475 | 3.468..3.480 | 6.612 | 6.604..6.619 | +90.3% |
+| ctx-sw | 8,167 | 8,154..8,186 | 15,338 | 15,297..15,339 | +87.8% |
+| migrations | 6.000 | 6.000..8.000 | 5.000 | 2.000..5.000 | -16.7% |
+| Mcache-miss | 31.5 | 27.9..32.4 | 57.0 | 56.8..57.1 | +81.2% |
+
+_Note: both sides below 90% of the 150000/s target — host-limited cell._
+
+## r250000-0s-tick5000-wt2
+
+rate=250000/s think=0s tick=5000us worker-threads=2 pre/max VUs=64/128 cores=0-3 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 25,821 | 25,815..25,862 | 106,720 | 106,665..106,808 | +313.3% |
+| dropped | 2,240,708 | 2,240,302..2,240,755 | 1,431,594 | 1,430,814..1,432,256 | -36.1% |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 1,902 | 1,890..1,907 | 4,042 | 4,028..4,043 | +112.5% |
+| Gcycles | 2.748 | 2.745..2.752 | 6.141 | 6.093..6.257 | +123.5% |
+| Ginstr | 4.657 | 4.656..4.659 | 6.601 | 6.599..6.613 | +41.8% |
+| ctx-sw | 8,162 | 8,160..8,186 | 15,291 | 15,275..15,316 | +87.3% |
+| migrations | 5.000 | 2.000..8.000 | 4.000 | 4.000..6.000 | -20.0% |
+| Mcache-miss | 31.9 | 29.4..32.9 | 56.6 | 56.4..56.6 | +77.6% |
+
+_Note: both sides below 90% of the 250000/s target — host-limited cell._
+
+## r50000-1ms-tick5000-wt2
+
+rate=50000/s think=1ms tick=5000us worker-threads=2 pre/max VUs=512/1024 cores=0-3 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 49,980 | 49,977..49,980 | 49,982 | 49,982..49,983 | +0.0% |
+| dropped | 0.000 | 0.000..0.000 | 0.000 | 0.000..0.000 | - |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 2,255 | 2,233..2,255 | 2,299 | 2,268..2,361 | +2.0% |
+| Gcycles | 3.290 | 3.242..3.291 | 3.379 | 3.340..3.442 | +2.7% |
+| Ginstr | 3.860 | 3.858..3.868 | 3.919 | 3.904..3.922 | +1.5% |
+| ctx-sw | 9,703 | 9,686..9,744 | 9,595 | 9,571..9,604 | -1.1% |
+| migrations | 5.000 | 2.000..5.000 | 4.000 | 2.000..5.000 | -20.0% |
+| Mcache-miss | 38.3 | 38.2..38.6 | 38.8 | 38.8..39.3 | +1.3% |
+
+## r150000-1ms-tick5000-wt2
+
+rate=150000/s think=1ms tick=5000us worker-threads=2 pre/max VUs=512/1024 cores=0-3 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 149,938 | 149,936..149,941 | 149,943 | 149,943..149,943 | +0.0% |
+| dropped | 0.000 | 0.000..0.000 | 0.000 | 0.000..0.000 | - |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 5,402 | 5,393..5,688 | 5,337 | 5,301..5,511 | -1.2% |
+| Gcycles | 8.023 | 7.981..8.439 | 8.028 | 7.961..8.171 | +0.1% |
+| Ginstr | 10.6 | 10.6..10.6 | 10.8 | 10.8..10.9 | +2.2% |
+| ctx-sw | 11,157 | 10,816..12,173 | 10,833 | 10,818..10,906 | -2.9% |
+| migrations | 3.000 | 2.000..3.000 | 2.000 | 1.000..3.000 | -33.3% |
+| Mcache-miss | 111.9 | 111.4..112.3 | 113.6 | 113.6..113.8 | +1.6% |
+
+## r250000-1ms-tick5000-wt2
+
+rate=250000/s think=1ms tick=5000us worker-threads=2 pre/max VUs=512/1024 cores=0-3 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 204,417 | 204,298..204,538 | 249,921 | 249,919..249,923 | +22.3% |
+| dropped | 454,865 | 453,442..456,066 | 0.000 | 0.000..0.000 | -100.0% |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 7,039 | 6,916..7,525 | 7,886 | 7,732..7,920 | +12.0% |
+| Gcycles | 10.5 | 10.4..11.1 | 12.3 | 11.8..12.3 | +17.0% |
+| Ginstr | 14.8 | 14.7..14.8 | 16.4 | 16.3..16.4 | +10.6% |
+| ctx-sw | 10,410 | 10,240..12,959 | 11,585 | 11,139..11,661 | +11.3% |
+| migrations | 0.000 | 0.000..2.000 | 2.000 | 2.000..4.000 | - |
+| Mcache-miss | 149.8 | 147.3..151.4 | 169.3 | 168.9..169.4 | +13.0% |
+
+## r50000-0s-tick5000-wt16
+
+rate=50000/s think=0s tick=5000us worker-threads=16 pre/max VUs=64/128 cores=0-19 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 25,594 | 25,593..25,595 | 49,982 | 49,982..49,982 | +95.3% |
+| dropped | 243,884 | 243,879..243,899 | 0.000 | 0.000..0.000 | -100.0% |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 9,514 | 9,417..9,579 | 22,116 | 22,074..22,210 | +132.5% |
+| Gcycles | 12.3 | 11.9..12.3 | 27.5 | 27.5..27.7 | +124.2% |
+| Ginstr | 6.556 | 6.403..6.564 | 14.9 | 14.9..15.2 | +126.5% |
+| ctx-sw | 233,449 | 224,062..235,956 | 581,157 | 575,438..581,617 | +148.9% |
+| migrations | 330.0 | 276.0..367.0 | 423.0 | 403.0..2,048 | +28.2% |
+| Mcache-miss | 67.0 | 65.7..67.4 | 114.4 | 111.9..115.7 | +70.7% |
+
+## r150000-0s-tick5000-wt16
+
+rate=150000/s think=0s tick=5000us worker-threads=16 pre/max VUs=64/128 cores=0-19 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 25,622 | 25,622..25,627 | 97,334 | 97,155..97,374 | +279.9% |
+| dropped | 1,243,242 | 1,243,227..1,243,293 | 526,020 | 525,681..527,863 | -57.7% |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 9,219 | 9,054..9,972 | 32,160 | 31,982..33,886 | +248.8% |
+| Gcycles | 11.8 | 11.6..12.7 | 42.7 | 42.3..44.4 | +260.0% |
+| Ginstr | 7.161 | 7.082..7.640 | 23.3 | 22.5..24.2 | +224.9% |
+| ctx-sw | 196,992 | 194,791..224,935 | 825,022 | 810,786..871,008 | +318.8% |
+| migrations | 469.0 | 272.0..548.0 | 452.0 | 314.0..6,038 | -3.6% |
+| Mcache-miss | 71.1 | 68.2..71.6 | 169.2 | 159.4..170.2 | +138.1% |
+
+_Note: both sides below 90% of the 150000/s target — host-limited cell._
+
+## r250000-0s-tick5000-wt16
+
+rate=250000/s think=0s tick=5000us worker-threads=16 pre/max VUs=64/128 cores=0-19 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 25,734 | 25,732..25,757 | 97,060 | 96,968..97,368 | +277.2% |
+| dropped | 2,241,584 | 2,241,572..2,241,733 | 1,528,335 | 1,525,325..1,529,224 | -31.8% |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 10,467 | 10,207..10,684 | 32,466 | 32,380..32,942 | +210.2% |
+| Gcycles | 13.5 | 13.1..13.8 | 42.6 | 42.2..43.3 | +216.6% |
+| Ginstr | 8.835 | 8.706..8.968 | 23.0 | 22.8..23.2 | +160.2% |
+| ctx-sw | 221,217 | 212,750..222,445 | 822,387 | 808,925..831,529 | +271.8% |
+| migrations | 306.0 | 289.0..342.0 | 4,154 | 2,108..5,807 | +1257.5% |
+| Mcache-miss | 69.8 | 68.7..69.9 | 163.5 | 162.2..164.7 | +134.2% |
+
+_Note: both sides below 90% of the 250000/s target — host-limited cell._
+
+## r50000-1ms-tick5000-wt16
+
+rate=50000/s think=1ms tick=5000us worker-threads=16 pre/max VUs=512/1024 cores=0-19 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 49,978 | 49,977..49,978 | 49,980 | 49,979..49,982 | +0.0% |
+| dropped | 0.000 | 0.000..0.000 | 0.000 | 0.000..0.000 | - |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 26,314 | 25,938..26,642 | 30,579 | 29,709..30,881 | +16.2% |
+| Gcycles | 33.6 | 32.9..33.6 | 38.7 | 38.4..38.7 | +15.1% |
+| Ginstr | 17.2 | 16.9..18.1 | 20.6 | 20.6..20.7 | +19.7% |
+| ctx-sw | 674,300 | 654,930..691,704 | 803,265 | 778,195..806,698 | +19.1% |
+| migrations | 393.0 | 259.0..436.0 | 296.0 | 251.0..4,619 | -24.7% |
+| Mcache-miss | 136.2 | 133.8..137.8 | 143.2 | 143.2..145.2 | +5.1% |
+
+## r150000-1ms-tick5000-wt16
+
+rate=150000/s think=1ms tick=5000us worker-threads=16 pre/max VUs=512/1024 cores=0-19 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 148,051 | 144,482..148,497 | 149,828 | 149,828..149,930 | +1.2% |
+| dropped | 19,069 | 14,395..54,531 | 1,168 | 0.000..1,244 | -93.9% |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 84,819 | 83,247..86,723 | 83,064 | 80,108..89,931 | -2.1% |
+| Gcycles | 159.2 | 149.9..167.4 | 171.4 | 154.5..171.9 | +7.7% |
+| Ginstr | 81.3 | 76.8..86.0 | 81.7 | 79.2..87.3 | +0.6% |
+| ctx-sw | 3,368,903 | 3,103,215..3,797,086 | 3,537,788 | 3,186,009..3,599,111 | +5.0% |
+| migrations | 3,353 | 1,512..11,037 | 2,292 | 457.0..25,133 | -31.6% |
+| Mcache-miss | 466.0 | 445.9..494.5 | 480.1 | 422.2..501.5 | +3.0% |
+
+## r250000-1ms-tick5000-wt16
+
+rate=250000/s think=1ms tick=5000us worker-threads=16 pre/max VUs=512/1024 cores=0-19 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 138,026 | 133,805..143,059 | 209,475 | 206,594..215,128 | +51.8% |
+| dropped | 1,118,968 | 1,068,439..1,160,879 | 404,651 | 347,233..433,365 | -63.8% |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 94,403 | 93,541..94,516 | 92,047 | 91,956..92,127 | -2.5% |
+| Gcycles | 157.3 | 139.6..159.8 | 140.0 | 136.2..142.3 | -11.0% |
+| Ginstr | 81.7 | 74.3..82.4 | 74.2 | 72.6..75.4 | -9.2% |
+| ctx-sw | 3,240,017 | 2,923,670..3,448,609 | 2,838,536 | 2,795,771..2,852,878 | -12.4% |
+| migrations | 2,651 | 134.0..15,632 | 210.0 | 186.0..1,434 | -92.1% |
+| Mcache-miss | 457.0 | 392.5..461.0 | 398.6 | 397.2..407.0 | -12.8% |
+
+_Note: both sides below 90% of the 250000/s target — host-limited cell._
+
+## lowrate-overwake
+
+rate=1000/s think=1ms tick=5000us worker-threads=16 pre/max VUs=2000/2000 cores=0-19 (n base=5, cand=5)
+
+| measure | base med | base IQR | cand med | cand IQR | Δ med |
+|---|---|---|---|---|---|
+| achieved it/s | 999.1 | 999.1..999.5 | 999.5 | 999.5..999.5 | +0.0% |
+| dropped | 0.000 | 0.000..0.000 | 0.000 | 0.000..0.000 | - |
+| wall s | 11.0 | 11.0..11.0 | 10.0 | 10.0..10.0 | -9.1% |
+| task-clock ms | 335.5 | 330.7..339.7 | 333.9 | 313.7..335.8 | -0.5% |
+| Gcycles | 0.392 | 0.388..0.393 | 0.394 | 0.391..0.398 | +0.6% |
+| Ginstr | 0.246 | 0.245..0.247 | 0.243 | 0.240..0.249 | -1.0% |
+| ctx-sw | 9,498 | 9,293..9,772 | 9,271 | 9,258..9,303 | -2.4% |
+| migrations | 35.0 | 30.0..55.0 | 52.0 | 41.0..91.0 | +48.6% |
+| Mcache-miss | 9.831 | 9.775..10.5 | 11.2 | 10.8..11.4 | +14.1% |

@@ -185,7 +185,9 @@ YAML ──parse/validate──▶ TestPlan ──compile──▶ ScenarioProgr
        JsWorker (rquickjs)
 ```
 
-The `MetricsBus` is an mpsc fan-in; the `Aggregator` snapshots every second for live consumers
+The `MetricsBus` is an mpsc fan-in when a configured output consumes raw samples; when none
+does, VUs record straight into shard-local aggregators instead, drained into the primary
+aggregator once per snapshot tick. The `Aggregator` snapshots every second for live consumers
 (web UI SSE, controller stream, console progress) and finalizes into the end-of-run summary
 (console table + `--summary-export` JSON).
 

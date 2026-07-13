@@ -96,7 +96,10 @@ impl VuContext {
             groups: Vec::new(),
             vars: serde_json::Map::new(),
             cookies: CookieJar::new(cookies_auto),
-            metrics,
+            // Pinning here (rather than at each emit site) covers every
+            // sample source — VUs, the JS host, plugin protocols — with a
+            // one-line change (see `MetricsBus::for_vu`).
+            metrics: metrics.for_vu(vu_id),
             run,
             rng: SmallRng::seed_from_u64(0x10ad ^ vu_id.wrapping_mul(0x9E37_79B9_7F4A_7C15)),
             extensions: Extensions::default(),

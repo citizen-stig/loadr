@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use hdrhistogram::serialization::{Deserializer as HdrDeserializer, Serializer as _, V2Serializer};
 use hdrhistogram::Histogram;
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
 use crate::metrics::{now_millis, MetricKind, Sample, Tags};
@@ -737,11 +738,11 @@ impl Aggregator {
                 (
                     SeriesData::Trend {
                         hist,
+                        delta_hist,
                         sum,
                         count,
                         min,
                         max,
-                        ..
                     },
                     SeriesDeltaData::Trend {
                         hdr_b64,
@@ -759,6 +760,11 @@ impl Aggregator {
                             let added: u64 = h.len();
                             let mean = h.mean() / TREND_SCALE;
                             let _ = hist.add(&h);
+                            // Also feed delta_hist so a *second* hop (this
+                            // aggregator's own take_delta, e.g. mid-tier
+                            // federation) still carries the trend onward —
+                            // otherwise it looks empty and gets dropped.
+                            let _ = delta_hist.add(&h);
                             *count += added;
                             *sum += mean * added as f64;
                             *min = min.min(*m2);
@@ -768,6 +774,49 @@ impl Aggregator {
                 }
                 _ => {}
             }
+        }
+    }
+}
+
+/// Shard-local aggregators for lock-light concurrent recording when no
+/// output consumes raw samples (`MetricsBus`'s shard mode). Each shard is an
+/// independent `Aggregator`; VUs are pinned to one shard each (see
+/// `MetricsBus::for_vu`), so only ~num_cores VUs ever contend on the same
+/// shard's lock at once. `drain_into` folds every shard's delta into one
+/// target aggregator via the same take_delta/merge_delta federation used for
+/// distributed agents — run in-process instead of over the wire.
+pub struct MetricShards {
+    shards: Vec<Mutex<Aggregator>>,
+}
+
+impl MetricShards {
+    pub fn new(n: usize) -> Self {
+        MetricShards {
+            shards: (0..n.max(1))
+                .map(|_| Mutex::new(Aggregator::new()))
+                .collect(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.shards.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.shards.is_empty()
+    }
+
+    /// Record straight into shard `idx`'s aggregator (`idx % len()`).
+    pub fn record(&self, idx: usize, sample: &Sample) {
+        self.shards[idx % self.shards.len()].lock().record(sample);
+    }
+
+    /// Drain every shard's delta into `target` — one `take_delta` +
+    /// `merge_delta` per shard.
+    pub fn drain_into(&self, target: &mut Aggregator) {
+        for shard in &self.shards {
+            let delta = shard.lock().take_delta();
+            target.merge_delta(&delta);
         }
     }
 }
@@ -951,6 +1000,38 @@ mod tests {
             assert_eq!(a.rate, b.rate, "{metric} rate perturbed by take_delta");
             assert_eq!(a.last, b.last, "{metric} last perturbed by take_delta");
         }
+    }
+
+    /// Chained federation (shard → mid → top, e.g. a distributed agent's own
+    /// shard aggregators feeding its per-agent aggregator, which then feeds
+    /// the controller) must preserve trend statistics through *two* hops of
+    /// take_delta/merge_delta, not just one. This fails against the old
+    /// `merge_delta`, which feeds `hist` but never `delta_hist`: `mid`'s own
+    /// `take_delta()` then finds `delta_hist` empty and silently drops the
+    /// series, so `top` never sees it at all.
+    #[test]
+    fn chained_delta_federation_preserves_trends() {
+        let mut shard = Aggregator::new();
+        for i in 1..=1000 {
+            shard.record(&sample("d", MetricKind::Trend, i as f64, &[]));
+        }
+
+        let mut mid = Aggregator::new();
+        mid.merge_delta(&shard.take_delta());
+
+        let mut top = Aggregator::new();
+        top.merge_delta(&mid.take_delta());
+
+        let snap = top.snapshot();
+        let a = &snap
+            .find("d")
+            .expect("trend series must survive two federation hops")
+            .agg;
+        assert_eq!(a.count, 1000);
+        let p99 = a.p99.unwrap();
+        assert!((p99 - 990.0).abs() / 990.0 < 0.01, "p99={p99}");
+        assert_eq!(a.min, Some(1.0));
+        assert_eq!(a.max, Some(1000.0));
     }
 
     /// `restore_delta` undoes exactly what `take_delta` drained (the correct

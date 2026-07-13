@@ -567,9 +567,125 @@ async fn grpc_server_streaming_collects_all_messages() {
     let response = handler.execute(&mut vu, &request).await.expect("response");
     assert_eq!(response.status, 0, "status_text: {}", response.status_text);
     assert_eq!(response.extras["message_count"], 3);
+    // `extras.messages` was removed (zero consumers in the workspace; see
+    // docs/src/protocols/grpc.md) — `message_count` is the only survivor.
+    assert!(response.extras.get("messages").is_none());
+}
+
+/// Same VU, same (endpoint, service, method) twice — first decoding, then
+/// discarding — proves discard is a per-call mode that doesn't fight the
+/// shared `CachedCall` entry (the codec's `discard` flag lives on the
+/// per-call clone, not the cached codec).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_unary_discard_skips_body() {
+    let server = GrpcEchoServer::spawn().await.expect("grpc server");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let proto_path = dir.path().join("echo.proto");
+    std::fs::write(&proto_path, ECHO_PROTO).expect("write proto");
+
+    let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
+    let mut vu = vu();
+
+    let base = GrpcRequest {
+        proto_files: vec![proto_path],
+        service: "loadr.test.Echo".to_string(),
+        method: "UnaryEcho".to_string(),
+        message: Some(Arc::new(serde_json::json!({"message": "discard-me"}))),
+        ..Default::default()
+    };
+
+    let decode_request = grpc_request(&format!("grpc://{}", server.addr), base.clone());
+    let decode_response = handler
+        .execute(&mut vu, &decode_request)
+        .await
+        .expect("response");
     assert_eq!(
-        response.extras["messages"].as_array().map(|a| a.len()),
-        Some(3)
+        decode_response.status, 0,
+        "status_text: {}",
+        decode_response.status_text
+    );
+    let json: serde_json::Value = serde_json::from_slice(&decode_response.body).expect("json body");
+    assert_eq!(json["message"], "discard-me");
+    assert_eq!(decode_response.extras["message_count"], 1);
+    assert!(decode_response.extras.get("messages").is_none());
+
+    let discard_request = grpc_request(
+        &format!("grpc://{}", server.addr),
+        GrpcRequest {
+            discard_response_body: true,
+            ..base
+        },
+    );
+    let discard_response = handler
+        .execute(&mut vu, &discard_request)
+        .await
+        .expect("response");
+    assert_eq!(
+        discard_response.status, 0,
+        "status_text: {}",
+        discard_response.status_text
+    );
+    assert!(discard_response.body.is_empty());
+    assert_eq!(discard_response.extras["message_count"], 1);
+    assert!(discard_response.extras.get("messages").is_none());
+    // Parity: for a canonical encoder, discard's wire-length accounting
+    // equals decode's re-encoded-length accounting.
+    assert_eq!(
+        discard_response.bytes_received,
+        decode_response.bytes_received
+    );
+}
+
+/// Server streaming in discard mode must still drain and count every frame
+/// (status/timing parity with decode) while skipping the body entirely.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_server_streaming_discard_counts_all_frames() {
+    let server = GrpcEchoServer::spawn().await.expect("grpc server");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let proto_path = dir.path().join("echo.proto");
+    std::fs::write(&proto_path, ECHO_PROTO).expect("write proto");
+
+    let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
+    let mut vu = vu();
+
+    let base = GrpcRequest {
+        proto_files: vec![proto_path],
+        service: "loadr.test.Echo".to_string(),
+        method: "ServerStreamEcho".to_string(),
+        message: Some(Arc::new(
+            serde_json::json!({"message": "stream", "repeat": 3}),
+        )),
+        ..Default::default()
+    };
+    let decode_request = grpc_request(&format!("grpc://{}", server.addr), base.clone());
+    let decode_response = handler
+        .execute(&mut vu, &decode_request)
+        .await
+        .expect("response");
+    assert_eq!(decode_response.extras["message_count"], 3);
+
+    let discard_request = grpc_request(
+        &format!("grpc://{}", server.addr),
+        GrpcRequest {
+            discard_response_body: true,
+            ..base
+        },
+    );
+    let discard_response = handler
+        .execute(&mut vu, &discard_request)
+        .await
+        .expect("response");
+    assert_eq!(
+        discard_response.status, 0,
+        "status_text: {}",
+        discard_response.status_text
+    );
+    assert_eq!(discard_response.extras["message_count"], 3);
+    assert!(discard_response.body.is_empty());
+    assert!(discard_response.extras.get("messages").is_none());
+    assert_eq!(
+        discard_response.bytes_received,
+        decode_response.bytes_received
     );
 }
 

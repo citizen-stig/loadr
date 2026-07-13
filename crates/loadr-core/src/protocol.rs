@@ -98,6 +98,12 @@ pub struct GrpcRequest {
     pub channel_pool_size: Option<usize>,
     /// Client transport (tonic channel vs raw hyper h2).
     pub transport: loadr_config::GrpcTransport,
+    /// Skip building `DynamicMessage`s and JSON-converting the response:
+    /// nothing in the plan reads the body (no `extract`/`assert`/`checks`
+    /// that need it, and no script `afterRequest` hook). `false` = decode
+    /// (today's behavior), so `derive(Default)` stays safe for the many
+    /// tests that construct `GrpcRequest` directly.
+    pub discard_response_body: bool,
 }
 
 #[derive(Debug, Clone, Default)]

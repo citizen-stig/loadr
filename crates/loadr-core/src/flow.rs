@@ -185,6 +185,11 @@ pub struct CompiledRequest {
     pub extract: Vec<CompiledExtractor>,
     pub assert: Vec<CompiledCondition>,
     pub checks: Vec<CompiledCondition>,
+    /// Compile-time half of the gRPC lazy-decode gate: true when `extract`,
+    /// or any `assert`/`checks` condition, needs the response body. `prepare`
+    /// ANDs in the runtime half (a script `afterRequest` hook) before setting
+    /// `GrpcRequest.discard_response_body`.
+    pub reads_response_body: bool,
     pub ws: Option<loadr_config::WsOptions>,
     pub grpc: Option<loadr_config::GrpcOptions>,
     /// Pre-parsed gRPC message(s) when every string leaf is a literal
@@ -463,6 +468,29 @@ fn compile_request(
         .filter(|g| !g.messages.is_empty() && g.messages.iter().all(json_is_literal))
         .map(|g| Arc::new(g.messages.clone()));
 
+    let extract: Vec<CompiledExtractor> = req
+        .extract
+        .iter()
+        .map(|e| CompiledExtractor::compile(e).map_err(|e| EngineError::Config(e.to_string())))
+        .collect::<Result<_, _>>()?;
+    let assert: Vec<CompiledCondition> = req
+        .assert
+        .iter()
+        .map(|c| CompiledCondition::compile(c).map_err(EngineError::Config))
+        .collect::<Result<_, _>>()?;
+    let checks: Vec<CompiledCondition> = req
+        .checks
+        .iter()
+        .map(|c| CompiledCondition::compile(c).map_err(EngineError::Config))
+        .collect::<Result<_, _>>()?;
+    // Compile-time half of the gRPC lazy-decode gate (see
+    // `CompiledRequest::reads_response_body`); `Kind::Js` always counts as
+    // reading the body since we can't know in advance what the expression
+    // touches.
+    let reads_response_body = !extract.is_empty()
+        || assert.iter().any(CompiledCondition::reads_body)
+        || checks.iter().any(CompiledCondition::reads_body);
+
     Ok(CompiledRequest {
         name: req
             .name
@@ -491,21 +519,10 @@ fn compile_request(
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect(),
-        extract: req
-            .extract
-            .iter()
-            .map(|e| CompiledExtractor::compile(e).map_err(|e| EngineError::Config(e.to_string())))
-            .collect::<Result<_, _>>()?,
-        assert: req
-            .assert
-            .iter()
-            .map(|c| CompiledCondition::compile(c).map_err(EngineError::Config))
-            .collect::<Result<_, _>>()?,
-        checks: req
-            .checks
-            .iter()
-            .map(|c| CompiledCondition::compile(c).map_err(EngineError::Config))
-            .collect::<Result<_, _>>()?,
+        extract,
+        assert,
+        checks,
+        reads_response_body,
         ws: req.ws.clone(),
         grpc,
         grpc_literal_message,
@@ -1675,6 +1692,13 @@ impl FlowRunner {
                     .collect::<Result<_, PrepareError>>()?,
                 channel_pool_size: grpc.channel_pool_size,
                 transport: grpc.transport,
+                // Skip decode when nothing in the plan reads the body and no
+                // `afterRequest` hook can see it either (`has_function` is an
+                // O(1) HashSet lookup — no extra caching machinery needed).
+                discard_response_body: !req.reads_response_body
+                    && !script
+                        .as_ref()
+                        .is_some_and(|s| s.has_function("afterRequest")),
             });
         }
         if let Some(socket) = &req.socket {

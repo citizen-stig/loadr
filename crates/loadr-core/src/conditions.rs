@@ -332,6 +332,17 @@ impl CompiledCondition {
         }
         result
     }
+
+    /// Whether evaluating this condition needs the response body
+    /// materialized (used to gate gRPC's lazy decode). Negated match, not a
+    /// positive list: an unhandled future `Kind` then defaults to "reads
+    /// body", the safe choice, instead of silently skipping needed data.
+    pub fn reads_body(&self) -> bool {
+        !matches!(
+            self.kind,
+            Kind::Status { .. } | Kind::Duration { .. } | Kind::Header { .. }
+        )
+    }
 }
 
 #[cfg(test)]
@@ -442,5 +453,22 @@ mod tests {
         let c = compile("{ type: status, equals: 200, on_failure: abort_iteration }");
         let r = c.evaluate(&response(500, ""));
         assert_eq!(r.on_failure, FailureAction::AbortIteration);
+    }
+
+    #[test]
+    fn reads_body_classifies_by_kind() {
+        // Status/duration/header never touch the body.
+        assert!(!compile("{ type: status, equals: 200 }").reads_body());
+        assert!(!compile("{ type: duration, max: 100ms }").reads_body());
+        assert!(!compile("{ type: header, header: content-type, exists: true }").reads_body());
+
+        // Everything else does (including `js`, since we can't know in
+        // advance whether the expression touches `response.body`).
+        assert!(compile("{ type: body_contains, value: x }").reads_body());
+        assert!(compile(r#"{ type: body_matches, pattern: "x" }"#).reads_body());
+        assert!(compile(r#"{ type: jsonpath, expression: "$.x" }"#).reads_body());
+        assert!(compile(r#"{ type: xpath, expression: "//x" }"#).reads_body());
+        assert!(compile("{ type: size, max: 10 }").reads_body());
+        assert!(compile(r#"{ type: js, expression: "true" }"#).reads_body());
     }
 }

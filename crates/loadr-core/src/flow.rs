@@ -1735,8 +1735,17 @@ impl RequestMetricEmitter {
                 self.emit_named("ws_msgs_received", MetricKind::Counter, received, &tags);
                 m.rate(&b.http_req_failed, response.error.is_some(), &tags);
             }
+            // gRPC is the highest-rate protocol here: use the pre-interned
+            // names (like HTTP above) instead of the per-request
+            // `format!` + registry lookup of the generic arm. gRPC responses
+            // never carry docs/rows/msgs extras, so those probes are skipped.
+            "grpc" => {
+                m.counter(&b.grpc_reqs, 1.0, &tags);
+                m.trend(&b.grpc_req_duration, t.duration_ms, &tags);
+                m.rate(&b.http_req_failed, response.failed(), &tags);
+            }
             other => {
-                // grpc/tcp/udp built-ins keep their own family name. The
+                // tcp/udp built-ins keep their own family name. The
                 // `sse`/`browser` built-ins historically share the generic
                 // `plugin` family — preserve that so existing dashboards and
                 // thresholds keep working. Everything else is a loaded protocol
@@ -1746,7 +1755,7 @@ impl RequestMetricEmitter {
                 // plugins emit `postgres_reqs` / `mysql_reqs`, and the `redis`
                 // plugin emits `redis_reqs` / `redis_req_duration`).
                 let family = match other {
-                    "grpc" | "tcp" | "udp" => other.to_string(),
+                    "tcp" | "udp" => other.to_string(),
                     "sse" | "browser" => "plugin".to_string(),
                     name => metric_family(name),
                 };

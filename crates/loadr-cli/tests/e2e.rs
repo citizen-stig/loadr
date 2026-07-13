@@ -166,6 +166,84 @@ thresholds:
     assert!(junit.contains("</testsuites>"));
 }
 
+/// Open-model dispatcher (`constant-arrival-rate`): the schedule is met with
+/// zero dropped iterations when workers keep up, and `--worker-threads`
+/// bounds the runtime. Exercises the Notify-based worker wake path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn arrival_rate_keeps_schedule_without_drops() {
+    let server = loadr_testserver::HttpTestServer::spawn()
+        .await
+        .expect("server");
+    let dir = tempfile::tempdir().expect("tmp");
+    let yaml = format!(
+        r#"
+name: e2e-arrival-rate
+defaults:
+  http: {{ base_url: {base} }}
+scenarios:
+  arrivals:
+    executor: constant-arrival-rate
+    rate: 200
+    duration: 2s
+    pre_allocated_vus: 20
+    max_vus: 60
+    flow:
+      - request:
+          name: json
+          url: /json
+          checks:
+            - {{ type: status, equals: 200 }}
+"#,
+        base = server.base_url()
+    );
+    let test = write_test(dir.path(), "arrivals.yaml", &yaml);
+    let summary_path = dir.path().join("summary.json");
+
+    let output = Command::new(BIN)
+        .args([
+            "run",
+            "--quiet",
+            "--worker-threads",
+            "2",
+            "--summary-export",
+            summary_path.to_str().expect("path"),
+            test.to_str().expect("path"),
+        ])
+        .output()
+        .expect("run loadr");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "expected success.\nstdout: {stdout}\nstderr: {stderr}"
+    );
+
+    let summary: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&summary_path).expect("summary file"))
+            .expect("summary json");
+    let metric_sum = |name: &str| -> f64 {
+        summary["metrics"]
+            .as_array()
+            .expect("metrics")
+            .iter()
+            .find(|m| m["metric"] == name)
+            .and_then(|m| m["agg"]["sum"].as_f64())
+            .unwrap_or(0.0)
+    };
+    let iterations = metric_sum("iterations");
+    // 200/s over 2s = ~400; allow generous slack for CI clocks but require
+    // that the dispatcher actually drove the schedule.
+    assert!(
+        (300.0..=460.0).contains(&iterations),
+        "iterations off schedule: {iterations}\nstdout: {stdout}"
+    );
+    assert_eq!(
+        metric_sum("dropped_iterations"),
+        0.0,
+        "dropped iterations with idle workers\nstdout: {stdout}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn threshold_failure_exits_99() {
     let server = loadr_testserver::HttpTestServer::spawn()

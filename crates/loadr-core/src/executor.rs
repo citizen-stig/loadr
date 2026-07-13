@@ -1132,4 +1132,63 @@ mod tests {
         assert!(!gate.is_open());
         assert!(!gate.try_claim());
     }
+
+    /// Models the worker park protocol against `publish`/`close`, repeatedly
+    /// hitting both sides of the registration/re-check race: every published
+    /// unit must be claimed or returned by `close` (no unit lost to a missed
+    /// wake) and every parker must exit on the close broadcast.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn gate_broadcast_race_loses_no_wakes() {
+        for _ in 0..200 {
+            let gate = Arc::new(ArrivalGate::new());
+            let claimed = Arc::new(AtomicU64::new(0));
+            let workers: Vec<_> = (0..4)
+                .map(|_| {
+                    let (gate, claimed) = (gate.clone(), claimed.clone());
+                    tokio::spawn(async move {
+                        loop {
+                            while gate.is_open() && gate.try_claim() {
+                                claimed.fetch_add(1, Ordering::SeqCst);
+                                tokio::task::yield_now().await;
+                            }
+                            if !gate.is_open() {
+                                break;
+                            }
+                            let notified = gate.notify.notified();
+                            gate.parked.fetch_add(1, Ordering::SeqCst);
+                            if !gate.is_open() {
+                                gate.parked.fetch_sub(1, Ordering::SeqCst);
+                                break;
+                            }
+                            if gate.budget.load(Ordering::SeqCst) > 0 {
+                                gate.parked.fetch_sub(1, Ordering::SeqCst);
+                                continue;
+                            }
+                            notified.await;
+                            gate.parked.fetch_sub(1, Ordering::SeqCst);
+                        }
+                    })
+                })
+                .collect();
+            let mut expiry = None;
+            let mut published = 0u64;
+            for i in 0..50u64 {
+                let due = 1 + (i % 3);
+                gate.publish(due, &mut expiry, Instant::now(), Duration::from_secs(3600));
+                published += due;
+                tokio::task::yield_now().await;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await; // let claimers drain
+            let dropped = gate.close();
+            let joined = tokio::time::timeout(Duration::from_secs(5), async {
+                for w in workers {
+                    w.await.unwrap();
+                }
+            })
+            .await;
+            assert!(joined.is_ok(), "a parked worker missed the close broadcast");
+            assert_eq!(claimed.load(Ordering::SeqCst) + dropped, published);
+            assert_eq!(gate.parked.load(Ordering::SeqCst), 0);
+        }
+    }
 }

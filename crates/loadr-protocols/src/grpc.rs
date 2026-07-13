@@ -41,6 +41,18 @@ fn pool_cache() -> &'static Mutex<HashMap<String, DescriptorPool>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// tower::buffer queue size per pooled channel (`LOADR_GRPC_BUFFER_SIZE`).
+fn grpc_buffer_size() -> usize {
+    static SIZE: OnceLock<usize> = OnceLock::new();
+    *SIZE.get_or_init(|| {
+        std::env::var("LOADR_GRPC_BUFFER_SIZE")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(4096)
+            .max(1)
+    })
+}
+
 fn cache_get(key: &str) -> Option<DescriptorPool> {
     pool_cache()
         .lock()
@@ -227,7 +239,11 @@ impl GrpcHandler {
             .initial_stream_window_size(4 * 1024 * 1024)
             .initial_connection_window_size(8 * 1024 * 1024)
             .http2_keep_alive_interval(std::time::Duration::from_secs(30))
-            .keep_alive_while_idle(true);
+            .keep_alive_while_idle(true)
+            // Many VUs share each pooled channel; widen the tower::buffer
+            // request queue (tonic default 1024) so `ready()` doesn't stall
+            // before the connection itself is the limit.
+            .buffer_size(grpc_buffer_size());
         if tls {
             ep = ep
                 .tls_config(self.tls.clone().unwrap_or_default())

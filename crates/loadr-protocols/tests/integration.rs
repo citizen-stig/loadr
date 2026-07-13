@@ -15,7 +15,8 @@ use loadr_core::protocol::{
 };
 use loadr_core::vu::{RunContext, VuContext};
 use loadr_protocols::{
-    builtin_registry, GraphqlHandler, GrpcHandler, HttpHandler, TcpHandler, UdpHandler, WsHandler,
+    builtin_registry, GraphqlHandler, GrpcHandler, HttpHandler, NoopHandler, TcpHandler,
+    UdpHandler, WsHandler,
 };
 use loadr_testserver::{
     GrpcEchoServer, HttpTestServer, TcpEchoServer, UdpEchoServer, WsEchoServer,
@@ -76,6 +77,32 @@ fn req(url: &str, protocol: &str) -> PreparedRequest {
 
 fn http_handler() -> HttpHandler {
     HttpHandler::new(&HttpDefaults::default(), Path::new(".")).expect("http handler")
+}
+
+// ---------------------------------------------------------------------------
+// No-op
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn noop_accepts_rendered_body_and_reports_success() {
+    let handler = NoopHandler::new();
+    let mut vu = vu();
+    let mut request = req("noop://local", "noop");
+    request.method = "POST".to_string();
+    request.body = Bytes::from_static(b"generated-payload");
+
+    let response = handler.execute(&mut vu, &request).await.expect("response");
+    assert_eq!(response.status, 200);
+    assert_eq!(response.status_text, "OK");
+    assert_eq!(response.protocol_version, "noop");
+    assert_eq!(response.url, "noop://local");
+    assert_eq!(response.bytes_sent, 17);
+    assert_eq!(response.bytes_received, 0);
+    assert!(response.body.is_empty());
+    assert!(response.headers.is_empty());
+    assert!(response.error.is_none());
+    assert_eq!(response.timings.duration_ms, 0.0);
+    assert!(!response.failed());
 }
 
 // ---------------------------------------------------------------------------

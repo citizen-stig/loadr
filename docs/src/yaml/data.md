@@ -117,3 +117,8 @@ See [Native data-source plugins](../plugins/developing.md#native-data-source-plu
 for how to write one, and
 [the gRPC feeder design](../custom-grpc-plugin-feeder.md) for the motivating
 use case.
+
+To measure the generator's maximum throughput without involving gRPC or another
+backend, render a plugin value into a request handled by the built-in
+[`noop` protocol](../protocols/noop.md). The `noop_reqs` per-second result then
+covers feeder generation, interpolation, and the normal engine metric path.

@@ -93,6 +93,8 @@ pub const BUILTIN_METRIC_DEFS: &[(&str, MetricKind, bool)] = &[
     ("tcp_req_duration", MetricKind::Trend, true),
     ("udp_reqs", MetricKind::Counter, false),
     ("udp_req_duration", MetricKind::Trend, true),
+    ("noop_reqs", MetricKind::Counter, false),
+    ("noop_req_duration", MetricKind::Trend, true),
     ("graphql_reqs", MetricKind::Counter, false),
     ("graphql_req_duration", MetricKind::Trend, true),
 ];

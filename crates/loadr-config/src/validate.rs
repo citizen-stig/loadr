@@ -44,6 +44,8 @@ pub const BUILTIN_METRICS: &[&str] = &[
     "grpc_req_duration",
     "tcp_req_duration",
     "udp_req_duration",
+    "noop_reqs",
+    "noop_req_duration",
     "graphql_req_duration",
 ];
 
@@ -59,6 +61,7 @@ const KNOWN_PROTOCOLS: &[&str] = &[
     "browser",
     "tcp",
     "udp",
+    "noop",
 ];
 const HTTP_METHODS: &[&str] = &[
     "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE", "CONNECT",
@@ -619,7 +622,7 @@ impl Ctx<'_> {
                     d = d.with_suggestion(s);
                 } else {
                     d = d.with_suggestion(
-                        "built-in protocols: http, ws, grpc, graphql, tcp, udp — or list a protocol plugin under `plugins:`",
+                        "built-in protocols: http, ws, grpc, graphql, tcp, udp, noop — or list a protocol plugin under `plugins:`",
                     );
                 }
                 self.push(d);
@@ -1136,6 +1139,24 @@ thresholds:
             diags.iter().all(|d| !d.path.starts_with("thresholds")),
             "{diags:?}"
         );
+    }
+
+    #[test]
+    fn noop_protocol_and_metrics_are_known() {
+        let yaml = r#"
+scenarios:
+  s:
+    executor: constant-vus
+    vus: 1
+    duration: 1s
+    flow:
+      - request: { protocol: noop, url: noop://local }
+thresholds:
+  noop_reqs: "count>0"
+  noop_req_duration: "p(95)==0"
+"#;
+        let diags = validate(&plan_of(yaml), Some(yaml), &ValidateOptions::default());
+        assert!(diags.is_empty(), "{diags:?}");
     }
 
     #[test]

@@ -15,7 +15,7 @@ Kinds: **Counter** (sum), **Gauge** (last/min/max), **Rate** (pass fraction),
 | `requests_in_flight` | Gauge | active protocol requests |
 | `checks` | Rate | check pass rate (tag `check` = name) |
 | `vu_exceptions` | Counter | uncaught JS exceptions in hooks/`exec`/`js` steps (tags `exception` = normalised message, `site`) |
-| `data_sent` / `data_received` | Counter | bytes on the wire |
+| `data_sent` / `data_received` | Counter | request/response payload bytes reported by the protocol |
 
 ## HTTP (and GraphQL)
 
@@ -39,6 +39,7 @@ Kinds: **Counter** (sum), **Gauge** (last/min/max), **Rate** (pass fraction),
 | `graphql_reqs` / `graphql_req_duration` | Counter / Trend |
 | `tcp_reqs` / `tcp_req_duration` | Counter / Trend |
 | `udp_reqs` / `udp_req_duration` | Counter / Trend |
+| `noop_reqs` / `noop_req_duration` | Counter / Trend (duration is always zero) |
 
 ## Standard tags
 

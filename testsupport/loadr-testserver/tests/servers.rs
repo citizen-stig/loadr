@@ -445,6 +445,30 @@ async fn grpc_unary_echo() {
 }
 
 #[tokio::test]
+async fn grpc_tls_url_uses_https_and_connects() {
+    let server = GrpcEchoServer::spawn_tls().await.expect("spawn tls");
+    assert!(server.url().starts_with("https://127.0.0.1:"));
+    assert_eq!(server.base_url(), server.url());
+
+    let certificate =
+        tonic::transport::Certificate::from_pem(server.cert_pem().expect("TLS server certificate"));
+    let endpoint = tonic::transport::Endpoint::from_shared(server.url())
+        .expect("endpoint")
+        .tls_config(tonic::transport::ClientTlsConfig::new().ca_certificate(certificate))
+        .expect("TLS config");
+    let channel = within(endpoint.connect()).await.expect("TLS connect");
+    let mut client = EchoClient::new(channel);
+    let response = within(client.unary_echo(EchoRequest {
+        message: "hello TLS gRPC".to_string(),
+        repeat: 0,
+    }))
+    .await
+    .expect("unary")
+    .into_inner();
+    assert_eq!(response.message, "hello TLS gRPC");
+}
+
+#[tokio::test]
 async fn grpc_server_stream_echo() {
     let server = GrpcEchoServer::spawn().await.expect("spawn");
     let mut client = within(EchoClient::connect(server.url()))

@@ -61,6 +61,41 @@ impl ProtocolHandler for MockHttpHandler {
     }
 }
 
+/// A mock `data_source` plugin: counts `init`/`next_row` calls and emits rows
+/// with a single `tick` column.
+struct MockDataSource {
+    inits: Arc<AtomicU64>,
+    rows: Arc<AtomicU64>,
+}
+
+impl loadr_core::DataSourcePlugin for MockDataSource {
+    fn name(&self) -> &str {
+        "fake"
+    }
+
+    fn init(
+        &mut self,
+        source_configs: &indexmap::IndexMap<String, serde_json::Value>,
+    ) -> Result<(), String> {
+        assert!(
+            source_configs.contains_key("gen"),
+            "data.gen config delivered to the plugin"
+        );
+        self.inits.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn next_row(
+        &self,
+        _ctx: &loadr_core::PluginRowCtx<'_>,
+    ) -> Result<loadr_core::PluginRowResult, String> {
+        let n = self.rows.fetch_add(1, Ordering::Relaxed);
+        let mut row = indexmap::IndexMap::new();
+        row.insert("tick".to_string(), n.to_string());
+        Ok(loadr_core::PluginRowResult::Row(row))
+    }
+}
+
 fn mock_deps() -> RunnerDeps {
     RunnerDeps {
         protocols: Arc::new(|_plan, _base_dir| {
@@ -71,6 +106,34 @@ fn mock_deps() -> RunnerDeps {
             Ok(registry)
         }),
         script: None,
+        data_sources: None,
+    }
+}
+
+/// `mock_deps` plus a data-source factory that backs every declared plugin
+/// with a [`MockDataSource`] reporting into the shared counters.
+fn mock_deps_with_data_sources(inits: &Arc<AtomicU64>, rows: &Arc<AtomicU64>) -> RunnerDeps {
+    let inits = Arc::clone(inits);
+    let rows = Arc::clone(rows);
+    RunnerDeps {
+        data_sources: Some(Arc::new(move |plugin_refs, _base_dir| {
+            let mut sources: HashMap<String, Box<dyn loadr_core::DataSourcePlugin>> =
+                HashMap::new();
+            for plugin_ref in plugin_refs {
+                if !plugin_ref.enabled {
+                    continue;
+                }
+                sources.insert(
+                    plugin_ref.name.clone(),
+                    Box::new(MockDataSource {
+                        inits: Arc::clone(&inits),
+                        rows: Arc::clone(&rows),
+                    }),
+                );
+            }
+            Ok(sources)
+        })),
+        ..mock_deps()
     }
 }
 
@@ -122,6 +185,7 @@ fn plugin_gated_deps() -> RunnerDeps {
             Ok(registry)
         }),
         script: None,
+        data_sources: None,
     }
 }
 
@@ -792,6 +856,88 @@ scenarios:
         .find(|m| m.metric == "http_req_failed")
         .expect("http_req_failed metric present");
     assert_eq!(failed.agg.sum, 0.0, "no `no handler registered` failures");
+
+    handle.shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// Plugin-backed data sources feed distributed runs through the factory seam
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn plugin_data_source_feeds_distributed_run() {
+    let handle = start_controller(Duration::from_secs(6)).await;
+    let addr = format!("http://{}", handle.addr());
+
+    let inits = Arc::new(AtomicU64::new(0));
+    let rows = Arc::new(AtomicU64::new(0));
+    let _a1 = spawn_agent_with_deps(
+        addr.clone(),
+        "d1",
+        None,
+        None,
+        mock_deps_with_data_sources(&inits, &rows),
+    );
+    let _a2 = spawn_agent_with_deps(
+        addr.clone(),
+        "d2",
+        None,
+        None,
+        mock_deps_with_data_sources(&inits, &rows),
+    );
+    wait_until(
+        || handle.agents().iter().filter(|a| a.healthy).count() == 2,
+        Duration::from_secs(10),
+        "2 agents registered",
+    )
+    .await;
+
+    let plan = r#"
+name: dist-plugin-data
+plugins:
+  - name: fake
+scenarios:
+  s:
+    executor: shared-iterations
+    vus: 2
+    iterations: 40
+    flow:
+      - request: { url: "http://mock.local/x?t=${data.gen.tick}" }
+data:
+  gen:
+    type: plugin
+    source: fake
+    config: { flavor: "distributed" }
+"#;
+    let run_id = handle
+        .submit(plan.to_string(), quick_submit())
+        .await
+        .expect("submit");
+
+    wait_until(
+        || is_terminal(&run_state(&handle, &run_id)),
+        Duration::from_secs(30),
+        "run completion",
+    )
+    .await;
+    assert_eq!(run_state(&handle, &run_id), "finished");
+
+    let summary = handle.run_summary(&run_id).expect("merged summary");
+    let http_reqs = summary
+        .metrics
+        .iter()
+        .find(|m| m.metric == "http_reqs")
+        .expect("http_reqs metric");
+    assert_eq!(http_reqs.agg.sum, 40.0, "central http_reqs sum");
+
+    // Each agent built its data sources once (init per assignment) and every
+    // iteration pulled exactly one row through the plugin.
+    assert_eq!(inits.load(Ordering::Relaxed), 2, "one init per agent");
+    assert_eq!(
+        rows.load(Ordering::Relaxed),
+        40,
+        "one plugin row per iteration across the fleet"
+    );
 
     handle.shutdown();
 }

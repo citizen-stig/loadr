@@ -41,12 +41,28 @@ pub type ScriptFactory = Arc<
         + Sync,
 >;
 
+/// Builds the plugin-backed data sources for one run from the plan's
+/// `plugins:` declarations and the run's base directory (where data files
+/// were materialized). The returned map is keyed by the plan's `plugins:`
+/// entry name — that is what `data.<name>.source` refers to.
+pub type DataSourceFactory = Arc<
+    dyn Fn(
+            &[loadr_config::PluginRef],
+            &std::path::Path,
+        ) -> Result<HashMap<String, Box<dyn loadr_core::DataSourcePlugin>>, String>
+        + Send
+        + Sync,
+>;
+
 /// Injected runtime dependencies (keeps `loadr-agent` decoupled from the
 /// protocol and JS crates).
 #[derive(Clone)]
 pub struct RunnerDeps {
     pub protocols: ProtocolFactory,
     pub script: Option<ScriptFactory>,
+    /// `None` means this agent build has no data-source plugin support: plans
+    /// that declare `data.*: { type: plugin }` sources fail engine setup.
+    pub data_sources: Option<DataSourceFactory>,
 }
 
 /// TLS settings for the agent → controller channel.
@@ -379,6 +395,10 @@ fn handle_assignment(
     let plan = loaded.plan;
 
     let protocols = (config.deps.protocols)(&plan, &run_dir)?;
+    let data_sources = match &config.deps.data_sources {
+        Some(factory) => factory(&plan.plugins, &run_dir)?,
+        None => HashMap::new(),
+    };
     let script = match (&plan.js, &config.deps.script) {
         (Some(js), Some(factory)) => Some(factory(js, &run_dir)?),
         (Some(_), None) => {
@@ -406,7 +426,7 @@ fn handle_assignment(
             partition: Some((a.partition_index, a.partition_count)),
             extra_tags,
             snapshot_interval: Duration::from_millis(500),
-            data_sources: Default::default(),
+            data_sources,
         },
     )
     .map_err(|e| format!("engine setup failed: {e}"))?;

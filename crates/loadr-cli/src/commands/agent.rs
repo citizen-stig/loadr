@@ -78,6 +78,32 @@ pub fn execute(args: AgentArgs) -> anyhow::Result<i32> {
                 .map(|e| Arc::new(e) as Arc<dyn loadr_core::ScriptEngine>)
                 .map_err(|e| e.to_string())
         });
+        // Data-source plugins declared in the plan. The controller ships no
+        // plugin binaries: they resolve on this host from LOADR_PLUGINS_DIR
+        // or ~/.loadr/plugins (or an explicit `path:` in the plan).
+        let data_sources: loadr_agent::DataSourceFactory = Arc::new(|plugin_refs, _base_dir| {
+            let plugins_dir = loadr_plugin_api::default_plugins_dir();
+            let mut sources: HashMap<String, Box<dyn loadr_core::DataSourcePlugin>> =
+                HashMap::new();
+            for plugin_ref in plugin_refs {
+                if !plugin_ref.enabled {
+                    continue;
+                }
+                let loaded = loadr_plugin_api::PluginRegistry::load_ref(plugin_ref, &plugins_dir)
+                    .map_err(|e| format!("plugin `{}`: {e}", plugin_ref.name))?;
+                if let loadr_plugin_api::LoadedPlugin::Service {
+                    data_source: Some(data_source),
+                    ..
+                } = loaded
+                {
+                    // Keyed by the plan's `plugins:` name, not the plugin's
+                    // self-reported `info().name` -- that's what
+                    // `data.<name>.source` refers to.
+                    sources.insert(plugin_ref.name.clone(), data_source);
+                }
+            }
+            Ok(sources)
+        });
 
         let config = loadr_agent::AgentConfig {
             controller_addr: controller_addr.clone(),
@@ -94,6 +120,7 @@ pub fn execute(args: AgentArgs) -> anyhow::Result<i32> {
             deps: loadr_agent::RunnerDeps {
                 protocols,
                 script: Some(script),
+                data_sources: Some(data_sources),
             },
         };
 

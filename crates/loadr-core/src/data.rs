@@ -87,13 +87,12 @@ impl std::fmt::Debug for Feed {
 pub struct VuFeedState {
     cursors: HashMap<String, usize>,
     shuffles: HashMap<String, Vec<usize>>,
-    /// Source → shared counter slot. Shared across parallel branches of one
+    /// Source → shared counter slot, shared across parallel branches of one
     /// VU (`fork_for_parallel`) so branches never observe the same
-    /// `(vu, source, seq)`; locked only on a branch's first touch of a
-    /// source.
+    /// `(vu, source, seq)`.
     plugin_sequences: Arc<Mutex<HashMap<String, Arc<AtomicU64>>>>,
-    /// Branch-local cache of slots from `plugin_sequences`: the steady-state
-    /// fetch is a borrowed lookup plus `fetch_add` — no lock, no allocation.
+    /// Branch-local cache of slots from `plugin_sequences`; steady-state
+    /// fetches skip the lock and key allocation.
     local_sequences: HashMap<String, Arc<AtomicU64>>,
 }
 
@@ -112,22 +111,22 @@ impl VuFeedState {
     }
 
     fn next_plugin_seq(&mut self, source: &str) -> u64 {
-        // Relaxed suffices for both `fetch_add`s: the counter is the only
-        // datum shared through the slot — uniqueness needs only the
-        // atomicity of `fetch_add`, and no other memory is published or
-        // acquired through it.
+        // Relaxed: uniqueness needs only `fetch_add`'s atomicity; no other
+        // memory is published through the slot.
         if let Some(slot) = self.local_sequences.get(source) {
             return slot.fetch_add(1, Ordering::Relaxed);
         }
-        // First touch of `source` on this branch: resolve (or create) the
-        // shared slot, then cache it so later fetches skip the lock and the
-        // key allocation.
-        let slot = Arc::clone(
-            self.plugin_sequences
-                .lock()
-                .entry(source.to_string())
-                .or_default(),
-        );
+        let slot = {
+            let mut shared = self.plugin_sequences.lock();
+            match shared.get(source) {
+                Some(slot) => Arc::clone(slot),
+                None => {
+                    let slot = Arc::new(AtomicU64::new(0));
+                    shared.insert(source.to_string(), Arc::clone(&slot));
+                    slot
+                }
+            }
+        };
         let seq = slot.fetch_add(1, Ordering::Relaxed);
         self.local_sequences.insert(source.to_string(), slot);
         seq
@@ -881,37 +880,30 @@ mod tests {
     fn next_plugin_seq_unique_across_threaded_forks() {
         const ROUNDS: usize = 100;
         const PER_BRANCH: u64 = 20;
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let parent = VuFeedState::new();
-            let mut seen: Vec<u64> = Vec::new();
-            for _ in 0..ROUNDS {
-                // Fresh forks each round: both branches start with a cold
-                // local cache, so their first fetches race the shared-map
-                // slot resolution from both sides.
-                let mut a = parent.fork_for_parallel();
-                let mut b = parent.fork_for_parallel();
-                let (va, vb) = std::thread::scope(|s| {
-                    let ta = s.spawn(move || {
-                        (0..PER_BRANCH)
-                            .map(|_| a.next_plugin_seq("src"))
-                            .collect::<Vec<_>>()
-                    });
-                    let tb = s.spawn(move || {
-                        (0..PER_BRANCH)
-                            .map(|_| b.next_plugin_seq("src"))
-                            .collect::<Vec<_>>()
-                    });
-                    (ta.join().expect("branch a"), tb.join().expect("branch b"))
+        let parent = VuFeedState::new();
+        let mut seen: Vec<u64> = Vec::new();
+        for _ in 0..ROUNDS {
+            // Fresh forks each round: both branches start with a cold
+            // local cache, so their first fetches race the shared-map
+            // slot resolution from both sides.
+            let mut a = parent.fork_for_parallel();
+            let mut b = parent.fork_for_parallel();
+            let (va, vb) = std::thread::scope(|s| {
+                let ta = s.spawn(move || {
+                    (0..PER_BRANCH)
+                        .map(|_| a.next_plugin_seq("src"))
+                        .collect::<Vec<_>>()
                 });
-                seen.extend(va);
-                seen.extend(vb);
-            }
-            tx.send(seen).ok();
-        });
-        let mut seen = rx
-            .recv_timeout(std::time::Duration::from_secs(30))
-            .expect("threaded seq test timed out");
+                let tb = s.spawn(move || {
+                    (0..PER_BRANCH)
+                        .map(|_| b.next_plugin_seq("src"))
+                        .collect::<Vec<_>>()
+                });
+                (ta.join().expect("branch a"), tb.join().expect("branch b"))
+            });
+            seen.extend(va);
+            seen.extend(vb);
+        }
         seen.sort_unstable();
         let expected: Vec<u64> = (0..ROUNDS as u64 * 2 * PER_BRANCH).collect();
         assert_eq!(seen, expected, "sequence values must be exactly 0..total");

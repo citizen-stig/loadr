@@ -3501,6 +3501,7 @@ name = "loadr-protocols"
 version = "1.0.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "brotli",
  "bytes",
  "flate2",

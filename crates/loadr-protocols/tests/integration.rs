@@ -5,6 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::Engine as _;
 use bytes::Bytes;
 use loadr_config::{HttpDefaults, HttpVersionPref, TlsConfig};
 use loadr_core::data::DataFeeds;
@@ -20,6 +21,7 @@ use loadr_protocols::{
 use loadr_testserver::{
     GrpcEchoServer, HttpTestServer, TcpEchoServer, UdpEchoServer, WsEchoServer,
 };
+use prost::Message as _;
 
 const ECHO_PROTO: &str = r#"syntax = "proto3";
 
@@ -35,11 +37,13 @@ service Echo {
 message EchoRequest {
   string message = 1;
   int32 repeat = 2;
+  bytes payload = 3;
 }
 
 message EchoResponse {
   string message = 1;
   int32 index = 2;
+  bytes payload = 3;
 }
 "#;
 
@@ -640,6 +644,145 @@ async fn grpc_unary_via_reflection() {
     );
     let json: serde_json::Value = serde_json::from_slice(&response.body).expect("json body");
     assert_eq!(json["message"], "reflected");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_rendered_unary_bytes_sent_and_payload_roundtrip() {
+    let server = GrpcEchoServer::spawn().await.expect("grpc server");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let proto_path = dir.path().join("echo.proto");
+    std::fs::write(&proto_path, ECHO_PROTO).expect("write proto");
+
+    let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
+    let mut vu = vu();
+
+    let payload: Vec<u8> = (0..200u16).map(|i| (i % 251) as u8).collect();
+    let payload_b64 = base64::engine::general_purpose::STANDARD.encode(&payload);
+    let request = grpc_request(
+        &format!("grpc://{}", server.addr),
+        GrpcRequest {
+            proto_files: vec![proto_path],
+            service: "loadr.test.Echo".to_string(),
+            method: "UnaryEcho".to_string(),
+            message: Some(Arc::new(serde_json::json!({
+                "message": "parity",
+                "payload": payload_b64.as_str(),
+            }))),
+            ..Default::default()
+        },
+    );
+    let response = handler.execute(&mut vu, &request).await.expect("response");
+    assert_eq!(response.status, 0, "status_text: {}", response.status_text);
+
+    // Server-observed request parity: the echo copies the payload through.
+    let json: serde_json::Value = serde_json::from_slice(&response.body).expect("json body");
+    assert_eq!(json["message"], "parity");
+    assert_eq!(json["payload"], payload_b64.as_str());
+
+    // bytes_sent parity with the base `encoded_len() + 5` formula, using the
+    // generated prost type as an independent oracle.
+    let oracle = loadr_testserver::pb::EchoRequest {
+        message: "parity".to_string(),
+        payload,
+        ..Default::default()
+    };
+    assert_eq!(response.bytes_sent, oracle.encoded_len() as u64 + 5);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_rendered_client_streaming_bytes_sent_parity() {
+    let server = GrpcEchoServer::spawn().await.expect("grpc server");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let proto_path = dir.path().join("echo.proto");
+    std::fs::write(&proto_path, ECHO_PROTO).expect("write proto");
+
+    let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
+    let mut vu = vu();
+
+    let big = vec![7u8; 300];
+    let big_b64 = base64::engine::general_purpose::STANDARD.encode(&big);
+    let request = grpc_request(
+        &format!("grpc://{}", server.addr),
+        GrpcRequest {
+            proto_files: vec![proto_path.clone()],
+            service: "loadr.test.Echo".to_string(),
+            method: "ClientStreamEcho".to_string(),
+            messages: Arc::new(vec![
+                serde_json::json!({"message": "one"}),
+                serde_json::json!({"message": "two", "payload": big_b64.as_str()}),
+                serde_json::json!({}),
+            ]),
+            ..Default::default()
+        },
+    );
+    let response = handler.execute(&mut vu, &request).await.expect("response");
+    assert_eq!(response.status, 0, "status_text: {}", response.status_text);
+
+    let expected: u64 = [
+        loadr_testserver::pb::EchoRequest {
+            message: "one".to_string(),
+            ..Default::default()
+        },
+        loadr_testserver::pb::EchoRequest {
+            message: "two".to_string(),
+            payload: big,
+            ..Default::default()
+        },
+        loadr_testserver::pb::EchoRequest::default(),
+    ]
+    .iter()
+    .map(|m| m.encoded_len() as u64 + 5)
+    .sum();
+    assert_eq!(response.bytes_sent, expected);
+
+    // No message at all still sends exactly one default (empty) frame.
+    let empty = grpc_request(
+        &format!("grpc://{}", server.addr),
+        GrpcRequest {
+            proto_files: vec![proto_path],
+            service: "loadr.test.Echo".to_string(),
+            method: "UnaryEcho".to_string(),
+            ..Default::default()
+        },
+    );
+    let response = handler
+        .execute(&mut vu, &empty)
+        .await
+        .expect("empty response");
+    assert_eq!(response.status, 0, "status_text: {}", response.status_text);
+    assert_eq!(response.bytes_sent, 5);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_rendered_message_schema_mismatch_error() {
+    let server = GrpcEchoServer::spawn().await.expect("grpc server");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let proto_path = dir.path().join("echo.proto");
+    std::fs::write(&proto_path, ECHO_PROTO).expect("write proto");
+
+    let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
+    let mut vu = vu();
+
+    let request = grpc_request(
+        &format!("grpc://{}", server.addr),
+        GrpcRequest {
+            proto_files: vec![proto_path],
+            service: "loadr.test.Echo".to_string(),
+            method: "UnaryEcho".to_string(),
+            message: Some(Arc::new(serde_json::json!({"message": 42}))),
+            ..Default::default()
+        },
+    );
+    let error = handler
+        .execute(&mut vu, &request)
+        .await
+        .expect_err("schema mismatch");
+    assert!(
+        error
+            .to_string()
+            .contains("message does not match `loadr.test.EchoRequest`"),
+        "unexpected error: {error}"
+    );
 }
 
 // ---------------------------------------------------------------------------

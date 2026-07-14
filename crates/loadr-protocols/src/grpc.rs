@@ -85,16 +85,18 @@ impl DynamicCodec {
     }
 }
 
-/// Outbound message: built dynamically per call, or pre-encoded bytes served
-/// from the per-VU literal-message cache (skips JSON→DynamicMessage→encode).
-#[derive(Clone)]
-enum Outbound {
-    Dynamic(DynamicMessage),
-    Encoded(Bytes),
+/// Encode one outbound message body. tonic adds the 5-byte gRPC frame header
+/// (compression flag + length) outside the codec, hence the `+ 5` per frame
+/// in `bytes_sent` accounting.
+fn encode_message(message: &DynamicMessage) -> Bytes {
+    Bytes::from(message.encode_to_vec())
 }
 
 impl Codec for DynamicCodec {
-    type Encode = Outbound;
+    // The encode side carries pre-encoded frames: `execute()` encodes each
+    // message exactly once (rendered messages at request-build time, literal
+    // ones via the per-VU cache); the decode side still yields DynamicMessage.
+    type Encode = Bytes;
     type Decode = DynamicMessage;
     type Encoder = DynamicEncoder;
     type Decoder = DynamicDecoder;
@@ -113,19 +115,12 @@ impl Codec for DynamicCodec {
 struct DynamicEncoder;
 
 impl Encoder for DynamicEncoder {
-    type Item = Outbound;
+    type Item = Bytes;
     type Error = Status;
 
-    fn encode(&mut self, item: Outbound, dst: &mut EncodeBuf<'_>) -> Result<(), Status> {
-        match item {
-            Outbound::Dynamic(message) => message
-                .encode(dst)
-                .map_err(|e| Status::internal(format!("failed to encode message: {e}"))),
-            Outbound::Encoded(bytes) => {
-                dst.put_slice(&bytes);
-                Ok(())
-            }
-        }
+    fn encode(&mut self, item: Bytes, dst: &mut EncodeBuf<'_>) -> Result<(), Status> {
+        dst.put_slice(&item);
+        Ok(())
     }
 }
 
@@ -692,15 +687,14 @@ impl ProtocolHandler for GrpcHandler {
                     let mut frames = Vec::with_capacity(raw.len());
                     let mut total: u64 = 0;
                     for json in raw {
-                        let message =
-                            DynamicMessage::deserialize(cached.input_desc.clone(), json)
-                                .map_err(|e| {
-                                    ProtocolError::InvalidRequest(format!(
-                                        "message does not match `{}`: {e}",
-                                        cached.input_desc.full_name()
-                                    ))
-                                })?;
-                        let bytes = Bytes::from(message.encode_to_vec());
+                        let message = DynamicMessage::deserialize(cached.input_desc.clone(), json)
+                            .map_err(|e| {
+                                ProtocolError::InvalidRequest(format!(
+                                    "message does not match `{}`: {e}",
+                                    cached.input_desc.full_name()
+                                ))
+                            })?;
+                        let bytes = encode_message(&message);
                         total += bytes.len() as u64 + 5;
                         frames.push(bytes);
                     }
@@ -713,12 +707,7 @@ impl ProtocolHandler for GrpcHandler {
                     );
                 }
                 let enc = &cached.encoded[&key];
-                let outbound: Vec<Outbound> = enc
-                    .frames
-                    .iter()
-                    .map(|b| Outbound::Encoded(b.clone()))
-                    .collect();
-                (outbound, enc.bytes_sent)
+                (enc.frames.clone(), enc.bytes_sent)
             }
             None => {
                 let raw: Vec<&serde_json::Value> = if !grpc.messages.is_empty() {
@@ -726,24 +715,24 @@ impl ProtocolHandler for GrpcHandler {
                 } else {
                     grpc.message.iter().map(|m| m.as_ref()).collect()
                 };
-                let mut messages = Vec::with_capacity(raw.len().max(1));
+                let mut outbound = Vec::with_capacity(raw.len().max(1));
                 if raw.is_empty() {
-                    messages.push(DynamicMessage::new(cached.input_desc.clone()));
+                    outbound.push(encode_message(&DynamicMessage::new(
+                        cached.input_desc.clone(),
+                    )));
                 } else {
                     for json in raw {
-                        let message =
-                            DynamicMessage::deserialize(cached.input_desc.clone(), json)
-                                .map_err(|e| {
-                                    ProtocolError::InvalidRequest(format!(
-                                        "message does not match `{}`: {e}",
-                                        cached.input_desc.full_name()
-                                    ))
-                                })?;
-                        messages.push(message);
+                        let message = DynamicMessage::deserialize(cached.input_desc.clone(), json)
+                            .map_err(|e| {
+                                ProtocolError::InvalidRequest(format!(
+                                    "message does not match `{}`: {e}",
+                                    cached.input_desc.full_name()
+                                ))
+                            })?;
+                        outbound.push(encode_message(&message));
                     }
                 }
-                let bytes_sent: u64 = messages.iter().map(|m| m.encoded_len() as u64 + 5).sum();
-                let outbound: Vec<Outbound> = messages.into_iter().map(Outbound::Dynamic).collect();
+                let bytes_sent: u64 = outbound.iter().map(|b| b.len() as u64 + 5).sum();
                 (outbound, bytes_sent)
             }
         };
@@ -847,7 +836,7 @@ fn build_metadata(
 async fn invoke(
     client: &mut tonic::client::Grpc<Channel>,
     shape: (bool, bool),
-    messages: Vec<Outbound>,
+    messages: Vec<Bytes>,
     path: http::uri::PathAndQuery,
     codec: DynamicCodec,
     metadata: tonic::metadata::MetadataMap,
@@ -1032,5 +1021,134 @@ mod tests {
             DynamicMessage::deserialize(desc.clone(), &bad_by_ref).expect_err("type mismatch");
         let by_value = DynamicMessage::deserialize(desc, bad_by_value).expect_err("type mismatch");
         assert_eq!(by_ref.to_string(), by_value.to_string());
+    }
+
+    const CORPUS_PROTO: &str = r#"syntax = "proto3";
+
+package corpus;
+
+enum Kind {
+  KIND_UNSPECIFIED = 0;
+  KIND_A = 1;
+  KIND_B = 2;
+}
+
+message Inner {
+  string name = 1;
+  repeated int64 values = 2;
+}
+
+message Everything {
+  double f_double = 1;
+  float f_float = 2;
+  int32 f_int32 = 3;
+  int64 f_int64 = 4;
+  uint32 f_uint32 = 5;
+  uint64 f_uint64 = 6;
+  sint32 f_sint32 = 7;
+  sint64 f_sint64 = 8;
+  fixed32 f_fixed32 = 9;
+  fixed64 f_fixed64 = 10;
+  sfixed32 f_sfixed32 = 11;
+  sfixed64 f_sfixed64 = 12;
+  bool f_bool = 13;
+  string f_string = 14;
+  bytes f_bytes = 15;
+  Kind f_enum = 16;
+  Inner f_message = 17;
+  repeated string r_strings = 18;
+  repeated Inner r_messages = 19;
+  map<string, int32> m_counts = 20;
+}
+"#;
+
+    #[test]
+    fn rendered_encode_parity_with_prost_message_encode() {
+        // encode_message must yield byte-for-byte what the retired codec-time
+        // prost::Message::encode produced for the same DynamicMessage.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("corpus.proto");
+        std::fs::write(&path, CORPUS_PROTO).expect("write corpus proto");
+        let fds = protox::compile([path.as_path()], [dir.path()]).expect("compile corpus");
+        let pool = DescriptorPool::from_file_descriptor_set(fds).expect("corpus pool");
+        let desc = pool
+            .get_message_by_name("corpus.Everything")
+            .expect("Everything descriptor");
+
+        let json = serde_json::json!({
+            "f_double": 1.25,
+            "f_float": -0.5,
+            "f_int32": -42,
+            "f_int64": "-9007199254740993",
+            "f_uint32": 4294967295u32,
+            "f_uint64": "18446744073709551615",
+            "f_sint32": -1,
+            "f_sint64": "-2",
+            "f_fixed32": 7,
+            "f_fixed64": "8",
+            "f_sfixed32": -7,
+            "f_sfixed64": "-8",
+            "f_bool": true,
+            "f_string": "héllo ünicode",
+            "f_bytes": "3q2+7w==",
+            "f_enum": "KIND_B",
+            "f_message": {"name": "inner", "values": ["1", "2", "3"]},
+            "r_strings": ["a", "b", ""],
+            "r_messages": [{"name": "x"}, {"name": "y", "values": ["9"]}],
+            "m_counts": {"alpha": 1, "beta": 2},
+        });
+        let message = DynamicMessage::deserialize(desc, &json).expect("corpus deserialize");
+
+        let mut oracle = Vec::new();
+        prost::Message::encode(&message, &mut oracle).expect("oracle encode");
+        assert!(!oracle.is_empty());
+        assert_eq!(encode_message(&message), oracle);
+    }
+
+    #[test]
+    fn rendered_encode_matches_generated_prost_type() {
+        // Cross-implementation oracle: encoding a JSON-built DynamicMessage
+        // must equal the prost-generated type's encoding of the same values.
+        let pool = DescriptorPool::decode(loadr_testserver::FILE_DESCRIPTOR_SET)
+            .expect("testserver descriptor pool");
+        let desc = pool
+            .get_message_by_name("loadr.test.EchoRequest")
+            .expect("EchoRequest descriptor");
+        let json = serde_json::json!({
+            "message": "hi",
+            "repeat": 3,
+            "payload": "3q2+7w==",
+        });
+        let message = DynamicMessage::deserialize(desc, &json).expect("deserialize");
+        let expected = loadr_testserver::pb::EchoRequest {
+            message: "hi".to_string(),
+            repeat: 3,
+            payload: vec![0xde, 0xad, 0xbe, 0xef],
+        }
+        .encode_to_vec();
+        assert_eq!(encode_message(&message), expected);
+    }
+
+    #[test]
+    fn metadata_cache_rebuilds_when_only_headers_change() {
+        // Literal gRPC metadata must not pin the cache: ordinary request
+        // headers (templated, or replaced by beforeRequest) arrive through
+        // `request.headers` and have to rebuild the merged MetadataMap.
+        let grpc = GrpcRequest {
+            metadata: vec![("x-static".to_string(), "1".to_string())],
+            ..GrpcRequest::default()
+        };
+        let mut cache = CachedMetadata::default();
+
+        let first = cache
+            .for_request(&grpc, &[("x-h".to_string(), "alpha".to_string())])
+            .expect("first build");
+        assert_eq!(first.get("x-h").unwrap().to_str().unwrap(), "alpha");
+
+        let second = cache
+            .for_request(&grpc, &[("x-h".to_string(), "beta".to_string())])
+            .expect("rebuild for changed header");
+        assert_eq!(second.get("x-h").unwrap().to_str().unwrap(), "beta");
+        assert_eq!(second.get("x-static").unwrap().to_str().unwrap(), "1");
     }
 }

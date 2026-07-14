@@ -168,7 +168,13 @@ impl GrpcEchoServer {
             .build_v1()
             .map_err(|e| TestServerError::Grpc(e.to_string()))?;
         let incoming = futures::stream::unfold(listener, |listener| async move {
-            let accepted = listener.accept().await.map(|(stream, _)| stream);
+            let accepted = listener.accept().await.map(|(stream, _)| {
+                // Raw accept bypasses tonic's TcpIncoming, which is what
+                // normally disables Nagle; without this, multi-write h2
+                // responses stall ~40ms on delayed ACKs under load.
+                let _ = stream.set_nodelay(true);
+                stream
+            });
             Some((accepted, listener))
         });
         let mut builder = tonic::transport::Server::builder();

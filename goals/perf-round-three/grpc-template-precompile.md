@@ -96,8 +96,9 @@ IMPLEMENTATION
 
 OUT OF SCOPE
 - Encoding/DynamicMessage changes and bytes_sent (sibling goal
-  grpc-encode-once; it builds on this one's metadata_literal knowledge but
-  neither blocks the other).
+  grpc-encode-once; neither blocks the other). `metadata_literal` covers only
+  gRPC metadata, not ordinary request headers or `beforeRequest` overrides,
+  so it must not by itself bypass the handler's merged-metadata cache match.
 - HTTP/WS/socket/plugin render paths and any render-semantics change.
 - The reflection path, channel pooling, transports, response handling.
 

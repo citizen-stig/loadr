@@ -93,10 +93,14 @@ OUT OF SCOPE
 CORRECTNESS TESTS
 - Data-source twin of v1_protocol_call_does_not_block_core_runtime_timer, in
   loadr-core where a mock DataSourcePlugin already exists (data.rs:515):
-  multi_thread runtime with 2 worker threads, one blocking-flagged source
-  whose next_row sleeps ~300 ms, assert a concurrent ~50 ms
-  tokio::time::sleep on the other worker completes on schedule while the
-  fetch is in flight, and the fetched row is still correct.
+  build a `multi_thread` runtime with exactly 1 worker, arm a concurrent
+  ~50 ms timer, then start one blocking-flagged source whose `next_row`
+  signals entry and sleeps ~300 ms. Assert from elapsed wall time that the
+  timer completes while the fetch is still in flight and that the fetched
+  row is correct. Synchronize timer arming and plugin entry with channels or
+  barriers so task-start order cannot make the test pass accidentally. The
+  unchanged inline implementation must delay the timer by roughly the full
+  fetch; `block_in_place` lets Tokio install a replacement worker.
 - current_thread runtime test: a blocking-flagged source neither panics nor
   deadlocks (the flavor guard falls back to inline).
 - Unit-test the bracket-or-inline helper directly for: multi-thread → bracket,
@@ -138,7 +142,7 @@ PR: --workspace --locked --exclude loadr-browser). Use a current stable
 toolchain capable of building the locked dependencies.
 
 DONE when: the flag parses, validates, and is documented; a blocking-flagged
-300 ms feeder cannot delay a concurrent timer on a 2-worker runtime; the
+300 ms feeder cannot delay a concurrent timer on a saturated runtime; the
 default path is provably unchanged (test + A/B gate (a)); and the paired A/B
 table is attached with an evidence-backed recommendation, including the
 measured cost of opting in on a fast feeder.

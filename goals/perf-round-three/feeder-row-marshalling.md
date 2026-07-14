@@ -66,10 +66,10 @@ IMPLEMENTATION
   json_to_string so output text is identical to today for every input.
   Kills: the intermediate map, the per-key clone, and the per-value
   json_to_string re-walk at native.rs:480-483.
-- Hoist the clock read: compute ts_ms once per request (alongside
-  begin_request, or at the top of the DataFeeds::next_row call) and pass it
-  into the plugin arm instead of calling now_millis() per fetch
-  (data.rs:364). Multiple sources fetched by one request may then share a
+- Hoist the clock read: compute ts_ms once in `VuContext::begin_request`,
+  retain it as request state, and pass it through `RowIdentity` into every
+  plugin fetch instead of calling now_millis() in `DataFeeds::next_row`
+  (data.rs:364). Multiple sources fetched by one request then share the same
   millisecond timestamp — document that in the PluginRowCtx field docs; it
   was never guaranteed to be a per-call clock.
 - Stop re-allocating map keys per fetch: intern source names once in
@@ -109,9 +109,20 @@ CORRECTNESS TESTS
   data_row_stable_within_iteration (vu.rs:294), and
   parallel_plugin_data_source_sequences_are_unique_per_vu_source
   (crates/loadr-core/tests/flow_control.rs:331).
-- New: a request fetching two plugin sources observes one shared ts_ms; a
-  CSV-only plan never triggers the on-demand retain scan (assert via the
-  new bookkeeping, not timing).
+- New timestamp regression: fetch plugin source A, whose mock `next_row`
+  records its ctx and then sleeps long enough to cross a millisecond boundary
+  (for example 20 ms), followed by plugin source B in the same request. Assert
+  both observe the same ts_ms. On the base implementation B receives a later
+  per-fetch timestamp, so equality proves request-level hoisting rather than
+  succeeding because two clock reads happened within one tick. A controllable
+  test clock that returns distinct values on successive reads is an acceptable
+  deterministic alternative.
+- New retain-scan regression: load a mixed plan with at least one CSV source
+  and one plugin source so `has_on_demand` is true. Begin a request that fetches
+  only CSV data, begin the next request, and assert via the new bookkeeping
+  (not timing) that no retain scan occurred. Also fetch a plugin row once and
+  assert the following request does scan and evict that row while retaining
+  the CSV row; this covers both sides of the bookkeeping transition.
 - E2e plugin_data_source_runs_at_fixed_count_against_noop
   (crates/loadr-cli/tests/e2e.rs:671) unchanged and green.
 

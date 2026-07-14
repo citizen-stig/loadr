@@ -4,7 +4,8 @@ On the templated-message path (any message with a `${...}` substitution — the
 data-feeder case), each call materializes the message repeatedly: the rendered
 JSON tree is deep-cloned into `DynamicMessage::deserialize`, the built message
 is traversed once by `encoded_len()` purely to compute `bytes_sent`, and then
-tonic's codec traverses it again to actually encode it. The literal path
+prost's codec traverses it once more to size-check and once to actually encode
+it. The literal path
 already avoids all of this via the per-`Arc` encoded-body cache (`71fcbe9`);
 rendered messages can get most of the same treatment without a cache: drop the
 clone (serde can deserialize from `&Value`), encode exactly once at execute
@@ -37,39 +38,49 @@ CONTEXT
     bytes_sent = Σ encoded_len() + 5 — a full protobuf traversal per message
     just for the metric (:745); then the codec encodes each message again at
     submission (Outbound::Dynamic collected at :746, encoded at :121).
-  - Net per rendered message: one avoidable deep clone + two traversals
-    where one suffices.
+  - Net per rendered message: one avoidable deep clone + three protobuf
+    traversals (the metric `encoded_len`, the `Message::encode` size check,
+    and `encode_raw`). Pre-encoding removes the metric-only traversal and
+    lets the resulting buffer supply both the metric and outbound body; the
+    exact traversal/allocation trade depends on the encoder strategy below.
 - Why the clone is avoidable: DynamicMessage::deserialize is generic over
   serde::Deserializer and serde_json implements Deserializer for
   &serde_json::Value — deserialize(desc, &*json) borrows; the clone at :696
   and :735 exists only because the value was passed by value.
 - The trade in encode-once: today Dynamic encodes directly into tonic's
   EncodeBuf; pre-encoding produces the bytes once but the Encoded arm then
-  copies them into the EncodeBuf (:124-127). So the change swaps
-  {json deep clone + encoded_len traversal + in-place encode} for
-  {one encode + one memcpy}. For any non-trivial message that is a clear
-  win; the A/B's small-message case guards the degenerate end.
+  copies them into the EncodeBuf (:124-127). `encode_to_vec` performs
+  `encoded_len` + `encode_raw` (two protobuf walks, one allocation), while
+  `encode_raw` into a growable `BytesMut` performs one protobuf walk but may
+  grow and copy its own buffer. Pre-sizing with `encoded_len` and then calling
+  `Message::encode` is not an option: `encode` calls `encoded_len` again, for
+  three walks before the later codec memcpy. Benchmark the valid strategies;
+  do not assume fewer walks is faster for every message size.
 - No user-visible timing change: rendering, encoding, and submission all
   happen inside the handler's execute window either way.
-- Metadata rider (optional, small): CachedMetadata::for_request re-compares
+- Metadata residual: CachedMetadata::for_request re-compares
   the full rendered metadata pair list per call and rebuilds on mismatch
   (:220, :246-270) — for templated metadata values that is a guaranteed
   per-call rebuild; for static metadata it is a compare + MetadataMap clone.
-  If grpc-template-precompile has landed on the branch, its compile-time
-  knowledge that all metadata is literal can skip the compare entirely
-  (always-hit). Implement only if that flag exists on your base; otherwise
-  leave CachedMetadata untouched and note the residual.
-- Evidence status: code inspection; the double traversal scales with message
+  Its cache identity combines `grpc.metadata` and ordinary `request.headers`;
+  the latter may be templated or overwritten by `beforeRequest`. A flag that
+  proves only gRPC metadata literal cannot safely skip the comparison. Keep
+  matching the complete merged input in this goal.
+- Evidence status: code inspection; the repeated traversals scale with message
   size × call rate. The A/B below is the arbiter.
 
 IMPLEMENTATION
 - Kill the clone first (independent, safe): pass &*json (or &Value) to
   DynamicMessage::deserialize at :696 and :735. No behavior change; keep the
   error mapping identical.
-- Encode once: after building each rendered DynamicMessage, encode it to
-  Bytes immediately (prost Message::encode into a BytesMut sized by
-  encoded_len(), or encode_to_vec — one traversal either way),
-  set bytes_sent from Σ bytes.len() + 5 (identical value to today's formula
+- Pre-encode once: after building each rendered DynamicMessage, encode it to
+  Bytes immediately. Compare `encode_to_vec` (two protobuf walks, one exact
+  allocation) with `Message::encode_raw` into a growable `BytesMut` (one
+  protobuf walk, possible reallocations/copies) on the required small,
+  medium, and large cases, and use the measured winner. If pre-sizing, call
+  `encode_raw` directly; never pre-size with `encoded_len` and then call
+  `Message::encode`, which repeats the length traversal.
+  Set bytes_sent from Σ bytes.len() + 5 (identical value to today's formula
   by prost's contract), and submit Outbound::Encoded(bytes) — the same
   variant the literal cache uses (:719), so the codec path is already
   proven.
@@ -82,16 +93,16 @@ IMPLEMENTATION
   by construction; the literal cache already covers the repeat case. If a
   message renders identically every call, that is a plan-authoring issue,
   not a handler concern.
-- Metadata rider (only with template-precompile's metadata_literal on the
-  branch): when the compiled request marks metadata fully literal, build the
-  MetadataMap once on first use and skip CachedMetadata::matches thereafter;
-  templated metadata keeps today's compare-and-rebuild. Document the
-  residual: per-call-changing metadata values inherently re-validate.
+- Leave `CachedMetadata::matches` on the request path and keep both
+  `grpc.metadata` and `request.headers` in its identity. Do not bypass it from
+  `metadata_literal`: that flag says nothing about ordinary templated headers
+  or `beforeRequest` overrides. A future always-hit optimization requires a
+  separate invariant proving every merged input immutable and hooks unable to
+  replace it.
 
 OUT OF SCOPE
 - The template render path itself (sibling goal grpc-template-precompile;
-  neither goal blocks the other — coordinate only on the optional metadata
-  rider).
+  neither goal blocks the other).
 - Response decode, lazy decode, raw transport, channel pooling, reflection.
 - prost-reflect/tonic version bumps; any codec wire-format change (the
   encoded bytes must be byte-identical).
@@ -112,10 +123,11 @@ CORRECTNESS TESTS
 - Error parity: a rendered message that violates the schema fails
   DynamicMessage::deserialize with the same error surface as base (the
   borrow change must not alter error text).
-- If the metadata rider is implemented: static metadata builds its
-  MetadataMap once (assert via for_request call/rebuild counting on the
-  cached struct), templated metadata still rebuilds per call, and the
-  1c3d683 CachedMetadata tests stay green.
+- Metadata safety: with literal gRPC metadata, change an ordinary templated
+  request header between calls and assert the submitted MetadataMap changes;
+  separately override an ordinary header from `beforeRequest` and assert the
+  hook's latest value is submitted. The 1c3d683 CachedMetadata tests stay
+  green.
 
 LOCAL PERFORMANCE VALIDATION (required; shared harness with grpc-template-precompile)
 - Two release binaries (cargo +1.93.0), base 1c3d683 vs candidate (if
@@ -128,7 +140,10 @@ LOCAL PERFORMANCE VALIDATION (required; shared harness with grpc-template-precom
 - ≥5 paired alternating runs per size after warm-up; capture iterations/s,
   wall time, perf stat instructions + task-clock. Expect the win to grow
   with message size; report the small-size case even if flat or slightly
-  negative (the memcpy trade), raw + median + dispersion.
+  negative (the memcpy trade), raw + median + dispersion. Before the final
+  base-vs-candidate runs, compare the `encode_to_vec` and growable-`BytesMut`
+  candidates on the same size matrix and record which strategy was selected;
+  traversal count alone does not select the winner.
 
 QUALITY BAR
 Focused correctness tests and the local release A/B as above; no unrelated
@@ -142,6 +157,8 @@ DONE when: code inspection finds no json.clone() into deserialize, no
 encoded_len()-for-metrics traversal, and at most one encode per rendered
 message per call; Outbound::Dynamic is gone or provably still required; byte
 and bytes_sent parity tests pass against the base oracle including streaming
-and bytes fields; and the paired A/B table across the three message sizes is
-attached with the small-message trade reported honestly.
+and bytes fields; dynamic ordinary headers cannot hit stale metadata when
+gRPC metadata is literal; and the paired A/B table across the three message
+sizes includes the encoder-strategy comparison and reports the small-message
+trade honestly.
 ```

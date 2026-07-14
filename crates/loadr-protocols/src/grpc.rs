@@ -693,7 +693,7 @@ impl ProtocolHandler for GrpcHandler {
                     let mut total: u64 = 0;
                     for json in raw {
                         let message =
-                            DynamicMessage::deserialize(cached.input_desc.clone(), json.clone())
+                            DynamicMessage::deserialize(cached.input_desc.clone(), json)
                                 .map_err(|e| {
                                     ProtocolError::InvalidRequest(format!(
                                         "message does not match `{}`: {e}",
@@ -732,7 +732,7 @@ impl ProtocolHandler for GrpcHandler {
                 } else {
                     for json in raw {
                         let message =
-                            DynamicMessage::deserialize(cached.input_desc.clone(), json.clone())
+                            DynamicMessage::deserialize(cached.input_desc.clone(), json)
                                 .map_err(|e| {
                                     ProtocolError::InvalidRequest(format!(
                                         "message does not match `{}`: {e}",
@@ -1015,5 +1015,22 @@ mod tests {
         assert!(error.to_string().contains("invalid metadata key `bad key`"));
         assert!(cache.matches(&valid, &[]));
         assert_eq!(cache.map.get("x-valid").unwrap().to_str().unwrap(), "value");
+    }
+
+    #[test]
+    fn deserialize_by_ref_error_matches_by_value() {
+        // execute() deserializes from &Value; the error surface must be
+        // identical to the owned-Value deserialization it replaced.
+        let pool = DescriptorPool::decode(loadr_testserver::FILE_DESCRIPTOR_SET)
+            .expect("testserver descriptor pool");
+        let desc = pool
+            .get_message_by_name("loadr.test.EchoRequest")
+            .expect("EchoRequest descriptor");
+        let bad_by_ref = serde_json::json!({"message": 42});
+        let bad_by_value = serde_json::json!({"message": 42});
+        let by_ref =
+            DynamicMessage::deserialize(desc.clone(), &bad_by_ref).expect_err("type mismatch");
+        let by_value = DynamicMessage::deserialize(desc, bad_by_value).expect_err("type mismatch");
+        assert_eq!(by_ref.to_string(), by_value.to_string());
     }
 }

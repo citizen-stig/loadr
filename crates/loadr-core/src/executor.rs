@@ -698,20 +698,27 @@ async fn run_arrival_rate(
     let mut emitted: f64 = 0.0; // fractional iterations owed
     let mut ticker = tokio::time::interval(dispatch_tick());
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Burst);
+    let deadline = tokio::time::sleep_until(soft_deadline.into());
+    tokio::pin!(deadline);
     let mut last = Instant::now();
 
     loop {
-        tokio::select! {
+        let deadline_elapsed = tokio::select! {
             _ = scenario_cancel.cancelled() => break,
             _ = env.soft_stop.cancelled() => break,
-            _ = ticker.tick() => {}
-        }
-        let now = Instant::now();
-        if now >= soft_deadline {
-            break;
-        }
+            _ = ticker.tick() => false,
+            _ = &mut deadline => true,
+        };
+        // A configurable tick may be as long as (or longer than) the whole
+        // schedule. Credit the interval through the deadline before exiting,
+        // and use the deadline itself as a wake-up so the flush is not late.
+        let now = Instant::now().min(soft_deadline);
+        let deadline_elapsed = deadline_elapsed || now >= soft_deadline;
         if *env.pause.borrow() {
             last = now;
+            if deadline_elapsed {
+                break;
+            }
             continue;
         }
         let dt = (now - last).as_secs_f64();
@@ -737,6 +744,9 @@ async fn run_arrival_rate(
                     }
                 }
             }
+        }
+        if deadline_elapsed {
+            break;
         }
     }
     drop(idle_tx);

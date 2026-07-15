@@ -159,3 +159,60 @@ export function moveStep(plan: Plan, scenario: string, from: number, to: number)
   if (!plan.scenarios?.[scenario]) return plan;
   return moveStepAt(plan, ['scenarios', scenario, 'flow'], from, to);
 }
+
+function samePath(a: Path, b: Path): boolean {
+  return a.length === b.length && a.every((seg, i) => seg === b[i]);
+}
+
+/** True if `path` is `prefix` or lives inside it (prefix is an ancestor). */
+function pathStartsWith(path: Path, prefix: Path): boolean {
+  return prefix.length <= path.length && prefix.every((seg, i) => seg === path[i]);
+}
+
+/**
+ * Move a step from one steps-array to another — the canvas drag-to-reparent
+ * operation. `fromPath`/`toPath` point at the arrays; `fromIndex` is the step
+ * to move; `toIndex` is where it lands (appended if omitted). Moving a step
+ * into its own subtree is rejected (it would detach the branch). Same-array
+ * moves fall through to a plain reorder.
+ */
+export function moveStepBetween(
+  plan: Plan,
+  fromPath: Path,
+  fromIndex: number,
+  toPath: Path,
+  toIndex?: number,
+): Plan {
+  const srcArr = getIn(plan, fromPath);
+  if (!Array.isArray(srcArr) || fromIndex < 0 || fromIndex >= srcArr.length) return plan;
+
+  // Cannot move a container step into itself or one of its descendants.
+  const stepPath = [...fromPath, fromIndex];
+  if (pathStartsWith(toPath, stepPath)) return plan;
+
+  if (samePath(fromPath, toPath)) {
+    const to = toIndex ?? srcArr.length - 1;
+    return moveStepAt(plan, fromPath, fromIndex, Math.max(0, Math.min(to, srcArr.length - 1)));
+  }
+
+  const moved = srcArr[fromIndex];
+  const afterRemove = deleteIn(plan, stepPath);
+
+  // Removing the source shifts indices in its array. If the destination path
+  // runs through that same array at a later index, decrement it so it still
+  // resolves after the removal.
+  let dstPath = toPath;
+  if (pathStartsWith(toPath, fromPath) && toPath.length > fromPath.length) {
+    const seg = toPath[fromPath.length];
+    if (typeof seg === 'number' && seg > fromIndex) {
+      dstPath = [...toPath];
+      dstPath[fromPath.length] = seg - 1;
+    }
+  }
+
+  const dstArr = getIn(afterRemove, dstPath);
+  const dst = Array.isArray(dstArr) ? [...dstArr] : [];
+  const at = Math.max(0, Math.min(toIndex ?? dst.length, dst.length));
+  dst.splice(at, 0, moved);
+  return setIn(afterRemove, dstPath, dst as unknown as Json);
+}

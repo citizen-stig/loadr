@@ -1196,6 +1196,63 @@ def card(d):
     )
 
 
+# Canvas build-up walkthroughs: seven structurally-different plan shapes, each
+# captured on the desktop canvas one element at a time. Frames live under
+# assets/canvas-walk/<slug>/{0,1,2}.png. Stepped through client-side (site.js).
+WALKTHROUGHS = [
+    ("flat", "Flat sequence", "steps run top to bottom",
+     ["Scenario + first request — the browse call.", "Add a think_time — a human pause.", "Add the next request — a linear chain."]),
+    ("group", "Grouped", "bundle &amp; name steps",
+     ["Scenario + first request.", "Add a group — a named container.", "Nest a request — its STEPS branch fills."]),
+    ("branch", "If / else", "conditional paths",
+     ["Scenario + login request.", "Add an if — THEN and ELSE appear.", "Fill both — success path + fallback."]),
+    ("parallel", "Parallel", "concurrent branches",
+     ["Scenario + home request.", "Add a parallel — two empty branches.", "A request in each — run at once."]),
+    ("switch", "Switch", "route by value",
+     ["Scenario + route request.", "Add a switch — cases fan out.", "Fill cases + default — multi-way routing."]),
+    ("foreach", "Data-driven foreach", "one flow per item",
+     ["Scenario + list request.", "Add a foreach over a data set.", "One request per item — iteration."]),
+    ("retry", "Retry", "resilient, with backoff",
+     ["Scenario + submit request.", "Add a retry — an attempt block.", "Wrap a request with backoff."]),
+]
+
+
+def render_walkthroughs():
+    cards = []
+    for slug, title, hint, caps in WALKTHROUGHS:
+        slides = "".join(
+            f'<img data-fr data-cap="Step {i + 1}/3 · {esc(caps[i])}" src="/assets/canvas-walk/{slug}/{i}.png" '
+            f'loading="lazy" alt="{esc(title)} build-up, step {i + 1}" '
+            f'class="absolute inset-0 h-full w-full object-contain transition-opacity duration-300 '
+            f'{"opacity-100" if i == len(caps) - 1 else "opacity-0"}">'
+            for i in range(3)
+        )
+        cards.append(
+            f'<div data-walk class="group overflow-hidden rounded-2xl border border-edge bg-panel">'
+            f'<div class="flex items-baseline justify-between gap-2 border-b border-edge px-3 py-2">'
+            f'<span class="font-bold text-white">{title}</span>'
+            f'<span class="text-xs text-smoke">{hint}</span></div>'
+            f'<div class="relative aspect-[736/580] bg-ink">{slides}'
+            f'<button data-pv aria-label="Previous step" class="absolute left-1.5 top-1/2 z-10 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-full border border-edge bg-coal/85 text-smoke opacity-0 transition hover:text-white group-hover:opacity-100">'
+            f'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>'
+            f'<button data-nx aria-label="Next step" class="absolute right-1.5 top-1/2 z-10 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-full border border-edge bg-coal/85 text-smoke opacity-0 transition hover:text-white group-hover:opacity-100">'
+            f'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></button>'
+            f'<div data-dots class="absolute inset-x-0 bottom-2 z-10 flex justify-center gap-1.5"></div></div>'
+            f'<div data-cap class="min-h-[2.6em] px-3 py-2 text-xs leading-snug text-smoke"></div></div>'
+        )
+    return (
+        '<section class="border-t border-edge/60 bg-coal/40 py-16">'
+        '<div class="mx-auto max-w-[88rem] px-5">'
+        '<p class="kicker">Compose visually</p>'
+        '<h2 class="mt-3 text-3xl font-extrabold tracking-tight text-white sm:text-4xl">Build any plan on the canvas</h2>'
+        '<p class="mt-4 max-w-2xl text-smoke">In loadr Desktop, drag steps onto a scenario and the plan takes shape as a node graph. '
+        'Here are seven common shapes, built up one element at a time — step through each.</p>'
+        '<div class="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">'
+        + "\n".join(cards)
+        + '</div></div></section>'
+    )
+
+
 def render_index():
     by_cat = demos_by_cat()
 
@@ -1244,6 +1301,8 @@ def render_index():
     </div>
   </div>
 </section>
+
+{render_walkthroughs()}
 
 <!-- ======================================================= DEMO CARDS -->
 <section class="pt-10 pb-8 lg:pt-14">

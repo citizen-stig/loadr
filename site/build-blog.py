@@ -250,11 +250,15 @@ def build_index():
     )
 
     body = f"""  <main id="main" class="mx-auto max-w-[76rem] px-5 pt-32 pb-20">
-    <header class="mb-4 max-w-3xl">
-      <p class="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-flare">The loadr blog</p>
-      <h1 class="mt-3 text-4xl font-black tracking-tight text-white sm:text-5xl">What we build, and how</h1>
-      <p class="mt-4 text-lg leading-relaxed text-smoke">Release notes, build retrospectives, and where loadr is headed next.</p>
-      <p class="mt-5 text-xs text-smoke/70">{legend}</p>
+    <header class="mb-4 flex items-start justify-between gap-8">
+      <div class="max-w-3xl">
+        <p class="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-flare">The loadr blog</p>
+        <h1 class="mt-3 text-4xl font-black tracking-tight text-white sm:text-5xl">What we build, and how</h1>
+        <p class="mt-4 text-lg leading-relaxed text-smoke">Release notes, build retrospectives, and where loadr is headed next.</p>
+        <p class="mt-5 text-xs text-smoke/70">{legend}</p>
+      </div>
+      <img src="/assets/mascot/blog-retrospective.png" width="440" height="293" alt="" aria-hidden="true"
+           class="hidden w-56 shrink-0 self-center lg:block" loading="lazy" />
     </header>
 
     <ol class="mt-10 border-t border-edge/60">

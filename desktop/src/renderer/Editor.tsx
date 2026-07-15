@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { Canvas } from './canvas/Canvas';
 import { PlanMetaForm, ScenariosForm } from './forms/PlanForms';
 import { Outline } from './Outline';
 import { RunPanel } from './RunPanel';
@@ -7,7 +8,7 @@ import { usePlanDoc } from './state/usePlanDoc';
 import { SelectionContext } from './state/selection';
 import { YamlEditor } from './YamlEditor';
 import { Button, IconButton, Segmented } from './ui/controls';
-import { Alert, Check, Code, Columns, PanelLeft, Rows, Save } from './ui/icons';
+import { Alert, Check, Code, Columns, Layers, PanelLeft, Rows, Save } from './ui/icons';
 
 export interface EditorState {
   path: string | null;
@@ -15,7 +16,7 @@ export interface EditorState {
   yaml: string;
 }
 
-type View = 'form' | 'split' | 'yaml';
+type View = 'form' | 'split' | 'yaml' | 'canvas';
 
 // One open plan. Three panes: an outline rail (navigate the plan), the
 // forms-first composer, and an *optional* Monaco YAML view (Form / Split /
@@ -88,7 +89,7 @@ export function Editor({
       <div className="flex h-full flex-col bg-ink">
         <div className="flex items-center justify-between gap-2 border-b border-edge bg-coal px-3 py-2">
           <div className="flex items-center gap-2">
-            {view !== 'yaml' && (
+            {(view === 'form' || view === 'split') && (
               <IconButton
                 icon={PanelLeft}
                 label={showOutline ? 'hide outline' : 'show outline'}
@@ -103,6 +104,7 @@ export function Editor({
               options={[
                 { value: 'form', label: 'Form', icon: Rows },
                 { value: 'split', label: 'Split', icon: Columns },
+                { value: 'canvas', label: 'Canvas', icon: Layers },
                 { value: 'yaml', label: 'YAML', icon: Code },
               ]}
             />
@@ -114,7 +116,7 @@ export function Editor({
         </div>
 
         <div className="flex min-h-0 flex-1">
-          {showOutline && view !== 'yaml' && (
+          {showOutline && (view === 'form' || view === 'split') && (
             <aside className="w-60 shrink-0 border-r border-edge">
               <Outline plan={doc.plan} />
             </aside>
@@ -122,6 +124,7 @@ export function Editor({
           <div className="min-w-0 flex-1">
             {view === 'form' && forms}
             {view === 'yaml' && <div className="h-full">{yaml}</div>}
+            {view === 'canvas' && <Canvas doc={doc} />}
             {view === 'split' && (
               <div className="grid h-full grid-cols-2 overflow-hidden">
                 {forms}

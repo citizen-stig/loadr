@@ -168,7 +168,7 @@ thresholds:
 
 /// Open-model dispatcher (`constant-arrival-rate`): the schedule is met with
 /// zero dropped iterations when workers keep up, and `--worker-threads`
-/// bounds the runtime. Exercises the Notify-based worker wake path.
+/// bounds the runtime. Exercises the claim-budget worker wake path.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn arrival_rate_keeps_schedule_without_drops() {
     let server = loadr_testserver::HttpTestServer::spawn()
@@ -305,6 +305,85 @@ scenarios:
     assert!(
         (20.0..=25.0).contains(&iterations),
         "final interval was not flushed: {iterations}\nstdout: {stdout}"
+    );
+}
+
+/// Saturated open model: with `max_vus` far below the schedule, unclaimed
+/// arrivals must surface as dropped iterations — and none may vanish.
+/// Completed plus dropped matches the scheduled arrivals within one tick's
+/// batch (`ceil(rate*tick)+1`), widened by one more tick's arrivals because a
+/// stalled final tick enlarges the unpublished tail (the exact identity is
+/// unit-tested on the dispatcher's gate). The dispatch tick is pinned on the
+/// child process — `dispatch_tick()` is a process-wide `OnceLock`, so setting
+/// it on the test process would not work.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn arrival_rate_saturation_conserves_scheduled_arrivals() {
+    let dir = tempfile::tempdir().expect("tmp");
+    // 200/s scheduled against max 2 VUs x 50ms iterations (~40/s capacity):
+    // most arrivals must expire as drops. Think-time-only flow, no network.
+    // graceful_stop must outlast one iteration so claimed in-flight work
+    // finishes (an aborted claim is neither completed nor dropped).
+    let yaml = r#"
+name: e2e-arrival-saturation
+scenarios:
+  saturated:
+    executor: constant-arrival-rate
+    rate: 200
+    duration: 2s
+    pre_allocated_vus: 1
+    max_vus: 2
+    graceful_stop: 1s
+    flow:
+      - think_time: { type: constant, duration: 50ms }
+"#;
+    let test = write_test(dir.path(), "saturation.yaml", yaml);
+    let summary_path = dir.path().join("summary.json");
+
+    let output = Command::new(BIN)
+        .env("LOADR_DISPATCH_TICK_US", "20000")
+        .args([
+            "run",
+            "--quiet",
+            "--worker-threads",
+            "2",
+            "--summary-export",
+            summary_path.to_str().expect("path"),
+            test.to_str().expect("path"),
+        ])
+        .output()
+        .expect("run loadr");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "expected success.\nstdout: {stdout}\nstderr: {stderr}"
+    );
+
+    let summary: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&summary_path).expect("summary file"))
+            .expect("summary json");
+    let metric_sum = |name: &str| -> f64 {
+        summary["metrics"]
+            .as_array()
+            .expect("metrics")
+            .iter()
+            .find(|m| m["metric"] == name)
+            .and_then(|m| m["agg"]["sum"].as_f64())
+            .unwrap_or(0.0)
+    };
+    let completed = metric_sum("iterations");
+    let dropped = metric_sum("dropped_iterations");
+    assert!(completed > 0.0, "no iterations completed\nstdout: {stdout}");
+    assert!(
+        dropped > 0.0,
+        "saturated pool dropped nothing\nstdout: {stdout}"
+    );
+    // Conservation at 20ms tick: ceil(200*0.02)+1 = 5, plus one tick's
+    // arrivals (4) of wall-clock slack for the final-tick tail.
+    let scheduled = 200.0 * 2.0;
+    assert!(
+        ((completed + dropped) - scheduled).abs() <= 9.0,
+        "conservation violated: completed={completed} dropped={dropped}\nstdout: {stdout}"
     );
 }
 

@@ -4,7 +4,7 @@
 //! Trends use HDR histograms (3 significant figures, auto-resize). Distributed
 //! aggregation merges histograms — percentiles are computed only after merging.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -12,7 +12,7 @@ use hdrhistogram::serialization::{Deserializer as HdrDeserializer, Serializer as
 use hdrhistogram::Histogram;
 use serde::{Deserialize, Serialize};
 
-use crate::metrics::{now_millis, MetricKind, Sample, Tags};
+use crate::metrics::{is_additive_gauge, now_millis, MetricKind, Sample, Tags};
 
 /// Trend values are stored ×1000 in the histogram (3 decimal places).
 const TREND_SCALE: f64 = 1000.0;
@@ -398,29 +398,49 @@ impl Aggregator {
 
     /// Produce a snapshot and roll the interval window.
     pub fn snapshot(&mut self) -> Snapshot {
+        self.build_snapshot(true)
+    }
+
+    /// Produce a cumulative snapshot without advancing the live interval
+    /// window. This is intended for secondary projections such as a
+    /// controller-owned Prometheus endpoint.
+    pub fn cumulative_snapshot(&mut self) -> Snapshot {
+        self.build_snapshot(false)
+    }
+
+    fn build_snapshot(&mut self, roll_interval: bool) -> Snapshot {
         let elapsed = self.start.elapsed().as_secs_f64();
-        let interval = self.last_snapshot.elapsed().as_secs_f64();
-        self.last_snapshot = Instant::now();
+        let interval = if roll_interval {
+            let interval = self.last_snapshot.elapsed().as_secs_f64();
+            self.last_snapshot = Instant::now();
+            interval
+        } else {
+            0.0
+        };
         let mut out = Vec::with_capacity(self.series.len());
         for (key, series) in self.series.iter_mut() {
             let agg = Self::agg_values(series, elapsed);
-            let (interval_count, interval_sum) = match &series.data {
-                SeriesData::Counter { total, .. } => {
-                    let d = *total - series.snap_counter;
-                    series.snap_counter = *total;
-                    (d.max(0.0) as u64, d)
+            let (interval_count, interval_sum) = if roll_interval {
+                match &series.data {
+                    SeriesData::Counter { total, .. } => {
+                        let d = *total - series.snap_counter;
+                        series.snap_counter = *total;
+                        (d.max(0.0) as u64, d)
+                    }
+                    SeriesData::Rate { total, .. } => {
+                        let d = total.saturating_sub(series.snap_count);
+                        series.snap_count = *total;
+                        (d, d as f64)
+                    }
+                    SeriesData::Trend { count, .. } => {
+                        let d = count.saturating_sub(series.snap_count);
+                        series.snap_count = *count;
+                        (d, d as f64)
+                    }
+                    SeriesData::Gauge { .. } => (0, 0.0),
                 }
-                SeriesData::Rate { total, .. } => {
-                    let d = total.saturating_sub(series.snap_count);
-                    series.snap_count = *total;
-                    (d, d as f64)
-                }
-                SeriesData::Trend { count, .. } => {
-                    let d = count.saturating_sub(series.snap_count);
-                    series.snap_count = *count;
-                    (d, d as f64)
-                }
-                SeriesData::Gauge { .. } => (0, 0.0),
+            } else {
+                (0, 0.0)
             };
             out.push(SeriesSnapshot {
                 metric: key.metric.to_string(),
@@ -436,31 +456,6 @@ impl Aggregator {
             timestamp_ms: now_millis(),
             elapsed_secs: elapsed,
             interval_secs: interval,
-            series: out,
-        }
-    }
-
-    /// Produce a cumulative snapshot without advancing the live interval
-    /// window. This is intended for secondary projections such as a
-    /// controller-owned Prometheus endpoint.
-    pub fn cumulative_snapshot(&self) -> Snapshot {
-        let elapsed = self.start.elapsed().as_secs_f64();
-        let mut out = Vec::with_capacity(self.series.len());
-        for (key, series) in &self.series {
-            out.push(SeriesSnapshot {
-                metric: key.metric.to_string(),
-                kind: series.kind,
-                tags: (*key.tags).clone(),
-                agg: Self::agg_values(series, elapsed),
-                interval_count: 0,
-                interval_sum: 0.0,
-            });
-        }
-        out.sort_by(|a, b| a.metric.cmp(&b.metric).then_with(|| a.tags.cmp(&b.tags)));
-        Snapshot {
-            timestamp_ms: now_millis(),
-            elapsed_secs: elapsed,
-            interval_secs: 0.0,
             series: out,
         }
     }
@@ -494,14 +489,40 @@ impl Aggregator {
                 matched.push(series);
             }
         }
-        if matched.is_empty() {
-            return None;
+        Self::merged_agg(metric, &matched, elapsed)
+    }
+
+    /// One-pass all-tags rollup: every metric merged across all of its
+    /// series, in stable (sorted) metric order. Equivalent to calling
+    /// [`aggregate_selector`](Self::aggregate_selector) with no filter for
+    /// every metric name, but scans the series map once instead of once per
+    /// metric.
+    pub fn aggregate_all(&self) -> Vec<(String, MetricKind, AggValues)> {
+        let elapsed = self.start.elapsed().as_secs_f64();
+        let mut groups: BTreeMap<&str, Vec<&Series>> = BTreeMap::new();
+        for (key, series) in &self.series {
+            groups.entry(&key.metric).or_default().push(series);
         }
-        let kind = matched[0].kind;
+        groups
+            .into_iter()
+            .filter_map(|(metric, matched)| {
+                Self::merged_agg(metric, &matched, elapsed)
+                    .map(|(kind, agg)| (metric.to_string(), kind, agg))
+            })
+            .collect()
+    }
+
+    /// Merge already-matched series of one metric into a single aggregate.
+    fn merged_agg(
+        metric: &str,
+        matched: &[&Series],
+        elapsed: f64,
+    ) -> Option<(MetricKind, AggValues)> {
+        let first = matched.first()?;
+        let kind = first.kind;
         if matched.len() == 1 {
-            return Some((kind, Self::agg_values(matched[0], elapsed)));
+            return Some((kind, Self::agg_values(first, elapsed)));
         }
-        // Merge.
         let mut merged = Series::new(kind);
         for s in matched {
             match (&mut merged.data, &s.data) {
@@ -680,48 +701,6 @@ impl Aggregator {
         MetricsDelta { series: out }
     }
 
-    /// Restore a delta drained by [`take_delta`](Self::take_delta) after it
-    /// could not be delivered. Unlike `merge_delta`, this only rewinds flush
-    /// bookkeeping and therefore does not double-count cumulative values.
-    pub fn restore_delta(&mut self, delta: &MetricsDelta) {
-        for sd in &delta.series {
-            let key = SeriesKey {
-                metric: Arc::from(sd.metric.as_str()),
-                tags: Arc::new(sd.tags.clone()),
-            };
-            let Some(series) = self.series.get_mut(&key) else {
-                continue;
-            };
-            match (&mut series.data, &sd.data) {
-                (SeriesData::Counter { flushed, .. }, SeriesDeltaData::Counter { delta }) => {
-                    *flushed -= delta;
-                }
-                (
-                    SeriesData::Rate {
-                        flushed_passes,
-                        flushed_total,
-                        ..
-                    },
-                    SeriesDeltaData::Rate { passes, total },
-                ) => {
-                    *flushed_passes = flushed_passes.saturating_sub(*passes);
-                    *flushed_total = flushed_total.saturating_sub(*total);
-                }
-                (SeriesData::Trend { delta_hist, .. }, SeriesDeltaData::Trend { hdr_b64, .. }) => {
-                    use base64::Engine as _;
-                    if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(hdr_b64) {
-                        let mut deser = HdrDeserializer::new();
-                        if let Ok(hist) = deser.deserialize::<u64, _>(&mut bytes.as_slice()) {
-                            let _ = delta_hist.add(&hist);
-                        }
-                    }
-                }
-                // Gauges are emitted in every delta and need no flush rewind.
-                _ => {}
-            }
-        }
-    }
-
     /// Override live gauge values matching a trusted tag. Used by the
     /// controller to prevent terminal or lost agents from remaining active.
     pub fn set_gauge_by_tag(&mut self, metric: &str, tag: &str, value: &str, gauge_value: f64) {
@@ -827,10 +806,6 @@ impl Aggregator {
             }
         }
     }
-}
-
-fn is_additive_gauge(metric: &str) -> bool {
-    matches!(metric, "vus" | "vus_max" | "requests_in_flight")
 }
 
 #[cfg(test)]
@@ -1013,31 +988,36 @@ mod tests {
     }
 
     #[test]
-    fn restore_delta_retries_without_double_counting() {
-        let mut agent = Aggregator::new();
-        agent.record(&sample("c", MetricKind::Counter, 5.0, &[]));
-        agent.record(&sample("r", MetricKind::Rate, 1.0, &[]));
-        agent.record(&sample("t", MetricKind::Trend, 10.0, &[]));
-        agent.record(&sample("t", MetricKind::Trend, 20.0, &[]));
+    fn aggregate_all_matches_per_metric_selectors() {
+        let mut agg = Aggregator::new();
+        for i in 1..=100 {
+            agg.record(&sample("dur", MetricKind::Trend, i as f64, &[("agent", "a")]));
+            agg.record(&sample(
+                "dur",
+                MetricKind::Trend,
+                (i + 100) as f64,
+                &[("agent", "b")],
+            ));
+        }
+        agg.record(&sample("reqs", MetricKind::Counter, 3.0, &[("agent", "a")]));
+        agg.record(&sample("reqs", MetricKind::Counter, 4.0, &[("agent", "b")]));
+        agg.record(&sample("vus", MetricKind::Gauge, 2.0, &[("agent", "a")]));
+        agg.record(&sample("vus", MetricKind::Gauge, 5.0, &[("agent", "b")]));
 
-        let first = agent.take_delta();
-        agent.restore_delta(&first);
-        agent.record(&sample("c", MetricKind::Counter, 2.0, &[]));
-        agent.record(&sample("r", MetricKind::Rate, 0.0, &[]));
-        agent.record(&sample("t", MetricKind::Trend, 30.0, &[]));
-
-        let retry = agent.take_delta();
-        let mut controller = Aggregator::new();
-        controller.merge_delta(&retry);
-        let snapshot = controller.cumulative_snapshot();
-        assert_eq!(snapshot.find("c").unwrap().agg.sum, 7.0);
-        assert_eq!(snapshot.find("r").unwrap().agg.count, 2);
-        assert_eq!(snapshot.find("r").unwrap().agg.rate, Some(0.5));
-        assert_eq!(snapshot.find("t").unwrap().agg.count, 3);
-        assert!((snapshot.find("t").unwrap().agg.avg.unwrap() - 20.0).abs() < 0.05);
-
-        assert!(agent.take_delta().series.is_empty());
-        assert_eq!(agent.cumulative_snapshot().find("c").unwrap().agg.sum, 7.0);
+        let all = agg.aggregate_all();
+        let names: Vec<&str> = all.iter().map(|(m, _, _)| m.as_str()).collect();
+        assert_eq!(names, ["dur", "reqs", "vus"], "sorted metric order");
+        for (metric, kind, values) in &all {
+            let (sel_kind, sel) = agg.aggregate_selector(metric, &[]).expect("selector");
+            assert_eq!(*kind, sel_kind);
+            assert_eq!(values.count, sel.count);
+            assert_eq!(values.sum, sel.sum);
+            assert_eq!(values.last, sel.last);
+            assert_eq!(values.p99, sel.p99);
+        }
+        // vus is additive across agents.
+        let vus = &all.iter().find(|(m, _, _)| m == "vus").unwrap().2;
+        assert_eq!(vus.last, Some(7.0));
     }
 
     #[test]

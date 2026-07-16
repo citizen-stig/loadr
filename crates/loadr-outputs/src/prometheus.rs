@@ -57,7 +57,7 @@ impl PrometheusOutput {
             listen,
             remote_write_url,
             interval,
-            final_scrape_grace: Duration::from_secs(10),
+            final_scrape_grace: Duration::ZERO,
             latest: Arc::new(RwLock::new(None)),
             bound_addr: None,
             server_task: None,
@@ -72,7 +72,9 @@ impl PrometheusOutput {
     }
 
     /// Configure how long a standalone scrape listener remains available
-    /// after the final snapshot is published.
+    /// after the final snapshot is published, delaying `finish` by as much.
+    /// Disabled (zero) by default: set it when a Prometheus server scrapes
+    /// short-lived runs and must observe the terminal snapshot.
     pub fn with_final_scrape_grace(mut self, grace: Duration) -> Self {
         self.final_scrape_grace = grace;
         self
@@ -150,9 +152,14 @@ impl Output for PrometheusOutput {
                 push_once(&client, &uri, &self.latest).await;
             }
         }
-        // A listen-mode exporter belongs to this process, so leave the final
-        // snapshot scrapeable briefly before shutting the listener down.
+        // A listen-mode exporter belongs to this process, so when a grace is
+        // configured leave the final snapshot scrapeable before shutting the
+        // listener down.
         if self.server_task.is_some() && !self.final_scrape_grace.is_zero() {
+            tracing::info!(
+                grace = ?self.final_scrape_grace,
+                "keeping prometheus /metrics scrapeable (final_scrape_grace)"
+            );
             tokio::time::sleep(self.final_scrape_grace).await;
         }
         self.abort_server_task();
@@ -488,8 +495,7 @@ mod tests {
             Some("127.0.0.1:0".to_string()),
             None,
             Duration::from_secs(5),
-        )
-        .with_final_scrape_grace(Duration::ZERO);
+        );
         out.start().await.expect("start");
         let addr = out.bound_addr().expect("bound addr");
         out.on_snapshot(&fixture_snapshot()).await;

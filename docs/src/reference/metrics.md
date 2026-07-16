@@ -48,8 +48,9 @@ Kinds: **Counter** (sum), **Gauge** (last/min/max), **Rate** (pass fraction),
 thresholds), plus everything from `defaults.tags`, scenario `tags:` and request
 `tags:`. Controller-exported Prometheus series additionally have
 `loadr_agent`, `loadr_agent_id`, `loadr_run_id`, and `loadr_run_name`; the
-legacy `instance` label is omitted there to avoid colliding with Prometheus'
-scrape-target label.
+agent-injected `instance` value (the agent name) is omitted there because it
+duplicates `loadr_agent` and would collide with Prometheus' scrape-target
+label. An `instance` tag you set yourself is preserved.
 
 ## Custom metrics
 

@@ -549,6 +549,7 @@ impl Engine {
         let _ = gauge_task.0.await;
         // Publish an explicit terminal zero before closing the bus. Without it,
         // scrape-based outputs retain the last non-zero VU value forever.
+        // Covers every live gauge (metrics::LIVE_GAUGES) — currently just vus.
         bus.gauge(&self.builtins.vus, 0.0, &Arc::new(Tags::new()));
         drop(bus);
         let (mut aggregator, mut outputs, threshold_statuses, timeline) = agg_task

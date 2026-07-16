@@ -220,6 +220,9 @@ struct ControllerRun {
     /// from the centrally merged snapshot.
     timeline: Mutex<Vec<TimelinePoint>>,
     last_timeline: Mutex<Instant>,
+    /// Prometheus projection cached once the run is terminal — a finished
+    /// run's data no longer changes, so exporters stop paying the rebuild.
+    prom_view: Mutex<Option<Arc<RunMetricsView>>>,
 }
 
 struct Inner {
@@ -294,6 +297,15 @@ impl Inner {
                             .unwrap_or_else(|| agent_id.to_string());
                         add_agent_identity(&mut delta, &agent_name, agent_id);
                         run.agg.lock().merge_delta(&delta);
+                        // A delta can race the liveness sweep (or land after the
+                        // agent's terminal event on a resumed stream). The sweep
+                        // only zeroes *newly* lost agents, so re-zero here or the
+                        // stale batch resurrects the agent's live gauges forever.
+                        if run.lost.lock().contains(agent_id)
+                            || run.done.lock().contains_key(agent_id)
+                        {
+                            self.zero_agent_live_gauges(&run, agent_id);
+                        }
                         self.maybe_recompute(&run);
                     }
                     Err(e) => {
@@ -409,7 +421,7 @@ impl Inner {
 
     fn zero_agent_live_gauges(&self, run: &ControllerRun, agent_id: &str) {
         let mut agg = run.agg.lock();
-        for metric in ["vus", "requests_in_flight"] {
+        for metric in loadr_core::metrics::LIVE_GAUGES {
             agg.set_gauge_by_tag(metric, "loadr_agent_id", agent_id, 0.0);
         }
     }
@@ -793,6 +805,7 @@ impl ControllerHandle {
             last_recompute: Mutex::new(Instant::now()),
             timeline: Mutex::new(Vec::new()),
             last_timeline: Mutex::new(Instant::now()),
+            prom_view: Mutex::new(None),
         });
         self.inner.runs.lock().insert(run_id.clone(), run.clone());
 
@@ -952,32 +965,43 @@ impl ControllerHandle {
     }
 
     /// Cumulative detailed series plus exact all-tags fleet aggregates for a
-    /// run, read under a single aggregator lock.
-    pub fn run_metrics_view(&self, run_id: &str) -> Option<RunMetricsView> {
+    /// run, read under a single aggregator lock. Once the run is terminal the
+    /// view is computed once and the cached `Arc` is returned from then on,
+    /// so callers can cheaply detect "nothing changed" by pointer equality.
+    pub fn run_metrics_view(&self, run_id: &str) -> Option<Arc<RunMetricsView>> {
         let run = self.inner.runs.lock().get(run_id).cloned()?;
-        let state = run.state.lock().as_str().to_string();
-        let agg = run.agg.lock();
-        let detailed = agg.cumulative_snapshot();
-        let fleet = agg
-            .metric_names()
-            .into_iter()
-            .filter_map(|metric| {
-                agg.aggregate_selector(&metric, &[])
-                    .map(|(kind, values)| FleetMetric {
-                        metric,
-                        kind,
-                        agg: values,
-                    })
-            })
-            .collect();
-        Some(RunMetricsView {
+        let state = *run.state.lock();
+        if state.is_terminal() {
+            if let Some(view) = run.prom_view.lock().clone() {
+                return Some(view);
+            }
+        }
+        let (detailed, fleet) = {
+            let mut agg = run.agg.lock();
+            let detailed = agg.cumulative_snapshot();
+            let fleet = agg
+                .aggregate_all()
+                .into_iter()
+                .map(|(metric, kind, values)| FleetMetric {
+                    metric,
+                    kind,
+                    agg: values,
+                })
+                .collect();
+            (detailed, fleet)
+        };
+        let view = Arc::new(RunMetricsView {
             run_id: run.run_id.clone(),
             name: run.name.clone(),
-            state,
+            state: state.as_str().to_string(),
             started_ms: run.started_ms,
             detailed,
             fleet,
-        })
+        });
+        if state.is_terminal() {
+            *run.prom_view.lock() = Some(view.clone());
+        }
+        Some(view)
     }
 
     /// Centrally evaluated threshold statuses for a run.
@@ -1051,5 +1075,100 @@ mod metrics_tests {
         add_agent_identity(&mut delta, "worker-a", "agent-a-id");
         assert_eq!(delta.series[0].tags["loadr_agent"], "worker-a");
         assert_eq!(delta.series[0].tags["loadr_agent_id"], "agent-a-id");
+    }
+
+    fn test_run(run_id: &str, agent_id: &str) -> Arc<ControllerRun> {
+        let (snapshot_tx, snapshot_rx) = watch::channel(Arc::new(Snapshot::default()));
+        Arc::new(ControllerRun {
+            run_id: run_id.into(),
+            name: None,
+            plan_yaml: String::new(),
+            scenarios: Vec::new(),
+            thresholds: Vec::new(),
+            on_agent_loss: OnAgentLoss::Continue,
+            assigned: vec![agent_id.into()],
+            state: Mutex::new(RunState::Running),
+            started_ms: 0,
+            finished_ms: Mutex::new(None),
+            agg: Mutex::new(Aggregator::new()),
+            done: Mutex::new(HashMap::new()),
+            lost: Mutex::new(HashSet::new()),
+            summaries: Mutex::new(Vec::new()),
+            threshold_statuses: Mutex::new(Vec::new()),
+            abort_reason: Mutex::new(None),
+            snapshot_tx,
+            snapshot_rx,
+            last_recompute: Mutex::new(Instant::now()),
+            timeline: Mutex::new(Vec::new()),
+            last_timeline: Mutex::new(Instant::now()),
+            prom_view: Mutex::new(None),
+        })
+    }
+
+    #[test]
+    fn late_delta_from_lost_agent_cannot_resurrect_live_gauges() {
+        let (sender, _keepalive) = mpsc::channel(8);
+        let inner = Inner {
+            controller_id: "ctrl".into(),
+            liveness: Duration::from_secs(6),
+            agents: Mutex::new(HashMap::new()),
+            runs: Mutex::new(HashMap::new()),
+            session_counter: AtomicU64::new(0),
+        };
+        inner.agents.lock().insert(
+            "agent-a".into(),
+            AgentEntry {
+                name: "worker-a".into(),
+                labels: HashMap::new(),
+                cores: 1,
+                connected_at: Instant::now(),
+                last_heartbeat: Instant::now(),
+                active_vus: 0,
+                connected: true,
+                session: 1,
+                sender,
+            },
+        );
+        let run = test_run("run-1", "agent-a");
+        inner.runs.lock().insert("run-1".into(), run.clone());
+
+        let delta = MetricsDelta {
+            series: vec![SeriesDelta {
+                metric: "vus".into(),
+                kind: MetricKind::Gauge,
+                tags: Tags::new(),
+                data: SeriesDeltaData::Gauge {
+                    last: 50.0,
+                    min: 0.0,
+                    max: 50.0,
+                },
+            }],
+        };
+        let batch = |delta: &MetricsDelta| pb::AgentMessage {
+            msg: Some(AgentMsg::Metrics(pb::MetricsBatch {
+                run_id: "run-1".into(),
+                delta_json: serde_json::to_vec(delta).expect("delta json"),
+            })),
+        };
+        let fleet_vus = || {
+            let (_, values) = run
+                .agg
+                .lock()
+                .aggregate_selector("vus", &[])
+                .expect("vus series");
+            values.last
+        };
+
+        inner.handle_agent_message("agent-a", batch(&delta));
+        assert_eq!(fleet_vus(), Some(50.0));
+
+        // The liveness sweep declares the agent lost and zeroes its gauges…
+        run.lost.lock().insert("agent-a".into());
+        inner.zero_agent_live_gauges(&run, "agent-a");
+        assert_eq!(fleet_vus(), Some(0.0));
+
+        // …then an in-flight delta lands. It must not resurrect the gauge.
+        inner.handle_agent_message("agent-a", batch(&delta));
+        assert_eq!(fleet_vus(), Some(0.0));
     }
 }

@@ -2019,8 +2019,9 @@ pub enum OutputConfig {
         /// Push interval (default `5s`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         interval: Option<Dur>,
-        /// Keep a standalone scrape endpoint alive after completion so
-        /// Prometheus can collect the terminal snapshot (default `10s`).
+        /// Keep a standalone scrape endpoint alive for this long after
+        /// completion so Prometheus can collect the terminal snapshot.
+        /// Delays run exit by as much; disabled by default.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         final_scrape_grace: Option<Dur>,
     },

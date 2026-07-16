@@ -120,6 +120,10 @@ pub fn execute(args: ControllerArgs) -> anyhow::Result<i32> {
             prom_task = Some(tokio::spawn(async move {
                 let mut output = output;
                 let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
+                // Terminal runs return a cached view Arc, so an unchanged
+                // pointer set means the exposition is already up to date and
+                // the idle rebuild can be skipped entirely.
+                let mut last_views: Vec<usize> = Vec::new();
                 loop {
                     ticker.tick().await;
                     let runs = controller.runs();
@@ -127,6 +131,14 @@ pub fn execute(args: ControllerArgs) -> anyhow::Result<i32> {
                         .into_iter()
                         .filter_map(|run| controller.run_metrics_view(&run.run_id))
                         .collect();
+                    let ptrs: Vec<usize> = views
+                        .iter()
+                        .map(|view| Arc::as_ptr(view) as usize)
+                        .collect();
+                    if ptrs == last_views {
+                        continue;
+                    }
+                    last_views = ptrs;
                     let snapshot = prometheus_snapshot(&views);
                     output.on_snapshot(&snapshot).await;
                 }
@@ -148,20 +160,20 @@ pub fn execute(args: ControllerArgs) -> anyhow::Result<i32> {
 fn select_prometheus_runs(
     runs: &[loadr_agent::RunSummaryInfo],
 ) -> Vec<&loadr_agent::RunSummaryInfo> {
-    let active: Vec<_> = runs
-        .iter()
-        .filter(|run| run.state == "pending" || run.state == "running")
-        .collect();
-    if active.is_empty() {
-        // `runs()` is oldest-first, so retain only the newest completed run
-        // when the fleet is idle.
-        runs.last().into_iter().collect()
-    } else {
-        active
+    let is_active =
+        |run: &loadr_agent::RunSummaryInfo| run.state == "pending" || run.state == "running";
+    let mut selected: Vec<_> = runs.iter().filter(|run| is_active(run)).collect();
+    // Keep the newest completed run exported alongside active ones (`runs()`
+    // is oldest-first): its final counter values and terminal vus=0 must stay
+    // scrapeable while the next run is still pending, not just while idle.
+    // Series carry loadr_run_id, so concurrent runs don't collide.
+    if let Some(completed) = runs.iter().rev().find(|run| !is_active(run)) {
+        selected.push(completed);
     }
+    selected
 }
 
-fn prometheus_snapshot(views: &[loadr_agent::RunMetricsView]) -> Snapshot {
+fn prometheus_snapshot(views: &[Arc<loadr_agent::RunMetricsView>]) -> Snapshot {
     let mut snapshot = Snapshot {
         timestamp_ms: views
             .iter()
@@ -176,13 +188,19 @@ fn prometheus_snapshot(views: &[loadr_agent::RunMetricsView]) -> Snapshot {
     };
 
     for view in views {
+        let view = view.as_ref();
         let run_tags = run_tags(view);
         for series in &view.detailed.series {
             let mut series = series.clone();
-            // `instance` was historically used internally for thresholds. It
-            // would collide with Prometheus' scrape target label, while the
-            // trusted loadr_agent/loadr_agent_id labels preserve identity.
-            series.tags.remove("instance");
+            // The agent-injected `instance` tag (the agent name, kept for
+            // legacy per-agent thresholds) duplicates the trusted
+            // `loadr_agent` label and would collide with Prometheus' scrape
+            // target label — drop only that value. A user-supplied `instance`
+            // tag must survive, or series differing only in it would collapse
+            // into duplicate labelsets and poison the whole exposition.
+            if series.tags.get("instance") == series.tags.get("loadr_agent") {
+                series.tags.remove("instance");
+            }
             add_run_tags(&mut series.tags, view);
             snapshot.series.push(series);
         }
@@ -525,30 +543,26 @@ pub async fn http_json(
 mod prometheus_tests {
     use super::*;
 
-    #[test]
-    fn projection_separates_detailed_and_fleet_series() {
-        let mut detailed_tags = Tags::new();
-        detailed_tags.insert("instance".into(), "legacy-agent".into());
-        detailed_tags.insert("loadr_agent".into(), "worker-a".into());
-        detailed_tags.insert("loadr_agent_id".into(), "agent-a-id".into());
-        let detailed = Snapshot {
-            timestamp_ms: 1_700_000_000_000,
-            elapsed_secs: 12.0,
-            interval_secs: 0.0,
-            series: vec![SeriesSnapshot {
-                metric: "http_reqs".into(),
-                kind: MetricKind::Counter,
-                tags: detailed_tags,
-                agg: AggValues {
-                    count: 7,
-                    sum: 7.0,
-                    ..AggValues::default()
-                },
-                interval_count: 0,
-                interval_sum: 0.0,
-            }],
-        };
-        let views = vec![loadr_agent::RunMetricsView {
+    fn counter_series(tags: &[(&str, &str)], sum: f64) -> SeriesSnapshot {
+        SeriesSnapshot {
+            metric: "http_reqs".into(),
+            kind: MetricKind::Counter,
+            tags: tags
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            agg: AggValues {
+                count: sum as u64,
+                sum,
+                ..AggValues::default()
+            },
+            interval_count: 0,
+            interval_sum: 0.0,
+        }
+    }
+
+    fn view_with(detailed: Snapshot) -> Arc<loadr_agent::RunMetricsView> {
+        Arc::new(loadr_agent::RunMetricsView {
             run_id: "run-1".into(),
             name: Some("checkout".into()),
             state: "running".into(),
@@ -563,7 +577,26 @@ mod prometheus_tests {
                     ..AggValues::default()
                 },
             }],
-        }];
+        })
+    }
+
+    #[test]
+    fn projection_separates_detailed_and_fleet_series() {
+        // `instance` here is the agent-injected value (== agent name).
+        let detailed = Snapshot {
+            timestamp_ms: 1_700_000_000_000,
+            elapsed_secs: 12.0,
+            interval_secs: 0.0,
+            series: vec![counter_series(
+                &[
+                    ("instance", "worker-a"),
+                    ("loadr_agent", "worker-a"),
+                    ("loadr_agent_id", "agent-a-id"),
+                ],
+                7.0,
+            )],
+        };
+        let views = vec![view_with(detailed)];
 
         let projected = prometheus_snapshot(&views);
         let detailed = projected
@@ -594,7 +627,53 @@ mod prometheus_tests {
     }
 
     #[test]
-    fn selects_all_active_runs_or_newest_completed() {
+    fn user_instance_tags_survive_and_stay_distinct() {
+        // Two series that differ only in a user-supplied `instance` tag must
+        // not collapse into duplicate labelsets when the agent-injected value
+        // is stripped.
+        let detailed = Snapshot {
+            timestamp_ms: 1_700_000_000_000,
+            elapsed_secs: 12.0,
+            interval_secs: 0.0,
+            series: vec![
+                counter_series(
+                    &[
+                        ("instance", "api-1"),
+                        ("loadr_agent", "worker-a"),
+                        ("loadr_agent_id", "agent-a-id"),
+                    ],
+                    3.0,
+                ),
+                counter_series(
+                    &[
+                        ("instance", "api-2"),
+                        ("loadr_agent", "worker-a"),
+                        ("loadr_agent_id", "agent-a-id"),
+                    ],
+                    4.0,
+                ),
+            ],
+        };
+        let views = vec![view_with(detailed)];
+
+        let projected = prometheus_snapshot(&views);
+        let reqs: Vec<_> = projected
+            .series
+            .iter()
+            .filter(|series| series.metric == "http_reqs")
+            .collect();
+        assert_eq!(reqs.len(), 2);
+        let instances: Vec<&str> = reqs
+            .iter()
+            .filter_map(|series| series.tags.get("instance"))
+            .map(String::as_str)
+            .collect();
+        assert_eq!(instances, ["api-1", "api-2"]);
+        assert_ne!(reqs[0].tags, reqs[1].tags, "labelsets must stay distinct");
+    }
+
+    #[test]
+    fn selects_active_runs_plus_newest_completed() {
         let run = |id: &str, state: &str, started_ms: u64| loadr_agent::RunSummaryInfo {
             run_id: id.into(),
             name: None,
@@ -611,11 +690,18 @@ mod prometheus_tests {
             .into_iter()
             .map(|run| run.run_id.as_str())
             .collect();
-        assert_eq!(selected, ["active-a", "active-b"]);
+        // The newest completed run stays exported while others are active so
+        // its final counters remain scrapeable.
+        assert_eq!(selected, ["active-a", "active-b", "old"]);
 
         let completed = vec![run("old", "finished", 1), run("new", "failed", 2)];
         let selected = select_prometheus_runs(&completed);
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].run_id, "new");
+
+        let active_only = vec![run("solo", "running", 1)];
+        let selected = select_prometheus_runs(&active_only);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].run_id, "solo");
     }
 }

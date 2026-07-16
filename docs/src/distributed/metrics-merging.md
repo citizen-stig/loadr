@@ -19,8 +19,8 @@ loadr never averages percentiles:
    from the merged histograms only.
 
 Counters and rates merge as exact sums (`passes`/`total`). Fleet-capacity
-gauges (`vus`, `vus_max`, and `requests_in_flight`) add the current value from
-each agent; other gauges keep the most recent value plus min/max envelopes.
+gauges (`vus` and `vus_max`) add the current value from each agent; other
+gauges keep the most recent value plus min/max envelopes.
 
 This is verified by tests: two in-process agents record disjoint latency
 ranges (1–1000 ms and 1001–2000 ms); the merged p99 must equal the true p99
@@ -62,7 +62,9 @@ Fleet trend quantiles come from the centrally merged HDR histogram, rather
 than `max` or an average of agent quantiles. Run discovery is exposed through
 `loadr_fleet_run_info` and
 `loadr_fleet_run_started_timestamp_seconds`. The endpoint publishes every
-pending/running run concurrently and the newest completed run while idle.
+pending/running run concurrently, plus the newest completed run — so a
+finished run's final counters stay scrapeable while the next run is starting,
+not just while the fleet idles.
 
 ## Threshold evaluation
 

@@ -95,6 +95,20 @@ pub const BUILTIN_METRIC_DEFS: &[(&str, MetricKind, bool)] = &[
     ("graphql_req_duration", MetricKind::Trend, true),
 ];
 
+/// Gauges whose fleet value is the sum of per-agent values (total running
+/// VUs), not last-writer-wins. Distributed merging in
+/// `Aggregator::aggregate_selector` consults this.
+pub fn is_additive_gauge(metric: &str) -> bool {
+    matches!(metric, "vus" | "vus_max")
+}
+
+/// Additive gauges that describe *currently held* capacity and therefore must
+/// be zeroed when their reporter stops (agent lost or terminal, engine
+/// shutdown) so fleet sums don't go stale. Keep this, [`is_additive_gauge`]
+/// and the engine's terminal zero (`engine.rs`) in sync when adding a live
+/// gauge.
+pub const LIVE_GAUGES: &[&str] = &["vus"];
+
 /// Registry of known metrics: built-ins, YAML custom metrics, and metrics
 /// created at runtime from JS.
 #[derive(Debug, Default)]

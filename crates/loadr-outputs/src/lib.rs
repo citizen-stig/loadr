@@ -70,17 +70,14 @@ pub fn build_outputs(
                         "prometheus output requires `listen` and/or `remote_write_url`".to_string(),
                     ));
                 }
-                let output = PrometheusOutput::new(
+                let mut output = PrometheusOutput::new(
                     listen.clone(),
                     remote_write_url.clone(),
                     interval_or_default(interval),
-                )
-                .with_final_scrape_grace(
-                    final_scrape_grace
-                        .as_ref()
-                        .map(|duration| duration.as_duration())
-                        .unwrap_or(Duration::from_secs(10)),
                 );
+                if let Some(grace) = final_scrape_grace {
+                    output = output.with_final_scrape_grace(grace.as_duration());
+                }
                 outputs.push(Box::new(output));
             }
             OutputConfig::Influxdb {

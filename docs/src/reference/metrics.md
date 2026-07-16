@@ -44,8 +44,12 @@ Kinds: **Counter** (sum), **Gauge** (last/min/max), **Rate** (pass fraction),
 `scenario`, `name` (request name), `method`, `status`, `proto`, `group`
 (`::outer::inner`), `check` (on `checks` samples), `error_kind` (on
 `http_req_failed` transport failures), `exception` / `site` (on
-`vu_exceptions`), `instance` (agent name in distributed runs), plus everything
-from `defaults.tags`, scenario `tags:` and request `tags:`.
+`vu_exceptions`), `instance` (legacy agent name used by distributed
+thresholds), plus everything from `defaults.tags`, scenario `tags:` and request
+`tags:`. Controller-exported Prometheus series additionally have
+`loadr_agent`, `loadr_agent_id`, `loadr_run_id`, and `loadr_run_name`; the
+legacy `instance` label is omitted there to avoid colliding with Prometheus'
+scrape-target label.
 
 ## Custom metrics
 

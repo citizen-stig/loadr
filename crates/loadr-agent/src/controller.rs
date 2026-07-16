@@ -12,7 +12,10 @@ use std::time::{Duration, Instant};
 
 use futures::Stream;
 use loadr_core::thresholds::{compile_thresholds, evaluate_all, CompiledThreshold};
-use loadr_core::{Aggregator, MetricsDelta, Snapshot, Summary, ThresholdStatus, TimelinePoint};
+use loadr_core::{
+    AggValues, Aggregator, MetricKind, MetricsDelta, Snapshot, Summary, ThresholdStatus,
+    TimelinePoint,
+};
 use parking_lot::Mutex;
 use tokio::sync::{mpsc, watch};
 use tokio_stream::wrappers::{ReceiverStream, TcpListenerStream};
@@ -117,6 +120,26 @@ pub struct RunSummaryInfo {
     pub state: String,
     pub started_ms: u64,
     pub agents: Vec<String>,
+}
+
+/// One exact all-tags metric aggregate for a controller run.
+#[derive(Debug, Clone)]
+pub struct FleetMetric {
+    pub metric: String,
+    pub kind: MetricKind,
+    pub agg: AggValues,
+}
+
+/// Prometheus-ready source data for one run. `detailed` retains individual
+/// agent/tag series; `fleet` contains exact centrally merged aggregates.
+#[derive(Debug, Clone)]
+pub struct RunMetricsView {
+    pub run_id: String,
+    pub name: Option<String>,
+    pub state: String,
+    pub started_ms: u64,
+    pub detailed: Snapshot,
+    pub fleet: Vec<FleetMetric>,
 }
 
 /// Split `total` VUs across `agents`, remainder to the lowest indices —
@@ -260,7 +283,16 @@ impl Inner {
                 let run = self.runs.lock().get(&batch.run_id).cloned();
                 let Some(run) = run else { return };
                 match serde_json::from_slice::<MetricsDelta>(&batch.delta_json) {
-                    Ok(delta) => {
+                    Ok(mut delta) => {
+                        // Identity labels are supplied by the registered
+                        // controller session, never trusted from sample tags.
+                        let agent_name = self
+                            .agents
+                            .lock()
+                            .get(agent_id)
+                            .map(|entry| entry.name.clone())
+                            .unwrap_or_else(|| agent_id.to_string());
+                        add_agent_identity(&mut delta, &agent_name, agent_id);
                         run.agg.lock().merge_delta(&delta);
                         self.maybe_recompute(&run);
                     }
@@ -304,6 +336,7 @@ impl Inner {
                         "agent run failed"
                     );
                 }
+                self.zero_agent_live_gauges(&run, agent_id);
                 run.done.lock().insert(agent_id.to_string(), ev.kind);
                 self.check_completion(&run);
             }
@@ -372,6 +405,13 @@ impl Inner {
         }
         let _ = run.snapshot_tx.send(snapshot);
         tracing::info!(run_id = %run.run_id, state = final_state.as_str(), "run completed");
+    }
+
+    fn zero_agent_live_gauges(&self, run: &ControllerRun, agent_id: &str) {
+        let mut agg = run.agg.lock();
+        for metric in ["vus", "requests_in_flight"] {
+            agg.set_gauge_by_tag(metric, "loadr_agent_id", agent_id, 0.0);
+        }
     }
 
     /// Recompute the watch snapshot from the central aggregator, throttled to
@@ -446,6 +486,7 @@ impl Inner {
             for id in &newly {
                 tracing::warn!(run_id = %run.run_id, agent = %id, "agent lost during run");
                 run.lost.lock().insert(id.clone());
+                self.zero_agent_live_gauges(&run, id);
             }
             match run.on_agent_loss {
                 OnAgentLoss::Continue => self.check_completion(&run),
@@ -466,6 +507,17 @@ impl Inner {
                 }
             }
         }
+    }
+}
+
+fn add_agent_identity(delta: &mut MetricsDelta, agent_name: &str, agent_id: &str) {
+    for series in &mut delta.series {
+        series
+            .tags
+            .insert("loadr_agent".to_string(), agent_name.to_string());
+        series
+            .tags
+            .insert("loadr_agent_id".to_string(), agent_id.to_string());
     }
 }
 
@@ -899,6 +951,35 @@ impl ControllerHandle {
             .map(|r| r.snapshot_rx.clone())
     }
 
+    /// Cumulative detailed series plus exact all-tags fleet aggregates for a
+    /// run, read under a single aggregator lock.
+    pub fn run_metrics_view(&self, run_id: &str) -> Option<RunMetricsView> {
+        let run = self.inner.runs.lock().get(run_id).cloned()?;
+        let state = run.state.lock().as_str().to_string();
+        let agg = run.agg.lock();
+        let detailed = agg.cumulative_snapshot();
+        let fleet = agg
+            .metric_names()
+            .into_iter()
+            .filter_map(|metric| {
+                agg.aggregate_selector(&metric, &[])
+                    .map(|(kind, values)| FleetMetric {
+                        metric,
+                        kind,
+                        agg: values,
+                    })
+            })
+            .collect();
+        Some(RunMetricsView {
+            run_id: run.run_id.clone(),
+            name: run.name.clone(),
+            state,
+            started_ms: run.started_ms,
+            detailed,
+            fleet,
+        })
+    }
+
     /// Centrally evaluated threshold statuses for a run.
     pub fn run_thresholds(&self, run_id: &str) -> Vec<ThresholdStatus> {
         self.inner
@@ -945,5 +1026,30 @@ impl ControllerHandle {
     /// Stop the listener and all background tasks.
     pub fn shutdown(&self) {
         self.shutdown.cancel();
+    }
+}
+
+#[cfg(test)]
+mod metrics_tests {
+    use super::*;
+    use loadr_core::aggregate::{SeriesDelta, SeriesDeltaData};
+    use loadr_core::Tags;
+
+    #[test]
+    fn controller_overwrites_spoofed_agent_identity() {
+        let mut tags = Tags::new();
+        tags.insert("loadr_agent".into(), "spoofed".into());
+        tags.insert("loadr_agent_id".into(), "spoofed-id".into());
+        let mut delta = MetricsDelta {
+            series: vec![SeriesDelta {
+                metric: "http_reqs".into(),
+                kind: MetricKind::Counter,
+                tags,
+                data: SeriesDeltaData::Counter { delta: 1.0 },
+            }],
+        };
+        add_agent_identity(&mut delta, "worker-a", "agent-a-id");
+        assert_eq!(delta.series[0].tags["loadr_agent"], "worker-a");
+        assert_eq!(delta.series[0].tags["loadr_agent_id"], "agent-a-id");
     }
 }

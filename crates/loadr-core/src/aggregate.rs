@@ -440,6 +440,43 @@ impl Aggregator {
         }
     }
 
+    /// Produce a cumulative snapshot without advancing the live interval
+    /// window. This is intended for secondary projections such as a
+    /// controller-owned Prometheus endpoint.
+    pub fn cumulative_snapshot(&self) -> Snapshot {
+        let elapsed = self.start.elapsed().as_secs_f64();
+        let mut out = Vec::with_capacity(self.series.len());
+        for (key, series) in &self.series {
+            out.push(SeriesSnapshot {
+                metric: key.metric.to_string(),
+                kind: series.kind,
+                tags: (*key.tags).clone(),
+                agg: Self::agg_values(series, elapsed),
+                interval_count: 0,
+                interval_sum: 0.0,
+            });
+        }
+        out.sort_by(|a, b| a.metric.cmp(&b.metric).then_with(|| a.tags.cmp(&b.tags)));
+        Snapshot {
+            timestamp_ms: now_millis(),
+            elapsed_secs: elapsed,
+            interval_secs: 0.0,
+            series: out,
+        }
+    }
+
+    /// Metric names currently held by this aggregator, in stable order.
+    pub fn metric_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .series
+            .keys()
+            .map(|key| key.metric.to_string())
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    }
+
     /// Merge every series of `metric` whose tags include all of `tag_filter`.
     pub fn aggregate_selector(
         &self,
@@ -485,7 +522,10 @@ impl Aggregator {
                         seq: s2,
                     },
                 ) => {
-                    if *s2 >= *seq {
+                    if is_additive_gauge(metric) {
+                        *last += *l2;
+                        *seq = (*seq).max(*s2);
+                    } else if *s2 >= *seq {
                         *last = *l2;
                         *seq = *s2;
                     }
@@ -640,6 +680,72 @@ impl Aggregator {
         MetricsDelta { series: out }
     }
 
+    /// Restore a delta drained by [`take_delta`](Self::take_delta) after it
+    /// could not be delivered. Unlike `merge_delta`, this only rewinds flush
+    /// bookkeeping and therefore does not double-count cumulative values.
+    pub fn restore_delta(&mut self, delta: &MetricsDelta) {
+        for sd in &delta.series {
+            let key = SeriesKey {
+                metric: Arc::from(sd.metric.as_str()),
+                tags: Arc::new(sd.tags.clone()),
+            };
+            let Some(series) = self.series.get_mut(&key) else {
+                continue;
+            };
+            match (&mut series.data, &sd.data) {
+                (SeriesData::Counter { flushed, .. }, SeriesDeltaData::Counter { delta }) => {
+                    *flushed -= delta;
+                }
+                (
+                    SeriesData::Rate {
+                        flushed_passes,
+                        flushed_total,
+                        ..
+                    },
+                    SeriesDeltaData::Rate { passes, total },
+                ) => {
+                    *flushed_passes = flushed_passes.saturating_sub(*passes);
+                    *flushed_total = flushed_total.saturating_sub(*total);
+                }
+                (SeriesData::Trend { delta_hist, .. }, SeriesDeltaData::Trend { hdr_b64, .. }) => {
+                    use base64::Engine as _;
+                    if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(hdr_b64) {
+                        let mut deser = HdrDeserializer::new();
+                        if let Ok(hist) = deser.deserialize::<u64, _>(&mut bytes.as_slice()) {
+                            let _ = delta_hist.add(&hist);
+                        }
+                    }
+                }
+                // Gauges are emitted in every delta and need no flush rewind.
+                _ => {}
+            }
+        }
+    }
+
+    /// Override live gauge values matching a trusted tag. Used by the
+    /// controller to prevent terminal or lost agents from remaining active.
+    pub fn set_gauge_by_tag(&mut self, metric: &str, tag: &str, value: &str, gauge_value: f64) {
+        self.seq += 1;
+        let seq = self.seq;
+        for (key, series) in &mut self.series {
+            if &*key.metric != metric || key.tags.get(tag).map(String::as_str) != Some(value) {
+                continue;
+            }
+            if let SeriesData::Gauge {
+                last,
+                min,
+                max,
+                seq: gauge_seq,
+            } = &mut series.data
+            {
+                *last = gauge_value;
+                *min = min.min(gauge_value);
+                *max = max.max(gauge_value);
+                *gauge_seq = seq;
+            }
+        }
+    }
+
     /// Merge a delta from another aggregator (an agent) into this one.
     pub fn merge_delta(&mut self, delta: &MetricsDelta) {
         self.seq += 1;
@@ -721,6 +827,10 @@ impl Aggregator {
             }
         }
     }
+}
+
+fn is_additive_gauge(metric: &str) -> bool {
+    matches!(metric, "vus" | "vus_max" | "requests_in_flight")
 }
 
 #[cfg(test)]
@@ -870,5 +980,83 @@ mod tests {
         ctrl.merge_delta(&a1.take_delta());
         let (_, agg) = ctrl.aggregate_selector("checks", &[]).unwrap();
         assert!((agg.rate.unwrap() - 0.9).abs() < 1e-9);
+    }
+
+    #[test]
+    fn additive_fleet_gauges_sum_tagged_agents() {
+        let mut agg = Aggregator::new();
+        agg.record(&sample(
+            "vus",
+            MetricKind::Gauge,
+            3.0,
+            &[("loadr_agent_id", "a")],
+        ));
+        agg.record(&sample(
+            "vus",
+            MetricKind::Gauge,
+            5.0,
+            &[("loadr_agent_id", "b")],
+        ));
+        let (_, fleet) = agg.aggregate_selector("vus", &[]).expect("fleet VUs");
+        assert_eq!(fleet.last, Some(8.0));
+    }
+
+    #[test]
+    fn cumulative_snapshot_does_not_roll_interval_window() {
+        let mut agg = Aggregator::new();
+        agg.record(&sample("reqs", MetricKind::Counter, 5.0, &[]));
+        let cumulative = agg.cumulative_snapshot();
+        assert_eq!(cumulative.find("reqs").unwrap().agg.sum, 5.0);
+        assert_eq!(cumulative.find("reqs").unwrap().interval_sum, 0.0);
+        let live = agg.snapshot();
+        assert_eq!(live.find("reqs").unwrap().interval_sum, 5.0);
+    }
+
+    #[test]
+    fn restore_delta_retries_without_double_counting() {
+        let mut agent = Aggregator::new();
+        agent.record(&sample("c", MetricKind::Counter, 5.0, &[]));
+        agent.record(&sample("r", MetricKind::Rate, 1.0, &[]));
+        agent.record(&sample("t", MetricKind::Trend, 10.0, &[]));
+        agent.record(&sample("t", MetricKind::Trend, 20.0, &[]));
+
+        let first = agent.take_delta();
+        agent.restore_delta(&first);
+        agent.record(&sample("c", MetricKind::Counter, 2.0, &[]));
+        agent.record(&sample("r", MetricKind::Rate, 0.0, &[]));
+        agent.record(&sample("t", MetricKind::Trend, 30.0, &[]));
+
+        let retry = agent.take_delta();
+        let mut controller = Aggregator::new();
+        controller.merge_delta(&retry);
+        let snapshot = controller.cumulative_snapshot();
+        assert_eq!(snapshot.find("c").unwrap().agg.sum, 7.0);
+        assert_eq!(snapshot.find("r").unwrap().agg.count, 2);
+        assert_eq!(snapshot.find("r").unwrap().agg.rate, Some(0.5));
+        assert_eq!(snapshot.find("t").unwrap().agg.count, 3);
+        assert!((snapshot.find("t").unwrap().agg.avg.unwrap() - 20.0).abs() < 0.05);
+
+        assert!(agent.take_delta().series.is_empty());
+        assert_eq!(agent.cumulative_snapshot().find("c").unwrap().agg.sum, 7.0);
+    }
+
+    #[test]
+    fn controller_can_zero_one_agents_live_gauge() {
+        let mut agg = Aggregator::new();
+        agg.record(&sample(
+            "vus",
+            MetricKind::Gauge,
+            3.0,
+            &[("loadr_agent_id", "a")],
+        ));
+        agg.record(&sample(
+            "vus",
+            MetricKind::Gauge,
+            5.0,
+            &[("loadr_agent_id", "b")],
+        ));
+        agg.set_gauge_by_tag("vus", "loadr_agent_id", "a", 0.0);
+        let (_, fleet) = agg.aggregate_selector("vus", &[]).expect("fleet VUs");
+        assert_eq!(fleet.last, Some(5.0));
     }
 }

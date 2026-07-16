@@ -605,7 +605,7 @@ impl Output for DeltaOutput {
         // Never block the aggregator: when the uplink is congested (e.g. a
         // reconnect in progress) fold the delta back in and retry next flush.
         if self.uplink.try_send(msg).is_err() {
-            self.agg.merge_delta(&delta);
+            self.agg.restore_delta(&delta);
         }
     }
 

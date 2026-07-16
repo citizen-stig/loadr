@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Args;
+use loadr_core::{AggValues, MetricKind, SeriesSnapshot, Snapshot, Tags};
 use owo_colors::OwoColorize;
 
 #[derive(Args)]
@@ -121,18 +122,13 @@ pub fn execute(args: ControllerArgs) -> anyhow::Result<i32> {
                 let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
                 loop {
                     ticker.tick().await;
-                    // Feed the most recent running run's snapshot (or the latest run).
                     let runs = controller.runs();
-                    let target = runs
-                        .iter()
-                        .find(|r| r.state == "running")
-                        .or_else(|| runs.first());
-                    if let Some(run) = target {
-                        if let Some(rx) = controller.watch_run(&run.run_id) {
-                            let snap = rx.borrow().clone();
-                            output.on_snapshot(&snap).await;
-                        }
-                    }
+                    let views: Vec<_> = select_prometheus_runs(&runs)
+                        .into_iter()
+                        .filter_map(|run| controller.run_metrics_view(&run.run_id))
+                        .collect();
+                    let snapshot = prometheus_snapshot(&views);
+                    output.on_snapshot(&snapshot).await;
                 }
             }));
         }
@@ -147,6 +143,106 @@ pub fn execute(args: ControllerArgs) -> anyhow::Result<i32> {
         controller.shutdown();
         Ok(0)
     })
+}
+
+fn select_prometheus_runs(
+    runs: &[loadr_agent::RunSummaryInfo],
+) -> Vec<&loadr_agent::RunSummaryInfo> {
+    let active: Vec<_> = runs
+        .iter()
+        .filter(|run| run.state == "pending" || run.state == "running")
+        .collect();
+    if active.is_empty() {
+        // `runs()` is oldest-first, so retain only the newest completed run
+        // when the fleet is idle.
+        runs.last().into_iter().collect()
+    } else {
+        active
+    }
+}
+
+fn prometheus_snapshot(views: &[loadr_agent::RunMetricsView]) -> Snapshot {
+    let mut snapshot = Snapshot {
+        timestamp_ms: views
+            .iter()
+            .map(|view| view.detailed.timestamp_ms)
+            .max()
+            .unwrap_or_default(),
+        elapsed_secs: views
+            .iter()
+            .map(|view| view.detailed.elapsed_secs)
+            .fold(0.0, f64::max),
+        ..Snapshot::default()
+    };
+
+    for view in views {
+        let run_tags = run_tags(view);
+        for series in &view.detailed.series {
+            let mut series = series.clone();
+            // `instance` was historically used internally for thresholds. It
+            // would collide with Prometheus' scrape target label, while the
+            // trusted loadr_agent/loadr_agent_id labels preserve identity.
+            series.tags.remove("instance");
+            add_run_tags(&mut series.tags, view);
+            snapshot.series.push(series);
+        }
+        for fleet in &view.fleet {
+            snapshot.series.push(SeriesSnapshot {
+                metric: format!("fleet_{}", fleet.metric),
+                kind: fleet.kind,
+                tags: run_tags.clone(),
+                agg: fleet.agg.clone(),
+                interval_count: 0,
+                interval_sum: 0.0,
+            });
+        }
+        let mut info_tags = run_tags.clone();
+        info_tags.insert("state".to_string(), view.state.clone());
+        snapshot
+            .series
+            .push(gauge_series("fleet_run_info", info_tags, 1.0));
+        snapshot.series.push(gauge_series(
+            "fleet_run_started_timestamp_seconds",
+            run_tags,
+            view.started_ms as f64 / 1000.0,
+        ));
+    }
+    snapshot
+        .series
+        .sort_by(|a, b| a.metric.cmp(&b.metric).then_with(|| a.tags.cmp(&b.tags)));
+    snapshot
+}
+
+fn run_tags(view: &loadr_agent::RunMetricsView) -> Tags {
+    let mut tags = Tags::new();
+    add_run_tags(&mut tags, view);
+    tags
+}
+
+fn add_run_tags(tags: &mut Tags, view: &loadr_agent::RunMetricsView) {
+    tags.insert("loadr_run_id".to_string(), view.run_id.clone());
+    tags.insert(
+        "loadr_run_name".to_string(),
+        view.name.clone().unwrap_or_default(),
+    );
+}
+
+fn gauge_series(metric: &str, tags: Tags, value: f64) -> SeriesSnapshot {
+    SeriesSnapshot {
+        metric: metric.to_string(),
+        kind: MetricKind::Gauge,
+        tags,
+        agg: AggValues {
+            count: 1,
+            sum: value,
+            min: Some(value),
+            max: Some(value),
+            last: Some(value),
+            ..AggValues::default()
+        },
+        interval_count: 0,
+        interval_sum: 0.0,
+    }
 }
 
 /// `UiBackend` over a distributed `ControllerHandle`.
@@ -423,4 +519,103 @@ pub async fn http_json(
         anyhow::bail!("{url} returned {status}: {value}");
     }
     Ok(value)
+}
+
+#[cfg(test)]
+mod prometheus_tests {
+    use super::*;
+
+    #[test]
+    fn projection_separates_detailed_and_fleet_series() {
+        let mut detailed_tags = Tags::new();
+        detailed_tags.insert("instance".into(), "legacy-agent".into());
+        detailed_tags.insert("loadr_agent".into(), "worker-a".into());
+        detailed_tags.insert("loadr_agent_id".into(), "agent-a-id".into());
+        let detailed = Snapshot {
+            timestamp_ms: 1_700_000_000_000,
+            elapsed_secs: 12.0,
+            interval_secs: 0.0,
+            series: vec![SeriesSnapshot {
+                metric: "http_reqs".into(),
+                kind: MetricKind::Counter,
+                tags: detailed_tags,
+                agg: AggValues {
+                    count: 7,
+                    sum: 7.0,
+                    ..AggValues::default()
+                },
+                interval_count: 0,
+                interval_sum: 0.0,
+            }],
+        };
+        let views = vec![loadr_agent::RunMetricsView {
+            run_id: "run-1".into(),
+            name: Some("checkout".into()),
+            state: "running".into(),
+            started_ms: 1_700_000_000_000,
+            detailed,
+            fleet: vec![loadr_agent::FleetMetric {
+                metric: "http_reqs".into(),
+                kind: MetricKind::Counter,
+                agg: AggValues {
+                    count: 12,
+                    sum: 12.0,
+                    ..AggValues::default()
+                },
+            }],
+        }];
+
+        let projected = prometheus_snapshot(&views);
+        let detailed = projected
+            .series
+            .iter()
+            .find(|series| series.metric == "http_reqs")
+            .expect("detailed series");
+        assert!(!detailed.tags.contains_key("instance"));
+        assert_eq!(detailed.tags["loadr_agent"], "worker-a");
+        assert_eq!(detailed.tags["loadr_run_id"], "run-1");
+
+        let fleet = projected
+            .series
+            .iter()
+            .find(|series| series.metric == "fleet_http_reqs")
+            .expect("fleet series");
+        assert_eq!(fleet.agg.sum, 12.0);
+        assert!(!fleet.tags.contains_key("loadr_agent"));
+        assert_eq!(fleet.tags["loadr_run_name"], "checkout");
+
+        let info = projected
+            .series
+            .iter()
+            .find(|series| series.metric == "fleet_run_info")
+            .expect("run info");
+        assert_eq!(info.tags["state"], "running");
+        assert_eq!(info.agg.last, Some(1.0));
+    }
+
+    #[test]
+    fn selects_all_active_runs_or_newest_completed() {
+        let run = |id: &str, state: &str, started_ms: u64| loadr_agent::RunSummaryInfo {
+            run_id: id.into(),
+            name: None,
+            state: state.into(),
+            started_ms,
+            agents: Vec::new(),
+        };
+        let runs = vec![
+            run("old", "finished", 1),
+            run("active-a", "running", 2),
+            run("active-b", "pending", 3),
+        ];
+        let selected: Vec<_> = select_prometheus_runs(&runs)
+            .into_iter()
+            .map(|run| run.run_id.as_str())
+            .collect();
+        assert_eq!(selected, ["active-a", "active-b"]);
+
+        let completed = vec![run("old", "finished", 1), run("new", "failed", 2)];
+        let selected = select_prometheus_runs(&completed);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].run_id, "new");
+    }
 }

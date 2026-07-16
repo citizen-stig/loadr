@@ -15,6 +15,7 @@ pub fn parse_output_flag(spec: &str) -> Result<OutputConfig, String> {
             listen: Some(value.to_string()),
             remote_write_url: None,
             interval: None,
+            final_scrape_grace: None,
         }),
         "influxdb" => {
             let (url, database) = value

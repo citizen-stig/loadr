@@ -58,6 +58,11 @@ sum by (loadr_agent) (
 )
 ```
 
+The live Web UI uses the same centrally merged histograms for fleet, scenario,
+and per-agent latency rows. It never reconstructs a fleet percentile from
+numeric agent percentiles. The run page also shows assigned, contributing, and
+lost-agent completeness so partial-fleet data cannot look like a normal pass.
+
 Fleet trend quantiles come from the centrally merged HDR histogram, rather
 than `max` or an average of agent quantiles. Run discovery is exposed through
 `loadr_fleet_run_info` and

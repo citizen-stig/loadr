@@ -273,6 +273,22 @@ thresholds:
         .find(|metric| metric.metric == "vus")
         .expect("fleet VUs");
     assert_eq!(fleet_vus.agg.last, Some(0.0));
+    let webui = handle
+        .run_aggregate_snapshot(&run_id)
+        .expect("exact Web UI aggregates");
+    let request_rollup = webui
+        .series
+        .iter()
+        .find(|series| series.metric == "request_reqs" && series.tags.is_empty())
+        .expect("canonical fleet request rollup");
+    assert_eq!(request_rollup.agg.sum, 120.0);
+    let agent_rollups: HashSet<&str> = webui
+        .series
+        .iter()
+        .filter(|series| series.metric == "request_reqs")
+        .filter_map(|series| series.tags.get("loadr_agent").map(String::as_str))
+        .collect();
+    assert_eq!(agent_rollups, HashSet::from(["a1", "a2", "a3"]));
 
     // Centrally evaluated thresholds pass on the merged totals.
     let thresholds = handle.run_thresholds(&run_id);
@@ -379,6 +395,22 @@ scenarios:
 
     // Let it actually start producing load, then stop it.
     tokio::time::sleep(Duration::from_millis(1500)).await;
+    let scale_error = handle
+        .scale(&run_id, "long", 3)
+        .await
+        .expect_err("constant-vus scenario is not externally controlled");
+    assert!(scale_error
+        .to_string()
+        .contains("not externally controlled"));
+    handle.pause_run(&run_id, true).await.expect("pause ack");
+    assert_eq!(
+        handle
+            .run_operational_info(&run_id)
+            .expect("operational info")
+            .paused,
+        Some(true)
+    );
+    handle.pause_run(&run_id, false).await.expect("resume ack");
     handle.stop_run(&run_id).await.expect("stop");
 
     wait_until(
@@ -469,6 +501,15 @@ scenarios:
         .find(|m| m.metric == "http_reqs")
         .expect("http_reqs");
     assert!(http_reqs.agg.sum > 0.0);
+    let operational = handle
+        .run_operational_info(&run_id)
+        .expect("operational info");
+    assert_eq!(operational.lost.len(), 1);
+    assert_eq!(operational.contributing.len(), 2);
+    assert_eq!(
+        operational.on_agent_loss,
+        loadr_agent::OnAgentLoss::Continue
+    );
 
     handle.shutdown();
 }

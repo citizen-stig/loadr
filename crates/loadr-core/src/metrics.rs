@@ -10,6 +10,20 @@ use serde::{Deserialize, Serialize};
 /// Sorted tag set attached to samples.
 pub type Tags = BTreeMap<String, String>;
 
+/// Whether a metric is a primary request counter for cross-protocol rollups.
+/// GraphQL also emits the underlying HTTP transport metric, so including
+/// `graphql_reqs` would count one operation twice.
+pub fn is_request_counter_metric(metric: &str) -> bool {
+    metric.ends_with("_reqs") && !matches!(metric, "graphql_reqs" | "request_reqs")
+}
+
+/// Whether a metric is a primary request-duration trend for cross-protocol
+/// rollups. See [`is_request_counter_metric`] for the GraphQL exclusion.
+pub fn is_request_duration_metric(metric: &str) -> bool {
+    metric.ends_with("_req_duration")
+        && !matches!(metric, "graphql_req_duration" | "request_duration")
+}
+
 /// The four metric kinds, matching k6.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

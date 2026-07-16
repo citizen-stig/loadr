@@ -315,23 +315,58 @@ async fn handle_controller_message(
                 .filter(|r| r.run_id == c.run_id)
                 .map(|r| r.handle.clone());
             let Some(handle) = handle else {
-                tracing::debug!(run_id = %c.run_id, "control for unknown run ignored");
+                let _ = uplink_tx
+                    .send(control_ack(
+                        &c,
+                        Err("run is not active on this agent".to_string()),
+                    ))
+                    .await;
                 return;
             };
-            match c.action.as_str() {
-                "stop" => handle.stop("controller requested stop"),
-                "kill" => handle.kill("controller requested kill"),
-                "pause" => handle.pause(true),
-                "resume" => handle.pause(false),
-                "scale" => {
-                    if let Err(e) = handle.scale(&c.scenario, c.value) {
-                        tracing::warn!(scenario = %c.scenario, error = %e, "scale failed");
-                    }
+            let result = match c.action.as_str() {
+                "stop" => {
+                    handle.stop("controller requested stop");
+                    Ok(())
                 }
-                other => tracing::warn!(action = other, "unknown control action"),
+                "kill" => {
+                    handle.kill("controller requested kill");
+                    Ok(())
+                }
+                "pause" => {
+                    handle.pause(true);
+                    Ok(())
+                }
+                "resume" => {
+                    handle.pause(false);
+                    Ok(())
+                }
+                "scale" => handle.scale(&c.scenario, c.value),
+                other => Err(format!("unknown control action `{other}`")),
+            };
+            if let Err(error) = &result {
+                tracing::warn!(action = %c.action, scenario = %c.scenario, %error, "control failed");
             }
+            let _ = uplink_tx.send(control_ack(&c, result)).await;
         }
         None => {}
+    }
+}
+
+fn control_ack(control: &pb::Control, result: Result<(), String>) -> pb::AgentMessage {
+    let (applied, detail) = match result {
+        Ok(()) => (true, String::new()),
+        Err(detail) => (false, detail),
+    };
+    pb::AgentMessage {
+        msg: Some(AgentMsg::ControlAck(pb::ControlAck {
+            run_id: control.run_id.clone(),
+            command_id: control.command_id,
+            action: control.action.clone(),
+            scenario: control.scenario.clone(),
+            value: control.value,
+            applied,
+            detail,
+        })),
     }
 }
 

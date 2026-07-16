@@ -1,7 +1,8 @@
 //! `loadr controller` — the distributed-mode control plane: coordination gRPC
 //! server + management web UI + optional Prometheus endpoint.
 
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::Args;
@@ -82,9 +83,21 @@ pub fn execute(args: ControllerArgs) -> anyhow::Result<i32> {
         );
 
         std::fs::create_dir_all(&args.storage_dir)?;
+        let history = load_controller_history(&args.storage_dir.join("history"));
         let backend = Arc::new(ControllerBackend {
             controller: controller.clone(),
             storage_dir: args.storage_dir.clone(),
+            history: parking_lot::Mutex::new(history),
+        });
+        // Persist terminal summaries even when no browser is polling /api/runs.
+        let history_backend = backend.clone();
+        let history_task = tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
+            loop {
+                ticker.tick().await;
+                let runs = history_backend.current_runs();
+                history_backend.sync_history(&runs);
+            }
         });
 
         let mut auth = loadr_plugin_webui::AuthConfig::default();
@@ -151,6 +164,7 @@ pub fn execute(args: ControllerArgs) -> anyhow::Result<i32> {
         if let Some(t) = prom_task {
             t.abort();
         }
+        history_task.abort();
         ui.shutdown().await;
         controller.shutdown();
         Ok(0)
@@ -160,14 +174,15 @@ pub fn execute(args: ControllerArgs) -> anyhow::Result<i32> {
 fn select_prometheus_runs(
     runs: &[loadr_agent::RunSummaryInfo],
 ) -> Vec<&loadr_agent::RunSummaryInfo> {
-    let is_active =
-        |run: &loadr_agent::RunSummaryInfo| run.state == "pending" || run.state == "running";
+    let is_active = |run: &loadr_agent::RunSummaryInfo| {
+        matches!(run.state.as_str(), "pending" | "running" | "stopping")
+    };
     let mut selected: Vec<_> = runs.iter().filter(|run| is_active(run)).collect();
     // Keep the newest completed run exported alongside active ones (`runs()`
-    // is oldest-first): its final counter values and terminal vus=0 must stay
+    // is newest-first): its final counter values and terminal vus=0 must stay
     // scrapeable while the next run is still pending, not just while idle.
     // Series carry loadr_run_id, so concurrent runs don't collide.
-    if let Some(completed) = runs.iter().rev().find(|run| !is_active(run)) {
+    if let Some(completed) = runs.iter().find(|run| !is_active(run)) {
         selected.push(completed);
     }
     selected
@@ -267,6 +282,31 @@ fn gauge_series(metric: &str, tags: Tags, value: f64) -> SeriesSnapshot {
 struct ControllerBackend {
     controller: loadr_agent::ControllerHandle,
     storage_dir: PathBuf,
+    history: parking_lot::Mutex<HashMap<String, ControllerHistoryRecord>>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct ControllerHistoryRecord {
+    info: loadr_plugin_webui::RunInfo,
+    summary: loadr_core::Summary,
+    #[serde(default)]
+    aggregate: Option<loadr_core::Snapshot>,
+}
+
+fn run_is_complete(info: &loadr_agent::RunOperationalInfo) -> bool {
+    info.lost.is_empty()
+        && info
+            .assigned
+            .iter()
+            .all(|agent| info.contributing.contains(agent))
+}
+
+fn ui_run_state(state: &str, complete: bool) -> String {
+    if !complete && state == "finished" {
+        "degraded".to_string()
+    } else {
+        state.to_string()
+    }
 }
 
 impl ControllerBackend {
@@ -276,7 +316,10 @@ impl ControllerBackend {
 
     /// Gather files a plan references, reading from the controller's disk
     /// (tests dir first, then storage dir) so agents receive them.
-    fn collect_files(&self, plan: &loadr_config::TestPlan) -> Vec<(String, Vec<u8>)> {
+    fn collect_files(
+        &self,
+        plan: &loadr_config::TestPlan,
+    ) -> Result<Vec<(String, Vec<u8>)>, String> {
         let mut wanted: Vec<String> = Vec::new();
         for source in plan.data.values() {
             if let loadr_config::DataSource::Csv { path, .. } = source {
@@ -291,21 +334,160 @@ impl ControllerBackend {
         for scenario in plan.scenarios.values() {
             collect_step_files(&scenario.flow, &mut wanted);
         }
+        wanted.sort();
+        wanted.dedup();
         let mut out = Vec::new();
+        let mut missing = Vec::new();
         for rel in wanted {
-            if rel.starts_with('/') || rel.contains("..") {
-                continue;
+            let rel_path = Path::new(&rel);
+            if rel_path.is_absolute()
+                || rel_path
+                    .components()
+                    .any(|component| !matches!(component, std::path::Component::Normal(_)))
+            {
+                return Err(format!(
+                    "referenced file path must stay within controller storage: {rel}"
+                ));
             }
+            let mut found = false;
             for base in [self.tests_dir(), self.storage_dir.clone()] {
                 let candidate = base.join(&rel);
                 if let Ok(content) = std::fs::read(&candidate) {
                     out.push((rel.clone(), content));
+                    found = true;
                     break;
                 }
             }
+            if !found {
+                missing.push(rel);
+            }
         }
-        out
+        if missing.is_empty() {
+            Ok(out)
+        } else {
+            Err(format!(
+                "referenced file(s) not found in {} or {}: {}",
+                self.tests_dir().display(),
+                self.storage_dir.display(),
+                missing.join(", ")
+            ))
+        }
     }
+
+    fn current_runs(&self) -> Vec<loadr_plugin_webui::RunInfo> {
+        self.controller
+            .runs()
+            .into_iter()
+            .map(|run| {
+                let summary = self.controller.run_summary(&run.run_id);
+                let operational = self.controller.run_operational_info(&run.run_id);
+                let lost_agents = operational
+                    .as_ref()
+                    .map(|info| info.lost.clone())
+                    .unwrap_or_default();
+                let complete = operational.as_ref().is_some_and(run_is_complete);
+                let state = ui_run_state(&run.state, complete);
+                loadr_plugin_webui::RunInfo {
+                    run_id: run.run_id.clone(),
+                    name: run.name,
+                    state,
+                    passed: summary.as_ref().and_then(|summary| {
+                        if !complete {
+                            Some(false)
+                        } else if summary.thresholds.is_empty()
+                            || summary
+                                .thresholds
+                                .iter()
+                                .any(|threshold| threshold.observed.is_none())
+                        {
+                            None
+                        } else {
+                            Some(summary.thresholds_passed)
+                        }
+                    }),
+                    started_ms: run.started_ms,
+                    ended_ms: summary.as_ref().map(|summary| summary.ended_ms),
+                    observed_ms: loadr_core::metrics::now_millis(),
+                    scenarios: operational
+                        .as_ref()
+                        .map(|info| info.scenarios.clone())
+                        .or_else(|| summary.as_ref().map(|summary| summary.scenarios.clone()))
+                        .unwrap_or_default(),
+                    agents: run.agents,
+                    contributing_agents: operational
+                        .as_ref()
+                        .map(|info| info.contributing.clone())
+                        .unwrap_or_default(),
+                    lost_agents,
+                    complete: Some(complete),
+                    on_agent_loss: operational.as_ref().map(|info| match info.on_agent_loss {
+                        loadr_agent::OnAgentLoss::Continue => "continue".to_string(),
+                        loadr_agent::OnAgentLoss::Abort => "abort".to_string(),
+                    }),
+                }
+            })
+            .collect()
+    }
+
+    fn sync_history(&self, runs: &[loadr_plugin_webui::RunInfo]) {
+        let history_dir = self.storage_dir.join("history");
+        let _ = std::fs::create_dir_all(&history_dir);
+        let mut history = self.history.lock();
+        for info in runs.iter().filter(|run| {
+            matches!(
+                run.state.as_str(),
+                "finished" | "degraded" | "aborted" | "failed"
+            )
+        }) {
+            if history.contains_key(&info.run_id) {
+                continue;
+            }
+            let Some(summary) = self.controller.run_summary(&info.run_id) else {
+                continue;
+            };
+            let record = ControllerHistoryRecord {
+                info: info.clone(),
+                summary,
+                aggregate: self.controller.run_aggregate_snapshot(&info.run_id),
+            };
+            if persist_controller_history(&history_dir, &record).is_ok() {
+                history.insert(info.run_id.clone(), record);
+            }
+        }
+    }
+}
+
+fn load_controller_history(dir: &Path) -> HashMap<String, ControllerHistoryRecord> {
+    let mut history = HashMap::new();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return history;
+    };
+    for entry in entries.flatten() {
+        if entry
+            .path()
+            .extension()
+            .and_then(|extension| extension.to_str())
+            != Some("json")
+        {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(entry.path()) else {
+            continue;
+        };
+        let Ok(record) = serde_json::from_slice::<ControllerHistoryRecord>(&bytes) else {
+            continue;
+        };
+        history.insert(record.info.run_id.clone(), record);
+    }
+    history
+}
+
+fn persist_controller_history(dir: &Path, record: &ControllerHistoryRecord) -> Result<(), String> {
+    let path = dir.join(format!("{}.json", record.info.run_id));
+    let temp = dir.join(format!("{}.json.tmp", record.info.run_id));
+    let bytes = serde_json::to_vec_pretty(record).map_err(|error| error.to_string())?;
+    std::fs::write(&temp, bytes).map_err(|error| error.to_string())?;
+    std::fs::rename(&temp, &path).map_err(|error| error.to_string())
 }
 
 fn collect_step_files(steps: &[loadr_config::Step], wanted: &mut Vec<String>) {
@@ -337,9 +519,16 @@ impl loadr_plugin_webui::UiBackend for ControllerBackend {
         yaml: String,
         env: Option<String>,
     ) -> Result<String, String> {
-        let loaded = loadr_config::load_str(&yaml, &loadr_config::LoadOptions::new())
-            .map_err(|e| e.to_string())?;
-        let files = self.collect_files(&loaded.plan);
+        let loaded = loadr_config::load_str(
+            &yaml,
+            &loadr_config::LoadOptions {
+                env: env.clone(),
+                check_files: false,
+                deny_errors: true,
+            },
+        )
+        .map_err(|e| e.to_string())?;
+        let files = self.collect_files(&loaded.plan)?;
         self.controller
             .submit(
                 yaml,
@@ -356,24 +545,36 @@ impl loadr_plugin_webui::UiBackend for ControllerBackend {
             .map_err(|e| e.to_string())
     }
 
+    fn validate_references(&self, yaml: &str, env: Option<&str>) -> Result<(), String> {
+        let loaded = loadr_config::load_str(
+            yaml,
+            &loadr_config::LoadOptions {
+                env: env.map(str::to_string),
+                check_files: false,
+                deny_errors: true,
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        self.collect_files(&loaded.plan).map(|_| ())
+    }
+
     fn runs(&self) -> Vec<loadr_plugin_webui::RunInfo> {
-        self.controller
-            .runs()
-            .into_iter()
-            .map(|r| {
-                let summary = self.controller.run_summary(&r.run_id);
-                loadr_plugin_webui::RunInfo {
-                    run_id: r.run_id.clone(),
-                    name: r.name,
-                    state: r.state.clone(),
-                    passed: summary.as_ref().map(|s| s.thresholds_passed),
-                    started_ms: r.started_ms,
-                    ended_ms: summary.as_ref().map(|s| s.ended_ms),
-                    scenarios: summary.map(|s| s.scenarios).unwrap_or_default(),
-                    agents: r.agents,
-                }
-            })
-            .collect()
+        let mut runs = self.current_runs();
+        self.sync_history(&runs);
+        let current: HashSet<String> = runs.iter().map(|run| run.run_id.clone()).collect();
+        runs.extend(
+            self.history
+                .lock()
+                .values()
+                .filter(|record| !current.contains(&record.info.run_id))
+                .map(|record| record.info.clone()),
+        );
+        runs.sort_by(|a, b| {
+            b.started_ms
+                .cmp(&a.started_ms)
+                .then_with(|| a.run_id.cmp(&b.run_id))
+        });
+        runs
     }
 
     fn run_handle(&self, _run_id: &str) -> Option<loadr_core::RunHandle> {
@@ -389,14 +590,58 @@ impl loadr_plugin_webui::UiBackend for ControllerBackend {
                     .run_summary(run_id)
                     .map(|s| Arc::new(s.snapshot))
             })
+            .or_else(|| {
+                self.history
+                    .lock()
+                    .get(run_id)
+                    .map(|record| Arc::new(record.summary.snapshot.clone()))
+            })
+    }
+
+    fn run_aggregate_snapshot(&self, run_id: &str) -> Option<Arc<loadr_core::Snapshot>> {
+        self.controller
+            .run_aggregate_snapshot(run_id)
+            .map(Arc::new)
+            .or_else(|| {
+                self.history
+                    .lock()
+                    .get(run_id)
+                    .and_then(|record| record.aggregate.clone())
+                    .map(Arc::new)
+            })
     }
 
     fn run_thresholds(&self, run_id: &str) -> Vec<loadr_core::ThresholdStatus> {
-        self.controller.run_thresholds(run_id)
+        let current = self.controller.run_thresholds(run_id);
+        if current.is_empty() {
+            self.history
+                .lock()
+                .get(run_id)
+                .map(|record| record.summary.thresholds.clone())
+                .unwrap_or_default()
+        } else {
+            current
+        }
     }
 
     fn run_summary(&self, run_id: &str) -> Option<loadr_core::Summary> {
-        self.controller.run_summary(run_id)
+        self.controller.run_summary(run_id).or_else(|| {
+            self.history
+                .lock()
+                .get(run_id)
+                .map(|record| record.summary.clone())
+        })
+    }
+
+    fn run_control_state(&self, run_id: &str) -> loadr_plugin_webui::RunControlView {
+        self.controller
+            .run_operational_info(run_id)
+            .map(|info| loadr_plugin_webui::RunControlView {
+                externally_controlled: info.externally_controlled,
+                is_paused: info.paused,
+                agent_confirmed: true,
+            })
+            .unwrap_or_default()
     }
 
     async fn stop_run(&self, run_id: &str, kill: bool) -> Result<(), String> {
@@ -432,6 +677,9 @@ impl loadr_plugin_webui::UiBackend for ControllerBackend {
             .agents()
             .into_iter()
             .map(|a| loadr_plugin_webui::AgentView {
+                // The controller's value is already a monotonic age. Preserve
+                // it so the UI does not depend on the browser's wall clock.
+                last_heartbeat_age_ms: a.last_heartbeat_ms,
                 id: a.id,
                 name: a.name,
                 healthy: a.healthy,
@@ -496,6 +744,16 @@ impl loadr_plugin_webui::UiBackend for ControllerBackend {
 
     fn recent_logs(&self) -> Vec<loadr_plugin_webui::LogLine> {
         Vec::new()
+    }
+
+    fn capabilities(&self) -> loadr_plugin_webui::UiCapabilities {
+        loadr_plugin_webui::UiCapabilities {
+            mode: "distributed".to_string(),
+            can_start_runs: true,
+            can_edit_tests: true,
+            logs_available: false,
+            persistent_history: true,
+        }
     }
 }
 
@@ -682,9 +940,10 @@ mod prometheus_tests {
             agents: Vec::new(),
         };
         let runs = vec![
-            run("old", "finished", 1),
-            run("active-a", "running", 2),
+            run("stopping", "stopping", 4),
             run("active-b", "pending", 3),
+            run("active-a", "running", 2),
+            run("old", "finished", 1),
         ];
         let selected: Vec<_> = select_prometheus_runs(&runs)
             .into_iter()
@@ -692,9 +951,9 @@ mod prometheus_tests {
             .collect();
         // The newest completed run stays exported while others are active so
         // its final counters remain scrapeable.
-        assert_eq!(selected, ["active-a", "active-b", "old"]);
+        assert_eq!(selected, ["stopping", "active-b", "active-a", "old"]);
 
-        let completed = vec![run("old", "finished", 1), run("new", "failed", 2)];
+        let completed = vec![run("new", "failed", 2), run("old", "finished", 1)];
         let selected = select_prometheus_runs(&completed);
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].run_id, "new");
@@ -703,5 +962,77 @@ mod prometheus_tests {
         let selected = select_prometheus_runs(&active_only);
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].run_id, "solo");
+    }
+
+    #[test]
+    fn controller_history_round_trips() {
+        let temp = tempfile::tempdir().expect("temporary history directory");
+        let info = loadr_plugin_webui::RunInfo {
+            run_id: "run-history".into(),
+            name: Some("checkout".into()),
+            state: "degraded".into(),
+            passed: Some(false),
+            started_ms: 10,
+            ended_ms: Some(20),
+            observed_ms: 20,
+            scenarios: vec!["browse".into()],
+            agents: vec!["agent-a".into(), "agent-b".into()],
+            contributing_agents: vec!["agent-a".into()],
+            lost_agents: vec!["agent-b".into()],
+            complete: Some(false),
+            on_agent_loss: Some("continue".into()),
+        };
+        let summary = loadr_core::Summary {
+            name: info.name.clone(),
+            run_id: info.run_id.clone(),
+            started_ms: 10,
+            ended_ms: 20,
+            duration_secs: 0.01,
+            scenarios: info.scenarios.clone(),
+            metrics: Vec::new(),
+            checks: Vec::new(),
+            thresholds: Vec::new(),
+            thresholds_passed: true,
+            aborted: None,
+            snapshot: Snapshot::default(),
+            timeline: Vec::new(),
+        };
+        let record = ControllerHistoryRecord {
+            info,
+            summary,
+            aggregate: Some(Snapshot::default()),
+        };
+
+        persist_controller_history(temp.path(), &record).expect("persist history");
+        let loaded = load_controller_history(temp.path());
+        let loaded = loaded.get("run-history").expect("loaded history");
+        assert_eq!(loaded.info.state, "degraded");
+        assert_eq!(loaded.info.complete, Some(false));
+        assert_eq!(loaded.info.lost_agents, ["agent-b"]);
+        assert_eq!(loaded.summary.run_id, "run-history");
+        assert!(loaded.aggregate.is_some());
+    }
+
+    #[test]
+    fn fleet_completeness_requires_every_agent_and_preserves_stronger_states() {
+        let mut info = loadr_agent::RunOperationalInfo {
+            scenarios: Vec::new(),
+            externally_controlled: Vec::new(),
+            assigned: vec!["agent-a".into(), "agent-b".into()],
+            contributing: vec!["agent-a".into()],
+            completed: Vec::new(),
+            lost: Vec::new(),
+            on_agent_loss: loadr_agent::OnAgentLoss::Continue,
+            paused: Some(false),
+        };
+        assert!(!run_is_complete(&info));
+        assert_eq!(ui_run_state("finished", false), "degraded");
+        assert_eq!(ui_run_state("failed", false), "failed");
+        assert_eq!(ui_run_state("aborted", false), "aborted");
+
+        info.contributing.push("agent-b".into());
+        assert!(run_is_complete(&info));
+        info.lost.push("agent-b".into());
+        assert!(!run_is_complete(&info));
     }
 }

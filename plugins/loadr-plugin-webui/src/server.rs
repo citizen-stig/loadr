@@ -123,6 +123,7 @@ pub(crate) struct AppState {
 
 fn router(state: Arc<AppState>) -> Router {
     let api = Router::new()
+        .route("/capabilities", get(crate::api::capabilities))
         .route("/overview", get(crate::api::overview))
         .route(
             "/runs",

@@ -29,10 +29,8 @@ pub struct MetricSummary {
 ///
 /// One point is emitted per snapshot interval. All values describe the run at
 /// `elapsed_secs`; throughput and `error_rate` cover the interval window, while
-/// latency percentiles and `active_vus` are point-in-time. This is the data the
-/// HTML report charts and is exact enough for visual analysis (latency
-/// percentiles come from the live, count-weighted merge — the aggregate table
-/// remains the source of exact end-of-run figures).
+/// latency percentiles are exact run-to-date aggregates and `active_vus` is
+/// point-in-time.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TimelinePoint {
     /// Seconds since the run started.
@@ -66,6 +64,15 @@ pub struct TimelinePoint {
 impl TimelinePoint {
     /// Derive a timeline point from a live snapshot.
     pub fn from_snapshot(snap: &crate::aggregate::Snapshot) -> TimelinePoint {
+        Self::from_snapshots(snap, None)
+    }
+
+    /// Derive a timeline point using an exact aggregate snapshot for
+    /// cross-tag and cross-protocol latency rollups.
+    pub fn from_snapshots(
+        snap: &crate::aggregate::Snapshot,
+        exact: Option<&crate::aggregate::Snapshot>,
+    ) -> TimelinePoint {
         let interval = if snap.interval_secs > 0.0 {
             snap.interval_secs
         } else {
@@ -81,14 +88,14 @@ impl TimelinePoint {
                 .sum::<u64>() as f64
         };
 
-        // Pass/fail merged exactly across tag sets: a "failed" rate metric.
+        // Failed fraction over this snapshot interval.
         let error_rate = {
             let (passes, total) = snap
                 .series
                 .iter()
                 .filter(|s| s.metric == "http_req_failed")
                 .fold((0.0_f64, 0_u64), |(p, t), s| {
-                    (p + s.agg.sum, t + s.agg.count)
+                    (p + s.interval_sum, t + s.interval_count)
                 });
             if total > 0 {
                 passes / total as f64
@@ -97,14 +104,25 @@ impl TimelinePoint {
             }
         };
 
-        // Latency: count-weighted merge of the trend statistic across tag sets.
+        // Exact run-to-date request latency when the aggregator projection is
+        // available. The weighted fallback is retained for old callers.
         let latency = |pick: fn(&AggValues) -> Option<f64>| -> Option<f64> {
+            if let Some(value) = exact
+                .and_then(|snapshot| {
+                    snapshot.series.iter().find(|series| {
+                        series.metric == "request_duration" && series.tags.is_empty()
+                    })
+                })
+                .and_then(|series| pick(&series.agg))
+            {
+                return Some(value);
+            }
             let mut acc = 0.0_f64;
             let mut total = 0_u64;
             for s in snap
                 .series
                 .iter()
-                .filter(|s| s.metric.ends_with("_req_duration"))
+                .filter(|s| crate::metrics::is_request_duration_metric(&s.metric))
             {
                 if s.agg.count == 0 {
                     continue;
@@ -186,7 +204,7 @@ impl Summary {
             }
             seen.into_iter().collect()
         };
-        let metrics: Vec<MetricSummary> = metric_names
+        let mut metrics: Vec<MetricSummary> = metric_names
             .iter()
             .filter_map(|(m, _)| {
                 agg.aggregate_selector(m, &[])
@@ -197,6 +215,21 @@ impl Summary {
                     })
             })
             .collect();
+        let request_rollups = agg.aggregate_snapshot(&[]);
+        metrics.retain(|metric| {
+            !matches!(metric.metric.as_str(), "request_reqs" | "request_duration")
+        });
+        for metric in request_rollups.series.iter().filter(|series| {
+            series.tags.is_empty()
+                && matches!(series.metric.as_str(), "request_reqs" | "request_duration")
+        }) {
+            metrics.push(MetricSummary {
+                metric: metric.metric.clone(),
+                kind: metric.kind,
+                agg: metric.agg.clone(),
+            });
+        }
+        metrics.sort_by(|a, b| a.metric.cmp(&b.metric));
 
         // Check summaries from `checks` series tagged with `check`.
         let mut checks: BTreeMap<String, (u64, u64)> = BTreeMap::new();

@@ -17,7 +17,7 @@ use loadr_core::{
     TimelinePoint,
 };
 use parking_lot::Mutex;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, watch, Notify};
 use tokio_stream::wrappers::{ReceiverStream, TcpListenerStream};
 use tokio_util::sync::CancellationToken;
 use tonic::transport::{Certificate, Identity, Server, ServerTlsConfig};
@@ -116,10 +116,25 @@ pub struct AgentInfo {
 pub struct RunSummaryInfo {
     pub run_id: String,
     pub name: Option<String>,
-    /// pending | running | finished | aborted | failed
+    /// pending | running | stopping | finished | aborted | failed
     pub state: String,
     pub started_ms: u64,
     pub agents: Vec<String>,
+}
+
+/// Decision-relevant lifecycle and completeness state for one distributed run.
+#[derive(Debug, Clone)]
+pub struct RunOperationalInfo {
+    pub scenarios: Vec<String>,
+    pub externally_controlled: Vec<String>,
+    pub assigned: Vec<String>,
+    pub contributing: Vec<String>,
+    pub completed: Vec<String>,
+    pub lost: Vec<String>,
+    pub on_agent_loss: OnAgentLoss,
+    /// Applied pause state. `None` means a partially acknowledged command may
+    /// have left agents in different states.
+    pub paused: Option<bool>,
 }
 
 /// One exact all-tags metric aggregate for a controller run.
@@ -154,6 +169,7 @@ pub fn scale_shares(total: u64, agents: u64) -> Vec<u64> {
 enum RunState {
     Pending,
     Running,
+    Stopping,
     Finished,
     Aborted,
     Failed,
@@ -171,6 +187,7 @@ impl RunState {
         match self {
             RunState::Pending => "pending",
             RunState::Running => "running",
+            RunState::Stopping => "stopping",
             RunState::Finished => "finished",
             RunState::Aborted => "aborted",
             RunState::Failed => "failed",
@@ -192,12 +209,21 @@ struct AgentEntry {
     sender: AgentSender,
 }
 
+struct PendingControl {
+    expected: HashSet<String>,
+    responses: HashMap<String, Result<(), String>>,
+    action: String,
+    scenario: String,
+    notify: Arc<Notify>,
+}
+
 struct ControllerRun {
     run_id: String,
     name: Option<String>,
     #[allow(dead_code)]
     plan_yaml: String,
     scenarios: Vec<String>,
+    externally_controlled: Vec<String>,
     thresholds: Vec<CompiledThreshold>,
     on_agent_loss: OnAgentLoss,
     /// Agent ids in partition order.
@@ -208,7 +234,14 @@ struct ControllerRun {
     agg: Mutex<Aggregator>,
     /// agent_id → terminal event kind (finished/aborted/failed).
     done: Mutex<HashMap<String, String>>,
+    /// Agents currently treated as lost for run-completion accounting.
     lost: Mutex<HashSet<String>>,
+    /// Monotonic record used to qualify result completeness even after an
+    /// agent reconnects and resumes.
+    lost_ever: Mutex<HashSet<String>>,
+    contributing: Mutex<HashSet<String>>,
+    paused: Mutex<Option<bool>>,
+    pending_controls: Mutex<HashMap<u64, PendingControl>>,
     /// Per-agent summaries as reported.
     summaries: Mutex<Vec<Summary>>,
     threshold_statuses: Mutex<Vec<ThresholdStatus>>,
@@ -231,6 +264,7 @@ struct Inner {
     agents: Mutex<HashMap<String, AgentEntry>>,
     runs: Mutex<HashMap<String, Arc<ControllerRun>>>,
     session_counter: AtomicU64,
+    control_counter: AtomicU64,
 }
 
 impl Inner {
@@ -287,6 +321,7 @@ impl Inner {
                 let Some(run) = run else { return };
                 match serde_json::from_slice::<MetricsDelta>(&batch.delta_json) {
                     Ok(mut delta) => {
+                        run.contributing.lock().insert(agent_id.to_string());
                         // Identity labels are supplied by the registered
                         // controller session, never trusted from sample tags.
                         let agent_name = self
@@ -314,6 +349,30 @@ impl Inner {
                 }
             }
             Some(AgentMsg::Event(ev)) => self.handle_run_event(agent_id, ev),
+            Some(AgentMsg::ControlAck(ack)) => {
+                let run = self.runs.lock().get(&ack.run_id).cloned();
+                let Some(run) = run else { return };
+                let mut pending = run.pending_controls.lock();
+                let Some(command) = pending.get_mut(&ack.command_id) else {
+                    return;
+                };
+                if command.expected.contains(agent_id)
+                    && ack.action == command.action
+                    && ack.scenario == command.scenario
+                {
+                    let result = if ack.applied {
+                        Ok(())
+                    } else {
+                        Err(if ack.detail.is_empty() {
+                            "agent rejected command".to_string()
+                        } else {
+                            ack.detail
+                        })
+                    };
+                    command.responses.insert(agent_id.to_string(), result);
+                    command.notify.notify_one();
+                }
+            }
             Some(AgentMsg::Register(_)) | None => {}
         }
     }
@@ -402,6 +461,7 @@ impl Inner {
         *run.finished_ms.lock() = Some(now_unix_ms());
         let mut agg = run.agg.lock();
         let (statuses, _) = evaluate_all(&run.thresholds, &agg, agg.elapsed());
+        let aggregates = agg.aggregate_snapshot(&[&["scenario"]]);
         let snapshot = Arc::new(agg.snapshot());
         drop(agg);
         *run.threshold_statuses.lock() = statuses;
@@ -413,7 +473,7 @@ impl Inner {
         {
             run.timeline
                 .lock()
-                .push(TimelinePoint::from_snapshot(&snapshot));
+                .push(TimelinePoint::from_snapshots(&snapshot, Some(&aggregates)));
         }
         let _ = run.snapshot_tx.send(snapshot);
         tracing::info!(run_id = %run.run_id, state = final_state.as_str(), "run completed");
@@ -436,7 +496,11 @@ impl Inner {
             }
             *last = Instant::now();
         }
-        let snapshot = Arc::new(run.agg.lock().snapshot());
+        let (snapshot, aggregates) = {
+            let mut agg = run.agg.lock();
+            let aggregates = agg.aggregate_snapshot(&[&["scenario"]]);
+            (Arc::new(agg.snapshot()), aggregates)
+        };
         // Sample the timeline ~once a second (the recompute itself is throttled
         // to 250ms, which is too fine-grained for charting).
         {
@@ -445,7 +509,7 @@ impl Inner {
                 *last = Instant::now();
                 run.timeline
                     .lock()
-                    .push(TimelinePoint::from_snapshot(&snapshot));
+                    .push(TimelinePoint::from_snapshots(&snapshot, Some(&aggregates)));
             }
         }
         let _ = run.snapshot_tx.send(snapshot);
@@ -454,9 +518,12 @@ impl Inner {
     /// Senders for the run's assigned agents that are still connected, in
     /// partition order.
     fn run_senders(&self, run: &ControllerRun) -> Vec<(String, AgentSender)> {
+        let done = run.done.lock();
+        let lost = run.lost.lock();
         let agents = self.agents.lock();
         run.assigned
             .iter()
+            .filter(|id| !done.contains_key(*id) && !lost.contains(*id))
             .filter_map(|id| {
                 agents
                     .get(id)
@@ -498,6 +565,7 @@ impl Inner {
             for id in &newly {
                 tracing::warn!(run_id = %run.run_id, agent = %id, "agent lost during run");
                 run.lost.lock().insert(id.clone());
+                run.lost_ever.lock().insert(id.clone());
                 self.zero_agent_live_gauges(&run, id);
             }
             match run.on_agent_loss {
@@ -512,7 +580,7 @@ impl Inner {
                     let targets = self.run_senders(&run);
                     for (_, sender) in targets {
                         let _ = sender
-                            .send(Ok(control_message(&run.run_id, "stop", "", 0)))
+                            .send(Ok(control_message(&run.run_id, "stop", "", 0, 0)))
                             .await;
                     }
                     self.finalize_run(&run, RunState::Failed);
@@ -538,6 +606,7 @@ fn control_message(
     action: &str,
     scenario: &str,
     value: u64,
+    command_id: u64,
 ) -> pb::ControllerMessage {
     pb::ControllerMessage {
         msg: Some(CtrlMsg::Control(pb::Control {
@@ -545,6 +614,7 @@ fn control_message(
             action: action.to_string(),
             scenario: scenario.to_string(),
             value,
+            command_id,
         })),
     }
 }
@@ -637,6 +707,7 @@ impl Controller {
             agents: Mutex::new(HashMap::new()),
             runs: Mutex::new(HashMap::new()),
             session_counter: AtomicU64::new(0),
+            control_counter: AtomicU64::new(0),
         });
         let shutdown = CancellationToken::new();
 
@@ -761,6 +832,18 @@ impl ControllerHandle {
         }
         let thresholds = compile_thresholds(&loaded.plan.thresholds).map_err(AgentError::Config)?;
         let scenarios: Vec<String> = loaded.plan.scenarios.keys().cloned().collect();
+        let externally_controlled: Vec<String> = loaded
+            .plan
+            .scenarios
+            .iter()
+            .filter(|(_, scenario)| {
+                matches!(
+                    scenario.executor_spec(),
+                    Ok(loadr_config::ExecutorSpec::ExternallyControlled { .. })
+                )
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
         let name = opts.name.clone().or_else(|| loaded.plan.name.clone());
 
         // Pick agents: connected, fresh, matching the label filter.
@@ -788,6 +871,7 @@ impl ControllerHandle {
             name,
             plan_yaml: plan_yaml.clone(),
             scenarios,
+            externally_controlled,
             thresholds,
             on_agent_loss: opts.on_agent_loss,
             assigned: selected.iter().map(|(id, _)| id.clone()).collect(),
@@ -797,6 +881,10 @@ impl ControllerHandle {
             agg: Mutex::new(Aggregator::new()),
             done: Mutex::new(HashMap::new()),
             lost: Mutex::new(HashSet::new()),
+            lost_ever: Mutex::new(HashSet::new()),
+            contributing: Mutex::new(HashSet::new()),
+            paused: Mutex::new(Some(false)),
+            pending_controls: Mutex::new(HashMap::new()),
             summaries: Mutex::new(Vec::new()),
             threshold_statuses: Mutex::new(Vec::new()),
             abort_reason: Mutex::new(None),
@@ -898,16 +986,115 @@ impl ControllerHandle {
         if targets.is_empty() {
             return Err(AgentError::NoAgents);
         }
+        if action == "scale"
+            && !run
+                .externally_controlled
+                .iter()
+                .any(|name| name == scenario)
+        {
+            return Err(AgentError::Control(format!(
+                "scenario `{scenario}` is not externally controlled (available: {})",
+                run.externally_controlled.join(", ")
+            )));
+        }
+        let command_id = self.inner.control_counter.fetch_add(1, Ordering::Relaxed) + 1;
+        let notify = Arc::new(Notify::new());
+        run.pending_controls.lock().insert(
+            command_id,
+            PendingControl {
+                expected: targets.iter().map(|(id, _)| id.clone()).collect(),
+                responses: HashMap::new(),
+                action: action.to_string(),
+                scenario: scenario.to_string(),
+                notify: notify.clone(),
+            },
+        );
         let shares = vus_total.map(|total| scale_shares(total, targets.len() as u64));
-        for (index, (_, sender)) in targets.iter().enumerate() {
+        for (index, (agent_id, sender)) in targets.iter().enumerate() {
             let value = shares
                 .as_ref()
                 .and_then(|s| s.get(index))
                 .copied()
                 .unwrap_or(0);
-            let _ = sender
-                .send(Ok(control_message(run_id, action, scenario, value)))
-                .await;
+            if sender
+                .send(Ok(control_message(
+                    run_id, action, scenario, value, command_id,
+                )))
+                .await
+                .is_err()
+            {
+                if let Some(pending) = run.pending_controls.lock().get_mut(&command_id) {
+                    pending.responses.insert(
+                        agent_id.clone(),
+                        Err("could not deliver command".to_string()),
+                    );
+                }
+            }
+        }
+
+        let wait_for_acks = async {
+            loop {
+                let complete = run
+                    .pending_controls
+                    .lock()
+                    .get(&command_id)
+                    .is_none_or(|pending| pending.responses.len() >= pending.expected.len());
+                if complete {
+                    break;
+                }
+                notify.notified().await;
+            }
+        };
+        if tokio::time::timeout(Duration::from_secs(3), wait_for_acks)
+            .await
+            .is_err()
+        {
+            let pending = run.pending_controls.lock().remove(&command_id);
+            let missing = pending
+                .map(|pending| {
+                    pending
+                        .expected
+                        .iter()
+                        .filter(|agent| !pending.responses.contains_key(*agent))
+                        .cloned()
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if action == "pause" || action == "resume" {
+                *run.paused.lock() = None;
+            }
+            return Err(AgentError::Control(format!(
+                "timed out waiting for agent acknowledgement{}",
+                if missing.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", missing.join(", "))
+                }
+            )));
+        }
+        let responses = run
+            .pending_controls
+            .lock()
+            .remove(&command_id)
+            .map(|pending| pending.responses)
+            .unwrap_or_default();
+        let failures: Vec<String> = responses
+            .into_iter()
+            .filter_map(|(agent, result)| result.err().map(|error| format!("{agent}: {error}")))
+            .collect();
+        if !failures.is_empty() {
+            if action == "pause" || action == "resume" {
+                *run.paused.lock() = None;
+            }
+            return Err(AgentError::Control(failures.join("; ")));
+        }
+        if action == "pause" || action == "resume" {
+            *run.paused.lock() = Some(action == "pause");
+        } else if action == "stop" || action == "kill" {
+            let mut state = run.state.lock();
+            if !state.is_terminal() {
+                *state = RunState::Stopping;
+            }
         }
         Ok(())
     }
@@ -932,7 +1119,7 @@ impl ControllerHandle {
             .collect()
     }
 
-    /// All known runs, oldest first.
+    /// All known runs, newest first.
     pub fn runs(&self) -> Vec<RunSummaryInfo> {
         let mut out: Vec<RunSummaryInfo> = self
             .inner
@@ -948,8 +1135,8 @@ impl ControllerHandle {
             })
             .collect();
         out.sort_by(|a, b| {
-            a.started_ms
-                .cmp(&b.started_ms)
+            b.started_ms
+                .cmp(&a.started_ms)
                 .then_with(|| a.run_id.cmp(&b.run_id))
         });
         out
@@ -1002,6 +1189,37 @@ impl ControllerHandle {
             *run.prom_view.lock() = Some(view.clone());
         }
         Some(view)
+    }
+
+    /// Exact cumulative aggregates for fleet, scenario, and agent views.
+    pub fn run_aggregate_snapshot(&self, run_id: &str) -> Option<Snapshot> {
+        let run = self.inner.runs.lock().get(run_id).cloned()?;
+        let snapshot = run
+            .agg
+            .lock()
+            .aggregate_snapshot(&[&["scenario"], &["loadr_agent", "loadr_agent_id"]]);
+        Some(snapshot)
+    }
+
+    pub fn run_operational_info(&self, run_id: &str) -> Option<RunOperationalInfo> {
+        let run = self.inner.runs.lock().get(run_id).cloned()?;
+        let mut contributing: Vec<String> = run.contributing.lock().iter().cloned().collect();
+        let mut completed: Vec<String> = run.done.lock().keys().cloned().collect();
+        let mut lost: Vec<String> = run.lost_ever.lock().iter().cloned().collect();
+        contributing.sort();
+        completed.sort();
+        lost.sort();
+        let paused = *run.paused.lock();
+        Some(RunOperationalInfo {
+            scenarios: run.scenarios.clone(),
+            externally_controlled: run.externally_controlled.clone(),
+            assigned: run.assigned.clone(),
+            contributing,
+            completed,
+            lost,
+            on_agent_loss: run.on_agent_loss,
+            paused,
+        })
     }
 
     /// Centrally evaluated threshold statuses for a run.
@@ -1084,6 +1302,7 @@ mod metrics_tests {
             name: None,
             plan_yaml: String::new(),
             scenarios: Vec::new(),
+            externally_controlled: Vec::new(),
             thresholds: Vec::new(),
             on_agent_loss: OnAgentLoss::Continue,
             assigned: vec![agent_id.into()],
@@ -1093,6 +1312,10 @@ mod metrics_tests {
             agg: Mutex::new(Aggregator::new()),
             done: Mutex::new(HashMap::new()),
             lost: Mutex::new(HashSet::new()),
+            lost_ever: Mutex::new(HashSet::new()),
+            contributing: Mutex::new(HashSet::new()),
+            paused: Mutex::new(Some(false)),
+            pending_controls: Mutex::new(HashMap::new()),
             summaries: Mutex::new(Vec::new()),
             threshold_statuses: Mutex::new(Vec::new()),
             abort_reason: Mutex::new(None),
@@ -1114,6 +1337,7 @@ mod metrics_tests {
             agents: Mutex::new(HashMap::new()),
             runs: Mutex::new(HashMap::new()),
             session_counter: AtomicU64::new(0),
+            control_counter: AtomicU64::new(0),
         };
         inner.agents.lock().insert(
             "agent-a".into(),

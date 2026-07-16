@@ -218,7 +218,8 @@ pub struct SeriesSnapshot {
     pub agg: AggValues,
     /// Events recorded since the previous snapshot (for live RPS displays).
     pub interval_count: u64,
-    /// Counter increase since the previous snapshot.
+    /// Sum recorded since the previous snapshot. For counters this is the
+    /// counter increase; for rates it is the number of passing samples.
     pub interval_sum: f64,
 }
 
@@ -254,7 +255,7 @@ impl Snapshot {
     pub fn interval_request_count(&self) -> u64 {
         self.series
             .iter()
-            .filter(|s| s.metric.ends_with("_reqs"))
+            .filter(|s| crate::metrics::is_request_counter_metric(&s.metric))
             .map(|s| s.interval_count)
             .sum()
     }
@@ -427,10 +428,12 @@ impl Aggregator {
                         series.snap_counter = *total;
                         (d.max(0.0) as u64, d)
                     }
-                    SeriesData::Rate { total, .. } => {
+                    SeriesData::Rate { passes, total, .. } => {
                         let d = total.saturating_sub(series.snap_count);
+                        let pass_delta = (*passes as f64 - series.snap_counter).max(0.0);
                         series.snap_count = *total;
-                        (d, d as f64)
+                        series.snap_counter = *passes as f64;
+                        (d, pass_delta)
                     }
                     SeriesData::Trend { count, .. } => {
                         let d = count.saturating_sub(series.snap_count);
@@ -525,71 +528,121 @@ impl Aggregator {
         }
         let mut merged = Series::new(kind);
         for s in matched {
-            match (&mut merged.data, &s.data) {
-                (SeriesData::Counter { total, .. }, SeriesData::Counter { total: t2, .. }) => {
-                    *total += t2;
-                }
-                (
-                    SeriesData::Gauge {
-                        last,
-                        min,
-                        max,
-                        seq,
-                    },
-                    SeriesData::Gauge {
-                        last: l2,
-                        min: m2,
-                        max: x2,
-                        seq: s2,
-                    },
-                ) => {
-                    if is_additive_gauge(metric) {
-                        *last += *l2;
-                        *seq = (*seq).max(*s2);
-                    } else if *s2 >= *seq {
-                        *last = *l2;
-                        *seq = *s2;
-                    }
-                    *min = min.min(*m2);
-                    *max = max.max(*x2);
-                }
-                (
-                    SeriesData::Rate { passes, total, .. },
-                    SeriesData::Rate {
-                        passes: p2,
-                        total: t2,
-                        ..
-                    },
-                ) => {
-                    *passes += p2;
-                    *total += t2;
-                }
-                (
-                    SeriesData::Trend {
-                        hist,
-                        sum,
-                        count,
-                        min,
-                        max,
-                        ..
-                    },
-                    SeriesData::Trend {
-                        hist: h2,
-                        sum: s2,
-                        count: c2,
-                        min: m2,
-                        max: x2,
-                        ..
-                    },
-                ) => {
-                    let _ = hist.add(h2);
-                    *sum += s2;
-                    *count += c2;
-                    *min = min.min(*m2);
-                    *max = max.max(*x2);
-                }
-                _ => {}
+            merge_series(metric, &mut merged, s);
+        }
+        Some((kind, Self::agg_values(&merged, elapsed)))
+    }
+
+    /// Exact cumulative aggregates for the whole run and selected tag
+    /// groupings. Histograms are merged before percentiles are extracted.
+    ///
+    /// The snapshot includes canonical `request_reqs` and `request_duration`
+    /// rollups across primary protocol families. GraphQL's secondary metrics
+    /// are excluded because the underlying HTTP request is already present.
+    pub fn aggregate_snapshot(&self, groupings: &[&[&str]]) -> Snapshot {
+        use std::collections::BTreeSet;
+
+        let elapsed = self.start.elapsed().as_secs_f64();
+        let mut selectors: BTreeSet<(String, Tags)> = BTreeSet::new();
+        let mut request_filters: BTreeSet<Tags> = BTreeSet::new();
+        request_filters.insert(Tags::new());
+
+        for key in self.series.keys() {
+            if !matches!(&*key.metric, "request_reqs" | "request_duration") {
+                selectors.insert((key.metric.to_string(), Tags::new()));
             }
+            let request_metric = crate::metrics::is_request_counter_metric(&key.metric)
+                || crate::metrics::is_request_duration_metric(&key.metric);
+            for grouping in groupings {
+                let Some(tags) = retained_tags(&key.tags, grouping) else {
+                    continue;
+                };
+                if !matches!(&*key.metric, "request_reqs" | "request_duration") {
+                    selectors.insert((key.metric.to_string(), tags.clone()));
+                }
+                if request_metric {
+                    request_filters.insert(tags);
+                }
+            }
+        }
+
+        let mut out = Vec::with_capacity(selectors.len() + request_filters.len() * 2);
+        for (metric, tags) in selectors {
+            let filter: Vec<(String, String)> = tags
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            if let Some((kind, agg)) = self.aggregate_selector(&metric, &filter) {
+                out.push(SeriesSnapshot {
+                    metric,
+                    kind,
+                    tags,
+                    agg,
+                    interval_count: 0,
+                    interval_sum: 0.0,
+                });
+            }
+        }
+
+        for tags in request_filters {
+            if let Some((kind, agg)) = self.aggregate_matching(&tags, |metric| {
+                crate::metrics::is_request_counter_metric(metric)
+            }) {
+                out.push(SeriesSnapshot {
+                    metric: "request_reqs".to_string(),
+                    kind,
+                    tags: tags.clone(),
+                    agg,
+                    interval_count: 0,
+                    interval_sum: 0.0,
+                });
+            }
+            if let Some((kind, agg)) = self.aggregate_matching(&tags, |metric| {
+                crate::metrics::is_request_duration_metric(metric)
+            }) {
+                out.push(SeriesSnapshot {
+                    metric: "request_duration".to_string(),
+                    kind,
+                    tags,
+                    agg,
+                    interval_count: 0,
+                    interval_sum: 0.0,
+                });
+            }
+        }
+        out.sort_by(|a, b| a.metric.cmp(&b.metric).then_with(|| a.tags.cmp(&b.tags)));
+        Snapshot {
+            timestamp_ms: now_millis(),
+            elapsed_secs: elapsed,
+            interval_secs: 0.0,
+            series: out,
+        }
+    }
+
+    fn aggregate_matching<F>(
+        &self,
+        tag_filter: &Tags,
+        matches_metric: F,
+    ) -> Option<(MetricKind, AggValues)>
+    where
+        F: Fn(&str) -> bool,
+    {
+        let elapsed = self.start.elapsed().as_secs_f64();
+        let matched: Vec<&Series> = self
+            .series
+            .iter()
+            .filter(|(key, _)| {
+                matches_metric(&key.metric)
+                    && tag_filter
+                        .iter()
+                        .all(|(k, v)| key.tags.get(k).is_some_and(|actual| actual == v))
+            })
+            .map(|(_, series)| series)
+            .collect();
+        let kind = matched.first()?.kind;
+        let mut merged = Series::new(kind);
+        for series in matched {
+            merge_series("request_rollup", &mut merged, series);
         }
         Some((kind, Self::agg_values(&merged, elapsed)))
     }
@@ -808,6 +861,82 @@ impl Aggregator {
     }
 }
 
+fn retained_tags(tags: &Tags, grouping: &[&str]) -> Option<Tags> {
+    let mut retained = Tags::new();
+    for tag in grouping {
+        retained.insert((*tag).to_string(), tags.get(*tag)?.clone());
+    }
+    Some(retained)
+}
+
+fn merge_series(metric: &str, merged: &mut Series, source: &Series) {
+    match (&mut merged.data, &source.data) {
+        (SeriesData::Counter { total, .. }, SeriesData::Counter { total: other, .. }) => {
+            *total += other;
+        }
+        (
+            SeriesData::Gauge {
+                last,
+                min,
+                max,
+                seq,
+            },
+            SeriesData::Gauge {
+                last: other_last,
+                min: other_min,
+                max: other_max,
+                seq: other_seq,
+            },
+        ) => {
+            if is_additive_gauge(metric) {
+                *last += *other_last;
+                *seq = (*seq).max(*other_seq);
+            } else if *other_seq >= *seq {
+                *last = *other_last;
+                *seq = *other_seq;
+            }
+            *min = min.min(*other_min);
+            *max = max.max(*other_max);
+        }
+        (
+            SeriesData::Rate { passes, total, .. },
+            SeriesData::Rate {
+                passes: other_passes,
+                total: other_total,
+                ..
+            },
+        ) => {
+            *passes += other_passes;
+            *total += other_total;
+        }
+        (
+            SeriesData::Trend {
+                hist,
+                sum,
+                count,
+                min,
+                max,
+                ..
+            },
+            SeriesData::Trend {
+                hist: other_hist,
+                sum: other_sum,
+                count: other_count,
+                min: other_min,
+                max: other_max,
+                ..
+            },
+        ) => {
+            let _ = hist.add(other_hist);
+            *sum += other_sum;
+            *count += other_count;
+            *min = min.min(*other_min);
+            *max = max.max(*other_max);
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -868,6 +997,24 @@ mod tests {
         let s2 = agg.snapshot();
         assert_eq!(s2.find("reqs").unwrap().interval_sum, 2.0);
         assert_eq!(s2.find("reqs").unwrap().agg.sum, 7.0);
+    }
+
+    #[test]
+    fn rate_interval_sum_tracks_passing_samples() {
+        let mut agg = Aggregator::new();
+        agg.record(&sample("failed", MetricKind::Rate, 1.0, &[]));
+        agg.record(&sample("failed", MetricKind::Rate, 0.0, &[]));
+        agg.record(&sample("failed", MetricKind::Rate, 1.0, &[]));
+        let first = agg.snapshot();
+        let rate = first.find("failed").unwrap();
+        assert_eq!(rate.interval_count, 3);
+        assert_eq!(rate.interval_sum, 2.0);
+
+        agg.record(&sample("failed", MetricKind::Rate, 0.0, &[]));
+        let second = agg.snapshot();
+        let rate = second.find("failed").unwrap();
+        assert_eq!(rate.interval_count, 1);
+        assert_eq!(rate.interval_sum, 0.0);
     }
 
     #[test]
@@ -991,7 +1138,12 @@ mod tests {
     fn aggregate_all_matches_per_metric_selectors() {
         let mut agg = Aggregator::new();
         for i in 1..=100 {
-            agg.record(&sample("dur", MetricKind::Trend, i as f64, &[("agent", "a")]));
+            agg.record(&sample(
+                "dur",
+                MetricKind::Trend,
+                i as f64,
+                &[("agent", "a")],
+            ));
             agg.record(&sample(
                 "dur",
                 MetricKind::Trend,

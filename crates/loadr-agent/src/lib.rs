@@ -29,8 +29,8 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 pub use agent::{Agent, AgentConfig, AgentTls, ProtocolFactory, RunnerDeps, ScriptFactory};
 pub use controller::{
-    AgentInfo, Controller, ControllerConfig, ControllerHandle, ControllerTls, OnAgentLoss,
-    RunSummaryInfo, SubmitOptions,
+    AgentInfo, Controller, ControllerConfig, ControllerHandle, ControllerTls, FleetMetric,
+    OnAgentLoss, RunMetricsView, RunSummaryInfo, SubmitOptions,
 };
 pub use error::AgentError;
 

@@ -595,17 +595,19 @@ impl Output for DeltaOutput {
     }
 
     async fn on_snapshot(&mut self, _snapshot: &Snapshot) {
+        // Never block the aggregator: when the uplink is congested (e.g. a
+        // reconnect in progress) skip the flush entirely — the delta keeps
+        // accumulating and ships on a later snapshot. Reserving up front
+        // avoids draining (and serializing) a delta that can't be sent.
+        let Ok(permit) = self.uplink.try_reserve() else {
+            return;
+        };
         let delta = self.agg.take_delta();
         if delta.series.is_empty() {
             return;
         }
-        let Some(msg) = self.batch(&delta) else {
-            return;
-        };
-        // Never block the aggregator: when the uplink is congested (e.g. a
-        // reconnect in progress) fold the delta back in and retry next flush.
-        if self.uplink.try_send(msg).is_err() {
-            self.agg.merge_delta(&delta);
+        if let Some(msg) = self.batch(&delta) {
+            permit.send(msg);
         }
     }
 

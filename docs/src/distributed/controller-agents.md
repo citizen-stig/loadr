@@ -34,6 +34,18 @@ loadr agent --join ctrl:7625 \
 Without flags the channel is plaintext — fine on a private network, not on
 the internet.
 
+## Prometheus
+
+Expose the controller-owned fleet endpoint with:
+
+```bash
+loadr controller --prometheus-listen 0.0.0.0:9091
+```
+
+Scrape `/metrics` on that address. The endpoint publishes both tagged
+per-agent series and exact `loadr_fleet_*` aggregates; see
+[Metric aggregation](metrics-merging.md#tags--per-agent-visibility).
+
 ## Failure handling
 
 - **Heartbeats** every 2 s; an agent silent past the liveness window

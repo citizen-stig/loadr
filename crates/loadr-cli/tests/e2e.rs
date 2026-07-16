@@ -120,6 +120,7 @@ scenarios:
     executor: constant-arrival-rate
     rate: 200
     duration: 2s
+    graceful_stop: 100ms
     pre_allocated_vus: 20
     max_vus: 60
     flow:
@@ -179,11 +180,74 @@ scenarios:
     );
 }
 
+/// The configurable dispatch interval must not discard the interval ending at
+/// the scenario deadline, even when one tick is longer than the scenario.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn arrival_rate_flushes_final_dispatch_interval() {
+    let server = loadr_testserver::HttpTestServer::spawn()
+        .await
+        .expect("server");
+    let dir = tempfile::tempdir().expect("tmp");
+    let yaml = format!(
+        r#"
+name: e2e-arrival-rate-final-interval
+defaults:
+  http: {{ base_url: {base} }}
+scenarios:
+  arrivals:
+    executor: constant-arrival-rate
+    rate: 100
+    duration: 250ms
+    graceful_stop: 100ms
+    pre_allocated_vus: 25
+    max_vus: 25
+    flow:
+      - request: {{ url: /json }}
+"#,
+        base = server.base_url()
+    );
+    let test = write_test(dir.path(), "final-interval.yaml", &yaml);
+    let summary_path = dir.path().join("summary.json");
+
+    let output = Command::new(BIN)
+        .env("LOADR_DISPATCH_TICK_US", "1000000")
+        .args([
+            "run",
+            "--quiet",
+            "--summary-export",
+            summary_path.to_str().expect("path"),
+            test.to_str().expect("path"),
+        ])
+        .output()
+        .expect("run loadr");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "expected success.\nstdout: {stdout}\nstderr: {stderr}"
+    );
+
+    let summary: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&summary_path).expect("summary file"))
+            .expect("summary json");
+    let iterations = summary["metrics"]
+        .as_array()
+        .expect("metrics")
+        .iter()
+        .find(|m| m["metric"] == "iterations")
+        .and_then(|m| m["agg"]["sum"].as_f64())
+        .unwrap_or(0.0);
+    assert!(
+        (20.0..=25.0).contains(&iterations),
+        "final interval was not flushed: {iterations}\nstdout: {stdout}"
+    );
+}
+
 /// Saturated open model: with `max_vus` far below the schedule, unclaimed
 /// arrivals must surface as dropped iterations — and none may vanish.
 /// Completed plus dropped matches the scheduled arrivals within one tick's
-/// batch (`ceil(rate*tick)+1`), widened by one more tick's arrivals because a
-/// stalled final tick enlarges the unpublished tail (the exact identity is
+/// batch (`ceil(rate*tick)+1`); the deadline flush publishes the final
+/// partial interval, so there is no unpublished tail (the exact identity is
 /// unit-tested on the dispatcher's gate). The dispatch tick is pinned on the
 /// child process — `dispatch_tick()` is a process-wide `OnceLock`, so setting
 /// it on the test process would not work.
@@ -249,11 +313,11 @@ scenarios:
         dropped > 0.0,
         "saturated pool dropped nothing\nstdout: {stdout}"
     );
-    // Conservation at 20ms tick: ceil(200*0.02)+1 = 5, plus one tick's
-    // arrivals (4) of wall-clock slack for the final-tick tail.
+    // Conservation at 20ms tick: ceil(200*0.02)+1 = 5. The deadline flush
+    // publishes the final partial interval, so no extra tail slack is needed.
     let scheduled = 200.0 * 2.0;
     assert!(
-        ((completed + dropped) - scheduled).abs() <= 9.0,
+        ((completed + dropped) - scheduled).abs() <= 5.0,
         "conservation violated: completed={completed} dropped={dropped}\nstdout: {stdout}"
     );
 }

@@ -667,6 +667,17 @@ impl Ctx<'_> {
                     "set `message` (unary) or `messages` (streaming), not both",
                 );
             }
+            if let Some(message) = &grpc.message {
+                self.check_json_templates(&format!("{rpath}.grpc.message"), message);
+            }
+            for (index, message) in grpc.messages.iter().enumerate() {
+                self.check_json_templates(&format!("{rpath}.grpc.messages[{index}]"), message);
+            }
+            for (key, value) in &grpc.metadata {
+                if let Err(error) = Template::parse(value) {
+                    self.error(format!("{rpath}.grpc.metadata.{key}"), error.to_string());
+                }
+            }
             if grpc.channel_pool_size == Some(0) {
                 self.error(format!("{rpath}.grpc"), "`channel_pool_size` must be >= 1");
             }
@@ -905,6 +916,27 @@ impl Ctx<'_> {
         }
     }
 
+    fn check_json_templates(&mut self, path: &str, value: &serde_json::Value) {
+        match value {
+            serde_json::Value::String(value) => {
+                if let Err(error) = Template::parse(value) {
+                    self.error(path.to_string(), error.to_string());
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for (index, value) in values.iter().enumerate() {
+                    self.check_json_templates(&format!("{path}[{index}]"), value);
+                }
+            }
+            serde_json::Value::Object(values) => {
+                for (key, value) in values {
+                    self.check_json_templates(&format!("{path}.{key}"), value);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Warn about references that cannot resolve at runtime.
     fn check_expr_reference(&mut self, path: &str, expr: &str, declared: &BTreeSet<String>) {
         if let Some(rest) = expr.strip_prefix("vars.") {
@@ -989,6 +1021,82 @@ scenarios:
       - request: { url: https://example.com/ }
 "#;
         assert!(errors(yaml).is_empty());
+    }
+
+    #[test]
+    fn grpc_message_and_metadata_templates_are_validated() {
+        let yaml = r#"
+scenarios:
+  s:
+    executor: constant-vus
+    vus: 1
+    duration: 1s
+    flow:
+      - request:
+          protocol: grpc
+          url: grpc://127.0.0.1:50051
+          grpc:
+            reflection: true
+            service: loadr.test.Echo
+            method: UnaryEcho
+            message: { nested: [ok, "${unterminated"] }
+      - request:
+          protocol: grpc
+          url: grpc://127.0.0.1:50051
+          grpc:
+            reflection: true
+            service: loadr.test.Echo
+            method: ClientStreamEcho
+            messages: [ { message: ok }, { message: "${}" } ]
+      - request:
+          protocol: grpc
+          url: grpc://127.0.0.1:50051
+          grpc:
+            reflection: true
+            service: loadr.test.Echo
+            method: UnaryEcho
+            metadata: { x-token: "${missing" }
+"#;
+        let diags = errors(yaml);
+        let paths: Vec<_> = diags.iter().map(|diag| diag.path.as_str()).collect();
+        assert!(
+            paths.contains(&"scenarios.s.flow[0].request.grpc.message.nested[1]"),
+            "{diags:?}"
+        );
+        assert!(
+            paths.contains(&"scenarios.s.flow[1].request.grpc.messages[1].message"),
+            "{diags:?}"
+        );
+        assert!(
+            paths.contains(&"scenarios.s.flow[2].request.grpc.metadata.x-token"),
+            "{diags:?}"
+        );
+    }
+
+    #[test]
+    fn valid_grpc_templates_are_accepted() {
+        let yaml = r#"
+variables: { token: secret }
+scenarios:
+  s:
+    executor: constant-vus
+    vus: 1
+    duration: 1s
+    flow:
+      - request:
+          protocol: grpc
+          url: grpc://127.0.0.1:50051
+          grpc:
+            reflection: true
+            service: loadr.test.Echo
+            method: UnaryEcho
+            message:
+              text: "héllo ${vars.token}"
+              escaped: "$${literal}"
+              nested: [1, true, { value: "${vu}" }]
+            metadata: { x-token: "Bearer ${vars.token}" }
+"#;
+        assert!(errors(yaml).is_empty(), "{:?}", errors(yaml));
     }
 
     #[test]

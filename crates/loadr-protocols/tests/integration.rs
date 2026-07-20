@@ -410,9 +410,9 @@ async fn grpc_unary_via_proto_files() {
     let request = grpc_request(
         &format!("grpc://{}", server.addr),
         GrpcRequest {
-            proto_files: vec![proto_path],
-            service: "loadr.test.Echo".to_string(),
-            method: "UnaryEcho".to_string(),
+            proto_files: vec![proto_path].into(),
+            service: "loadr.test.Echo".into(),
+            method: "UnaryEcho".into(),
             message: Some(Arc::new(serde_json::json!({"message": "hi grpc"}))),
             ..Default::default()
         },
@@ -440,9 +440,9 @@ async fn grpc_unary_pooled_channels() {
     let request = grpc_request(
         &format!("grpc://{}", server.addr),
         GrpcRequest {
-            proto_files: vec![proto_path],
-            service: "loadr.test.Echo".to_string(),
-            method: "UnaryEcho".to_string(),
+            proto_files: vec![proto_path].into(),
+            service: "loadr.test.Echo".into(),
+            method: "UnaryEcho".into(),
             message: Some(Arc::new(serde_json::json!({"message": "pooled"}))),
             // Literal message: the second call must serve the encoded body
             // from the per-VU cache (same Arc identity) with an identical result.
@@ -480,9 +480,9 @@ async fn grpc_call_cache_discriminates_proto_includes() {
     let mut vu = vu();
 
     let base = GrpcRequest {
-        proto_files: vec![proto_path],
-        service: "loadr.test.Echo".to_string(),
-        method: "UnaryEcho".to_string(),
+        proto_files: vec![proto_path].into(),
+        service: "loadr.test.Echo".into(),
+        method: "UnaryEcho".into(),
         message: Some(Arc::new(serde_json::json!({"message": "includes"}))),
         ..Default::default()
     };
@@ -490,7 +490,7 @@ async fn grpc_call_cache_discriminates_proto_includes() {
     let with_includes = grpc_request(
         &format!("grpc://{}", server.addr),
         GrpcRequest {
-            proto_includes: vec![dir.path().to_path_buf()],
+            proto_includes: vec![dir.path().to_path_buf()].into(),
             ..base
         },
     );
@@ -515,9 +515,9 @@ async fn grpc_call_cache_allows_alternating_metadata() {
     let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
     let mut vu = vu();
     let base = GrpcRequest {
-        proto_files: vec![proto_path],
-        service: "loadr.test.Echo".to_string(),
-        method: "UnaryEcho".to_string(),
+        proto_files: vec![proto_path].into(),
+        service: "loadr.test.Echo".into(),
+        method: "UnaryEcho".into(),
         message: Some(Arc::new(serde_json::json!({"message": "metadata"}))),
         ..Default::default()
     };
@@ -561,9 +561,9 @@ async fn grpc_call_cache_discriminates_rendered_urls() {
     let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
     let mut vu = vu();
     let base = GrpcRequest {
-        proto_files: vec![proto_path],
-        service: "loadr.test.Echo".to_string(),
-        method: "UnaryEcho".to_string(),
+        proto_files: vec![proto_path].into(),
+        service: "loadr.test.Echo".into(),
+        method: "UnaryEcho".into(),
         message: Some(Arc::new(serde_json::json!({"message": "routed"}))),
         ..Default::default()
     };
@@ -598,9 +598,9 @@ async fn grpc_server_streaming_collects_all_messages() {
     let request = grpc_request(
         &format!("grpc://{}", server.addr),
         GrpcRequest {
-            proto_files: vec![proto_path],
-            service: "loadr.test.Echo".to_string(),
-            method: "ServerStreamEcho".to_string(),
+            proto_files: vec![proto_path].into(),
+            service: "loadr.test.Echo".into(),
+            method: "ServerStreamEcho".into(),
             message: Some(Arc::new(
                 serde_json::json!({"message": "stream", "repeat": 3}),
             )),
@@ -626,8 +626,8 @@ async fn grpc_unary_via_reflection() {
         &format!("grpc://{}", server.addr),
         GrpcRequest {
             reflection: true,
-            service: "loadr.test.Echo".to_string(),
-            method: "UnaryEcho".to_string(),
+            service: "loadr.test.Echo".into(),
+            method: "UnaryEcho".into(),
             message: Some(Arc::new(serde_json::json!({"message": "reflected"}))),
             ..Default::default()
         },

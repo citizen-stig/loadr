@@ -12,6 +12,41 @@ fn write_test(dir: &std::path::Path, name: &str, yaml: &str) -> std::path::PathB
     path
 }
 
+#[test]
+fn validate_reports_invalid_grpc_templates() {
+    let dir = tempfile::tempdir().expect("tmp");
+    let test = write_test(
+        dir.path(),
+        "invalid-grpc-template.yaml",
+        r#"
+scenarios:
+  invalid:
+    executor: constant-vus
+    vus: 1
+    duration: 1s
+    flow:
+      - request:
+          protocol: grpc
+          url: grpc://127.0.0.1:50051
+          grpc:
+            reflection: true
+            service: loadr.test.Echo
+            method: UnaryEcho
+            message: { value: "${unterminated" }
+"#,
+    );
+    let output = Command::new(BIN)
+        .args(["validate", test.to_str().expect("path")])
+        .output()
+        .expect("validate");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "validation unexpectedly passed");
+    assert!(
+        stderr.contains("grpc.message.value") && stderr.contains("unterminated"),
+        "unexpected validation error: {stderr}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn standalone_run_produces_metrics_and_passes() {
     let server = loadr_testserver::HttpTestServer::spawn()

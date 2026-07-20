@@ -169,6 +169,255 @@ pub struct CompiledChoice {
     pub steps: Vec<CompiledStep>,
 }
 
+enum CompiledJson {
+    Literal(serde_json::Value),
+    String(Template),
+    Splice(Template),
+    Array(Vec<CompiledJson>),
+    Object(Vec<(String, CompiledJson)>),
+}
+
+impl CompiledJson {
+    fn compile(value: &serde_json::Value, what: &str) -> Result<Self, EngineError> {
+        let compiled = match value {
+            serde_json::Value::String(source) => {
+                let template = parse_template(source, what)?;
+                if template.is_literal() {
+                    Self::Literal(value.clone())
+                } else if template.parts.len() == 1 {
+                    Self::Splice(template)
+                } else {
+                    Self::String(template)
+                }
+            }
+            serde_json::Value::Array(items) => {
+                let items = items
+                    .iter()
+                    .map(|item| Self::compile(item, what))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if items.iter().all(Self::is_literal) {
+                    Self::Literal(value.clone())
+                } else {
+                    Self::Array(items)
+                }
+            }
+            serde_json::Value::Object(map) => {
+                let fields = map
+                    .iter()
+                    .map(|(key, value)| Ok((key.clone(), Self::compile(value, what)?)))
+                    .collect::<Result<Vec<_>, EngineError>>()?;
+                if fields.iter().all(|(_, value)| value.is_literal()) {
+                    Self::Literal(value.clone())
+                } else {
+                    Self::Object(fields)
+                }
+            }
+            _ => Self::Literal(value.clone()),
+        };
+        Ok(compiled)
+    }
+
+    fn is_literal(&self) -> bool {
+        matches!(self, Self::Literal(_))
+    }
+
+    fn render<F, E>(&self, render_template: &mut F) -> Result<serde_json::Value, E>
+    where
+        F: FnMut(&Template) -> Result<String, E>,
+    {
+        Ok(match self {
+            Self::Literal(value) => value.clone(),
+            Self::String(template) => serde_json::Value::String(render_template(template)?),
+            Self::Splice(template) => {
+                let rendered = render_template(template)?;
+                serde_json::from_str(&rendered).unwrap_or(serde_json::Value::String(rendered))
+            }
+            Self::Array(items) => serde_json::Value::Array(
+                items
+                    .iter()
+                    .map(|item| item.render(render_template))
+                    .collect::<Result<_, _>>()?,
+            ),
+            Self::Object(fields) => {
+                let mut map = serde_json::Map::with_capacity(fields.len());
+                for (key, value) in fields {
+                    map.insert(key.clone(), value.render(render_template)?);
+                }
+                serde_json::Value::Object(map)
+            }
+        })
+    }
+}
+
+enum CompiledGrpcValue {
+    Literal(Arc<serde_json::Value>),
+    Dynamic(CompiledJson),
+}
+
+impl CompiledGrpcValue {
+    fn compile(value: &serde_json::Value, what: &str) -> Result<Self, EngineError> {
+        match CompiledJson::compile(value, what)? {
+            CompiledJson::Literal(value) => Ok(Self::Literal(Arc::new(value))),
+            dynamic => Ok(Self::Dynamic(dynamic)),
+        }
+    }
+
+    fn is_literal(&self) -> bool {
+        matches!(self, Self::Literal(_))
+    }
+
+    fn render<F, E>(&self, render_template: &mut F) -> Result<Arc<serde_json::Value>, E>
+    where
+        F: FnMut(&Template) -> Result<String, E>,
+    {
+        match self {
+            Self::Literal(value) => Ok(value.clone()),
+            Self::Dynamic(value) => value.render(render_template).map(Arc::new),
+        }
+    }
+}
+
+enum CompiledGrpcValues {
+    Literal(Arc<Vec<serde_json::Value>>),
+    Dynamic(Vec<CompiledJson>),
+}
+
+impl CompiledGrpcValues {
+    fn compile(values: &[serde_json::Value], what: &str) -> Result<Self, EngineError> {
+        let compiled = values
+            .iter()
+            .map(|value| CompiledJson::compile(value, what))
+            .collect::<Result<Vec<_>, _>>()?;
+        if compiled.iter().all(CompiledJson::is_literal) {
+            Ok(Self::Literal(Arc::new(values.to_vec())))
+        } else {
+            Ok(Self::Dynamic(compiled))
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        match self {
+            Self::Literal(values) => values.is_empty(),
+            Self::Dynamic(values) => values.is_empty(),
+        }
+    }
+
+    fn is_literal(&self) -> bool {
+        matches!(self, Self::Literal(_))
+    }
+
+    fn render<F, E>(&self, render_template: &mut F) -> Result<Arc<Vec<serde_json::Value>>, E>
+    where
+        F: FnMut(&Template) -> Result<String, E>,
+    {
+        match self {
+            Self::Literal(values) => Ok(values.clone()),
+            Self::Dynamic(values) => values
+                .iter()
+                .map(|value| value.render(render_template))
+                .collect::<Result<Vec<_>, _>>()
+                .map(Arc::new),
+        }
+    }
+}
+
+struct CompiledGrpc {
+    proto_files: Arc<[std::path::PathBuf]>,
+    proto_includes: Arc<[std::path::PathBuf]>,
+    reflection: bool,
+    service: Arc<str>,
+    method: Arc<str>,
+    message: Option<CompiledGrpcValue>,
+    messages: CompiledGrpcValues,
+    metadata: Vec<(String, Template)>,
+    channel_pool_size: Option<usize>,
+}
+
+impl CompiledGrpc {
+    fn compile(
+        grpc: &loadr_config::GrpcOptions,
+        base_dir: &std::path::Path,
+    ) -> Result<Self, EngineError> {
+        let resolve = |path: &std::path::PathBuf| {
+            if path.is_absolute() {
+                path.clone()
+            } else {
+                base_dir.join(path)
+            }
+        };
+        Ok(Self {
+            proto_files: grpc
+                .proto_files
+                .iter()
+                .map(&resolve)
+                .collect::<Vec<_>>()
+                .into(),
+            proto_includes: grpc
+                .proto_includes
+                .iter()
+                .map(&resolve)
+                .collect::<Vec<_>>()
+                .into(),
+            reflection: grpc.reflection,
+            service: grpc.service.clone().into(),
+            method: grpc.method.clone().into(),
+            message: grpc
+                .message
+                .as_ref()
+                .map(|message| CompiledGrpcValue::compile(message, "grpc message"))
+                .transpose()?,
+            messages: CompiledGrpcValues::compile(&grpc.messages, "grpc message")?,
+            metadata: grpc
+                .metadata
+                .iter()
+                .map(|(key, value)| {
+                    Ok((
+                        key.clone(),
+                        parse_template(value, &format!("grpc metadata `{key}`"))?,
+                    ))
+                })
+                .collect::<Result<_, EngineError>>()?,
+            channel_pool_size: grpc.channel_pool_size,
+        })
+    }
+
+    fn render<F, E>(&self, render_template: &mut F) -> Result<GrpcRequest, E>
+    where
+        F: FnMut(&Template) -> Result<String, E>,
+    {
+        let message = self
+            .message
+            .as_ref()
+            .map(|message| message.render(render_template))
+            .transpose()?;
+        let messages = self.messages.render(render_template)?;
+        let message_literal = if self.messages.is_empty() {
+            self.message
+                .as_ref()
+                .is_some_and(CompiledGrpcValue::is_literal)
+        } else {
+            self.messages.is_literal()
+        };
+        let metadata = self
+            .metadata
+            .iter()
+            .map(|(key, value)| Ok((key.clone(), render_template(value)?)))
+            .collect::<Result<_, E>>()?;
+        Ok(GrpcRequest {
+            proto_files: self.proto_files.clone(),
+            proto_includes: self.proto_includes.clone(),
+            reflection: self.reflection,
+            service: self.service.clone(),
+            method: self.method.clone(),
+            message,
+            messages,
+            message_literal,
+            metadata,
+            channel_pool_size: self.channel_pool_size,
+        })
+    }
+}
+
 pub struct CompiledRequest {
     /// Metric `name` tag (template); falls back to the raw URL string.
     pub name: Option<Template>,
@@ -186,13 +435,7 @@ pub struct CompiledRequest {
     pub assert: Vec<CompiledCondition>,
     pub checks: Vec<CompiledCondition>,
     pub ws: Option<loadr_config::WsOptions>,
-    pub grpc: Option<loadr_config::GrpcOptions>,
-    /// Pre-parsed gRPC message(s) when every string leaf is a literal
-    /// template: `prepare` hands out the same `Arc` every iteration (no
-    /// render walk, no deep clone), and the stable identity lets the gRPC
-    /// handler cache the encoded body per `Arc`.
-    pub grpc_literal_message: Option<Arc<serde_json::Value>>,
-    pub grpc_literal_messages: Option<Arc<Vec<serde_json::Value>>>,
+    grpc: Option<CompiledGrpc>,
     pub graphql: Option<loadr_config::GraphqlOptions>,
     pub socket: Option<loadr_config::SocketOptions>,
     pub sse: Option<loadr_config::SseOptions>,
@@ -437,31 +680,11 @@ fn compile_request(
         })
         .to_ascii_uppercase();
 
-    // Resolve gRPC proto file paths against the test definition directory.
-    let grpc = req.grpc.clone().map(|mut g| {
-        let resolve = |p: &std::path::PathBuf| {
-            if p.is_absolute() {
-                p.clone()
-            } else {
-                base_dir.join(p)
-            }
-        };
-        g.proto_files = g.proto_files.iter().map(&resolve).collect();
-        g.proto_includes = g.proto_includes.iter().map(&resolve).collect();
-        g
-    });
-    // Detect template-free gRPC messages once; `prepare` then skips the
-    // per-iteration render walk and hands out these Arcs unchanged.
-    let grpc_literal_message = grpc
+    let grpc = req
+        .grpc
         .as_ref()
-        .and_then(|g| g.message.as_ref())
-        .filter(|m| json_is_literal(m))
-        .cloned()
-        .map(Arc::new);
-    let grpc_literal_messages = grpc
-        .as_ref()
-        .filter(|g| !g.messages.is_empty() && g.messages.iter().all(json_is_literal))
-        .map(|g| Arc::new(g.messages.clone()));
+        .map(|grpc| CompiledGrpc::compile(grpc, base_dir))
+        .transpose()?;
 
     Ok(CompiledRequest {
         name: req
@@ -508,8 +731,6 @@ fn compile_request(
             .collect::<Result<_, _>>()?,
         ws: req.ws.clone(),
         grpc,
-        grpc_literal_message,
-        grpc_literal_messages,
         graphql: req.graphql.clone(),
         socket: req.socket.clone(),
         sse: req.sse.clone(),
@@ -1635,46 +1856,8 @@ impl FlowRunner {
             });
         }
         if let Some(grpc) = &req.grpc {
-            let message = match &req.grpc_literal_message {
-                Some(arc) => Some(arc.clone()),
-                None => grpc
-                    .message
-                    .as_ref()
-                    .map(|m| render_json(self, m, vu, script).map(Arc::new))
-                    .transpose()?,
-            };
-            let messages = match &req.grpc_literal_messages {
-                Some(arc) => arc.clone(),
-                None => Arc::new(
-                    grpc.messages
-                        .iter()
-                        .map(|m| render_json(self, m, vu, script))
-                        .collect::<Result<Vec<_>, _>>()?,
-                ),
-            };
-            // The handler uses `messages` when non-empty, else `message`;
-            // the literal flag must describe whichever it will use.
-            let message_literal = if grpc.messages.is_empty() {
-                req.grpc_literal_message.is_some()
-            } else {
-                req.grpc_literal_messages.is_some()
-            };
-            options.grpc = Some(GrpcRequest {
-                proto_files: grpc.proto_files.clone(),
-                proto_includes: grpc.proto_includes.clone(),
-                reflection: grpc.reflection,
-                service: grpc.service.clone(),
-                method: grpc.method.clone(),
-                message,
-                messages,
-                message_literal,
-                metadata: grpc
-                    .metadata
-                    .iter()
-                    .map(|(k, v)| Ok((k.clone(), render_str(self, v, vu, script)?)))
-                    .collect::<Result<_, PrepareError>>()?,
-                channel_pool_size: grpc.channel_pool_size,
-            });
+            options.grpc =
+                Some(grpc.render(&mut |template| render_template(self, template, vu, script))?);
         }
         if let Some(socket) = &req.socket {
             let payload = if let Some(text) = &socket.send_text {
@@ -2037,21 +2220,6 @@ fn render_str(
     render_template(runner, &tpl, vu, script)
 }
 
-/// True when rendering `value` with [`render_json`] would return it
-/// unchanged: every string leaf parses as a literal (no `${...}`) template.
-/// Parse failures count as non-literal so they surface through the normal
-/// per-iteration render error path.
-fn json_is_literal(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::String(s) => Template::parse(s)
-            .map(|tpl| tpl.is_literal())
-            .unwrap_or(false),
-        serde_json::Value::Array(items) => items.iter().all(json_is_literal),
-        serde_json::Value::Object(map) => map.values().all(json_is_literal),
-        _ => true,
-    }
-}
-
 fn render_json(
     runner: &FlowRunner,
     value: &serde_json::Value,
@@ -2373,6 +2541,238 @@ impl ScriptHost for HostBridge<'_> {
                 .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
                 .collect(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod grpc_template_tests {
+    use super::{CompiledGrpc, CompiledJson};
+    use crate::data::DataFeeds;
+    use crate::metrics::{MetricRegistry, MetricsBus, Tags};
+    use crate::vu::{RunContext, VuContext};
+    use indexmap::IndexMap;
+    use loadr_config::{
+        DataMode, DataSource, GrpcOptions, OnEof, PickStrategy, Template, TemplateError,
+    };
+    use std::collections::HashMap;
+    use std::path::Path;
+    use std::sync::Arc;
+
+    fn render_legacy<F>(
+        value: &serde_json::Value,
+        resolve: &mut F,
+    ) -> Result<serde_json::Value, TemplateError>
+    where
+        F: FnMut(&str) -> Option<String>,
+    {
+        Ok(match value {
+            serde_json::Value::String(source) => {
+                let template = Template::parse(source)?;
+                if template.is_literal() {
+                    value.clone()
+                } else {
+                    let rendered = template.render(&mut *resolve)?;
+                    if template.parts.len() == 1 {
+                        serde_json::from_str(&rendered)
+                            .unwrap_or(serde_json::Value::String(rendered))
+                    } else {
+                        serde_json::Value::String(rendered)
+                    }
+                }
+            }
+            serde_json::Value::Array(items) => serde_json::Value::Array(
+                items
+                    .iter()
+                    .map(|item| render_legacy(item, resolve))
+                    .collect::<Result<_, _>>()?,
+            ),
+            serde_json::Value::Object(fields) => {
+                let mut map = serde_json::Map::with_capacity(fields.len());
+                for (key, value) in fields {
+                    map.insert(key.clone(), render_legacy(value, resolve)?);
+                }
+                serde_json::Value::Object(map)
+            }
+            _ => value.clone(),
+        })
+    }
+
+    fn grpc_options() -> GrpcOptions {
+        GrpcOptions {
+            reflection: true,
+            service: "loadr.test.Echo".to_string(),
+            method: "UnaryEcho".to_string(),
+            ..GrpcOptions::default()
+        }
+    }
+
+    #[test]
+    fn compiled_json_matches_legacy_rendering() {
+        let input = serde_json::json!({
+            "literal": "plain",
+            "escaped_literal": "$${not-an-expression}",
+            "text": "héllo ${name}!",
+            "number": "${number}",
+            "boolean": "${boolean}",
+            "object": "${object}",
+            "array": "${array}",
+            "fallback": "${plain}",
+            "nested": [
+                {"static": [1, 2, 3]},
+                "prefix-${name}-${number}"
+            ]
+        });
+        let values = HashMap::from([
+            ("name", "世界"),
+            ("number", "42"),
+            ("boolean", "true"),
+            ("object", r#"{"inner":[1,false]}"#),
+            ("array", r#"["x",2]"#),
+            ("plain", "not json"),
+        ]);
+        let mut old_resolve = |expr: &str| values.get(expr).map(|value| (*value).to_string());
+        let expected = render_legacy(&input, &mut old_resolve).expect("legacy render");
+
+        let compiled = CompiledJson::compile(&input, "grpc message").expect("compile");
+        let mut new_resolve = |expr: &str| values.get(expr).map(|value| (*value).to_string());
+        let actual = compiled
+            .render(&mut |template| template.render(&mut new_resolve))
+            .expect("compiled render");
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn compiled_json_uses_real_vu_and_data_resolution() {
+        let mut variables = serde_json::Map::new();
+        variables.insert("token".to_string(), serde_json::json!("secret"));
+        let mut row = IndexMap::new();
+        row.insert("id".to_string(), serde_json::json!(7));
+        row.insert("object".to_string(), serde_json::json!({"nested": true}));
+        let mut sources = IndexMap::new();
+        sources.insert(
+            "users".to_string(),
+            DataSource::Inline {
+                rows: vec![row],
+                mode: DataMode::Shared,
+                on_eof: OnEof::Recycle,
+                pick: PickStrategy::Sequential,
+            },
+        );
+        let data = DataFeeds::load(&sources, Path::new(".")).expect("data feeds");
+        let run = Arc::new(RunContext {
+            variables,
+            secrets: HashMap::new(),
+            env: HashMap::new(),
+            data,
+            registry: Arc::new(MetricRegistry::with_builtins()),
+            base_dir: ".".into(),
+            setup_data: parking_lot::RwLock::new(serde_json::Value::Null),
+        });
+        let (metrics, _rx) = MetricsBus::new();
+        let mut vu = VuContext::new(
+            9,
+            Arc::from("scenario"),
+            Arc::new(Tags::new()),
+            metrics,
+            run,
+            true,
+        );
+        vu.begin_iteration();
+
+        let input = serde_json::json!({
+            "id": "${data.users.id}",
+            "object": "${data.users.object}",
+            "token": "Bearer ${vars.token}",
+            "vu": "${vu}"
+        });
+        let compiled = CompiledJson::compile(&input, "grpc message").expect("compile");
+        let rendered = compiled
+            .render(&mut |template| {
+                template.render(|expr| vu.resolve_expr(expr).expect("resolve expression"))
+            })
+            .expect("render");
+        assert_eq!(
+            rendered,
+            serde_json::json!({
+                "id": 7,
+                "object": {"nested": true},
+                "token": "Bearer secret",
+                "vu": 9
+            })
+        );
+    }
+
+    #[test]
+    fn grpc_literal_and_dynamic_arc_identity_is_preserved() {
+        let mut literal_options = grpc_options();
+        literal_options.proto_files.push("echo.proto".into());
+        literal_options.message = Some(serde_json::json!({"message": "literal"}));
+        let literal = CompiledGrpc::compile(&literal_options, Path::new("/plans"))
+            .expect("compile literal grpc");
+        let mut never_render = |_: &Template| -> Result<String, ()> {
+            panic!("literal request must not render templates")
+        };
+        let first = literal.render(&mut never_render).expect("first literal");
+        let second = literal.render(&mut never_render).expect("second literal");
+        assert!(Arc::ptr_eq(
+            first.message.as_ref().expect("message"),
+            second.message.as_ref().expect("message")
+        ));
+        assert!(Arc::ptr_eq(&first.messages, &second.messages));
+        assert!(Arc::ptr_eq(&first.proto_files, &second.proto_files));
+        assert!(Arc::ptr_eq(&first.service, &second.service));
+        assert!(first.message_literal);
+
+        let mut streaming_options = grpc_options();
+        streaming_options.messages = vec![
+            serde_json::json!({"message": "one"}),
+            serde_json::json!({"message": "two"}),
+        ];
+        let streaming = CompiledGrpc::compile(&streaming_options, Path::new("."))
+            .expect("compile literal stream");
+        let stream_first = streaming.render(&mut never_render).expect("first stream");
+        let stream_second = streaming.render(&mut never_render).expect("second stream");
+        assert!(Arc::ptr_eq(&stream_first.messages, &stream_second.messages));
+        assert!(stream_first.message_literal);
+
+        let mut dynamic_options = grpc_options();
+        dynamic_options.message = Some(serde_json::json!({"message": "${value}"}));
+        dynamic_options
+            .metadata
+            .insert("x-value".to_string(), "Bearer ${value}".to_string());
+        let dynamic =
+            CompiledGrpc::compile(&dynamic_options, Path::new(".")).expect("compile dynamic grpc");
+        let mut render = |template: &Template| template.render(|_| Some("same".to_string()));
+        let dynamic_first = dynamic.render(&mut render).expect("first dynamic");
+        let dynamic_second = dynamic.render(&mut render).expect("second dynamic");
+        assert!(!Arc::ptr_eq(
+            dynamic_first.message.as_ref().expect("message"),
+            dynamic_second.message.as_ref().expect("message")
+        ));
+        assert!(!dynamic_first.message_literal);
+        assert_eq!(
+            dynamic_first.metadata,
+            vec![("x-value".to_string(), "Bearer same".to_string())]
+        );
+    }
+
+    #[test]
+    fn grpc_templates_fail_during_compilation() {
+        let mut message = grpc_options();
+        message.message = Some(serde_json::json!({"bad": "${unterminated"}));
+        let error = CompiledGrpc::compile(&message, Path::new("."))
+            .err()
+            .expect("invalid message template");
+        assert!(error.to_string().contains("grpc message: unterminated"));
+
+        let mut metadata = grpc_options();
+        metadata
+            .metadata
+            .insert("x-token".to_string(), "${}".to_string());
+        let error = CompiledGrpc::compile(&metadata, Path::new("."))
+            .err()
+            .expect("invalid metadata template");
+        assert!(error.to_string().contains("grpc metadata `x-token`: empty"));
     }
 }
 

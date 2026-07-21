@@ -20,7 +20,7 @@ use loadr_core::{
 /// plan have something to match against.
 #[derive(Default)]
 struct RecordingGrpcHandler {
-    flags: parking_lot::Mutex<Vec<bool>>,
+    modes: parking_lot::Mutex<Vec<(bool, bool, usize)>>,
 }
 
 #[async_trait]
@@ -34,12 +34,41 @@ impl ProtocolHandler for RecordingGrpcHandler {
         request: &PreparedRequest,
     ) -> Result<ProtocolResponse, ProtocolError> {
         let grpc = request.options.grpc.as_ref().expect("grpc options");
-        self.flags.lock().push(grpc.discard_response_body);
+        self.modes.lock().push((
+            grpc.discard_response_body,
+            grpc.protobuf_only_response,
+            grpc.protobuf_checks
+                .as_ref()
+                .map_or(0, |checks| checks.len()),
+        ));
+        let actual_code = grpc
+            .message
+            .as_ref()
+            .and_then(|message| message.get("responseCode"))
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or(0);
         Ok(ProtocolResponse {
             status: 0,
             protocol_version: "grpc".to_string(),
             url: request.url.clone(),
             body: bytes::Bytes::from_static(br#"{"ok":true}"#),
+            grpc_protobuf_outcomes: grpc
+                .protobuf_checks
+                .as_deref()
+                .into_iter()
+                .flatten()
+                .map(|check| loadr_core::protocol::GrpcProtobufFieldOutcome {
+                    id: check.id,
+                    pass: check
+                        .equals
+                        .as_ref()
+                        .and_then(serde_json::Value::as_i64)
+                        .is_none_or(|expected| expected == actual_code),
+                    detail: None,
+                    actual_code: Some(actual_code),
+                    missing: false,
+                })
+                .collect(),
             ..Default::default()
         })
     }
@@ -114,7 +143,10 @@ impl VuScript for MockVuScript {
 
 /// Run one gRPC request through the real engine; return the
 /// `discard_response_body` flag(s) `prepare` computed for it.
-async fn discard_flags(yaml: &str, script: Option<Arc<dyn ScriptEngine>>) -> Vec<bool> {
+async fn run_recording(
+    yaml: &str,
+    script: Option<Arc<dyn ScriptEngine>>,
+) -> (Vec<(bool, bool, usize)>, loadr_core::Summary) {
     let loaded = loadr_config::load_str(yaml, &loadr_config::LoadOptions::new()).expect("parse");
     let handler = Arc::new(RecordingGrpcHandler::default());
     let mut protocols = ProtocolRegistry::new();
@@ -129,9 +161,24 @@ async fn discard_flags(yaml: &str, script: Option<Arc<dyn ScriptEngine>>) -> Vec
         },
     )
     .expect("engine");
-    engine.run().await.expect("run");
-    let flags = handler.flags.lock().clone();
-    flags
+    let summary = engine.run().await.expect("run").summary;
+    let modes = handler.modes.lock().clone();
+    (modes, summary)
+}
+
+async fn response_modes(
+    yaml: &str,
+    script: Option<Arc<dyn ScriptEngine>>,
+) -> Vec<(bool, bool, usize)> {
+    run_recording(yaml, script).await.0
+}
+
+async fn discard_flags(yaml: &str, script: Option<Arc<dyn ScriptEngine>>) -> Vec<bool> {
+    response_modes(yaml, script)
+        .await
+        .into_iter()
+        .map(|mode| mode.0)
+        .collect()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -182,6 +229,70 @@ scenarios:
     )
     .await;
     assert_eq!(flags, vec![true]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn protobuf_field_check_decodes_without_json_materialization() {
+    let modes = response_modes(
+        r#"
+scenarios:
+  s:
+    executor: shared-iterations
+    vus: 1
+    iterations: 1
+    flow:
+      - request:
+          url: grpc://example.invalid:1
+          grpc:
+            reflection: true
+            service: loadr.test.Echo
+            method: UnaryEcho
+            message: { message: "hi" }
+          checks:
+            - { type: protobuf_field, name: admission_accepted, field: code, equals: 0 }
+"#,
+        None,
+    )
+    .await;
+    assert_eq!(modes, vec![(false, true, 1)]);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn protobuf_failure_group_reaches_final_summary() {
+    let (_, summary) = run_recording(
+        r#"
+scenarios:
+  s:
+    executor: shared-iterations
+    vus: 1
+    iterations: 1
+    flow:
+      - request:
+          url: grpc://example.invalid:1
+          grpc:
+            reflection: true
+            service: loadr.test.Echo
+            method: UnaryEcho
+            message: { responseCode: 18 }
+          checks:
+            - type: protobuf_field
+              name: admission_accepted
+              field: code
+              equals: 0
+              failure_groups: { 18: WrongShard, 20: PoolAtCapacity }
+"#,
+        None,
+    )
+    .await;
+    let check = summary
+        .checks
+        .iter()
+        .find(|check| check.name == "admission_accepted")
+        .expect("check summary");
+    assert_eq!(check.fails, 1);
+    assert_eq!(check.failure_groups.len(), 1);
+    assert_eq!(check.failure_groups[0].code, Some(18));
+    assert_eq!(check.failure_groups[0].label, "WrongShard");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -11,8 +11,8 @@ use loadr_config::{GrpcTransport, HttpDefaults, HttpVersionPref, TlsConfig};
 use loadr_core::data::DataFeeds;
 use loadr_core::metrics::{MetricRegistry, MetricsBus, Tags};
 use loadr_core::protocol::{
-    GrpcRequest, PreparedRequest, ProtocolHandler, RequestOptions, SocketRequest, WsFrame,
-    WsRequest,
+    GrpcProtobufFieldCheck, GrpcRequest, PreparedRequest, ProtocolHandler, RequestOptions,
+    SocketRequest, WsFrame, WsRequest,
 };
 use loadr_core::vu::{RunContext, VuContext};
 use loadr_protocols::{
@@ -38,12 +38,17 @@ message EchoRequest {
   string message = 1;
   int32 repeat = 2;
   bytes payload = 3;
+  uint32 response_code = 4;
+  optional uint32 owner_hint = 5;
+  bool fail_transport = 6;
 }
 
 message EchoResponse {
   string message = 1;
   int32 index = 2;
   bytes payload = 3;
+  uint32 code = 4;
+  optional uint32 owner_hint = 5;
 }
 "#;
 
@@ -401,6 +406,21 @@ fn grpc_request(url: &str, grpc: GrpcRequest) -> PreparedRequest {
     request
 }
 
+fn protobuf_check(
+    id: u32,
+    field: &str,
+    equals: Option<serde_json::Value>,
+    exists: bool,
+) -> GrpcProtobufFieldCheck {
+    GrpcProtobufFieldCheck {
+        id,
+        field: Arc::from(field),
+        equals,
+        exists,
+        group_failures: field == "code",
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn grpc_unary_via_proto_files() {
     let server = GrpcEchoServer::spawn().await.expect("grpc server");
@@ -429,6 +449,166 @@ async fn grpc_unary_via_proto_files() {
     assert_eq!(json["message"], "hi grpc");
     assert_eq!(response.extras["message_count"], 1);
     assert!(response.timings.duration_ms > 0.0);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_protobuf_field_uses_implicit_default_without_json() {
+    let server = GrpcEchoServer::spawn().await.expect("grpc server");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let proto_path = dir.path().join("echo.proto");
+    std::fs::write(&proto_path, ECHO_PROTO).expect("write proto");
+    let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
+    let mut vu = vu();
+    let request = grpc_request(
+        &format!("grpc://{}", server.addr),
+        GrpcRequest {
+            proto_files: vec![proto_path],
+            service: "loadr.test.Echo".to_string(),
+            method: "UnaryEcho".to_string(),
+            message: Some(Arc::new(serde_json::json!({"message": "default"}))),
+            protobuf_only_response: true,
+            protobuf_checks: Some(Arc::new(vec![protobuf_check(
+                0,
+                "code",
+                Some(serde_json::json!(0)),
+                true,
+            )])),
+            ..Default::default()
+        },
+    );
+
+    let response = handler.execute(&mut vu, &request).await.expect("response");
+    assert_eq!(response.status, 0);
+    assert!(
+        response.body.is_empty(),
+        "protobuf-only path serialized JSON"
+    );
+    assert_eq!(response.grpc_protobuf_outcomes.len(), 1);
+    assert!(response.grpc_protobuf_outcomes[0].pass);
+    assert!(!response.grpc_protobuf_outcomes[0].missing);
+    assert_eq!(response.grpc_protobuf_outcomes[0].actual_code, Some(0));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_protobuf_field_reports_semantic_rejection_codes() {
+    let server = GrpcEchoServer::spawn().await.expect("grpc server");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let proto_path = dir.path().join("echo.proto");
+    std::fs::write(&proto_path, ECHO_PROTO).expect("write proto");
+    let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
+    let mut vu = vu();
+
+    for transport in [GrpcTransport::Channel, GrpcTransport::Raw] {
+        for code in [18, 20] {
+            let request = grpc_request(
+                &format!("grpc://{}", server.addr),
+                GrpcRequest {
+                    proto_files: vec![proto_path.clone()],
+                    service: "loadr.test.Echo".to_string(),
+                    method: "UnaryEcho".to_string(),
+                    message: Some(Arc::new(serde_json::json!({"responseCode": code}))),
+                    transport,
+                    protobuf_only_response: true,
+                    protobuf_checks: Some(Arc::new(vec![protobuf_check(
+                        0,
+                        "code",
+                        Some(serde_json::json!(0)),
+                        true,
+                    )])),
+                    ..Default::default()
+                },
+            );
+            let response = handler.execute(&mut vu, &request).await.expect("response");
+            assert_eq!(response.status, 0, "semantic rejection is transport OK");
+            let outcome = &response.grpc_protobuf_outcomes[0];
+            assert!(!outcome.pass);
+            assert_eq!(outcome.actual_code, Some(code));
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_protobuf_presence_distinguishes_optional_and_implicit_fields() {
+    let server = GrpcEchoServer::spawn().await.expect("grpc server");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let proto_path = dir.path().join("echo.proto");
+    std::fs::write(&proto_path, ECHO_PROTO).expect("write proto");
+    let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
+    let mut vu = vu();
+
+    let request = grpc_request(
+        &format!("grpc://{}", server.addr),
+        GrpcRequest {
+            proto_files: vec![proto_path.clone()],
+            service: "loadr.test.Echo".to_string(),
+            method: "UnaryEcho".to_string(),
+            message: Some(Arc::new(serde_json::json!({}))),
+            protobuf_only_response: true,
+            protobuf_checks: Some(Arc::new(vec![
+                protobuf_check(0, "code", None, true),
+                protobuf_check(1, "owner_hint", None, false),
+            ])),
+            ..Default::default()
+        },
+    );
+    let response = handler.execute(&mut vu, &request).await.expect("response");
+    assert!(response.grpc_protobuf_outcomes[0].pass);
+    assert!(!response.grpc_protobuf_outcomes[0].missing);
+    assert!(response.grpc_protobuf_outcomes[1].pass);
+    assert!(response.grpc_protobuf_outcomes[1].missing);
+
+    let request = grpc_request(
+        &format!("grpc://{}", server.addr),
+        GrpcRequest {
+            proto_files: vec![proto_path],
+            service: "loadr.test.Echo".to_string(),
+            method: "UnaryEcho".to_string(),
+            message: Some(Arc::new(serde_json::json!({
+                "responseCode": 18,
+                "ownerHint": 7
+            }))),
+            protobuf_only_response: true,
+            protobuf_checks: Some(Arc::new(vec![
+                protobuf_check(0, "code", Some(serde_json::json!(0)), true),
+                protobuf_check(1, "owner_hint", Some(serde_json::json!(7)), true),
+            ])),
+            ..Default::default()
+        },
+    );
+    let response = handler.execute(&mut vu, &request).await.expect("response");
+    assert_eq!(response.grpc_protobuf_outcomes[0].actual_code, Some(18));
+    assert!(!response.grpc_protobuf_outcomes[0].pass);
+    assert!(response.grpc_protobuf_outcomes[1].pass);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_protobuf_field_transport_failure_has_no_message_outcome() {
+    let server = GrpcEchoServer::spawn().await.expect("grpc server");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let proto_path = dir.path().join("echo.proto");
+    std::fs::write(&proto_path, ECHO_PROTO).expect("write proto");
+    let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
+    let mut vu = vu();
+    let request = grpc_request(
+        &format!("grpc://{}", server.addr),
+        GrpcRequest {
+            proto_files: vec![proto_path],
+            service: "loadr.test.Echo".to_string(),
+            method: "UnaryEcho".to_string(),
+            message: Some(Arc::new(serde_json::json!({"failTransport": true}))),
+            protobuf_only_response: true,
+            protobuf_checks: Some(Arc::new(vec![protobuf_check(
+                0,
+                "code",
+                Some(serde_json::json!(0)),
+                true,
+            )])),
+            ..Default::default()
+        },
+    );
+    let response = handler.execute(&mut vu, &request).await.expect("response");
+    assert_eq!(response.status, tonic::Code::ResourceExhausted as i64);
+    assert!(response.grpc_protobuf_outcomes.is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -931,7 +1111,6 @@ async fn grpc_raw_via_reflection() {
     let server = GrpcEchoServer::spawn().await.expect("grpc server");
     let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
     let mut vu = vu();
-
     let request = grpc_request(
         &format!("grpc://{}", server.addr),
         GrpcRequest {
@@ -1275,6 +1454,68 @@ async fn grpc_rendered_message_schema_mismatch_error() {
             .contains("message does not match `loadr.test.EchoRequest`"),
         "unexpected error: {error}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_protobuf_field_via_reflection() {
+    let server = GrpcEchoServer::spawn().await.expect("grpc server");
+    let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
+    let mut vu = vu();
+    let request = grpc_request(
+        &format!("grpc://{}", server.addr),
+        GrpcRequest {
+            reflection: true,
+            service: "loadr.test.Echo".to_string(),
+            method: "UnaryEcho".to_string(),
+            message: Some(Arc::new(serde_json::json!({"responseCode": 20}))),
+            protobuf_only_response: true,
+            protobuf_checks: Some(Arc::new(vec![protobuf_check(
+                0,
+                "code",
+                Some(serde_json::json!(20)),
+                true,
+            )])),
+            ..Default::default()
+        },
+    );
+    let response = handler.execute(&mut vu, &request).await.expect("response");
+    assert_eq!(response.status, 0, "status_text: {}", response.status_text);
+    assert!(response.grpc_protobuf_outcomes[0].pass);
+    assert_eq!(response.grpc_protobuf_outcomes[0].actual_code, Some(20));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn grpc_protobuf_streaming_checks_last_response_message() {
+    let server = GrpcEchoServer::spawn().await.expect("grpc server");
+    let dir = tempfile::tempdir().expect("tempdir");
+    let proto_path = dir.path().join("echo.proto");
+    std::fs::write(&proto_path, ECHO_PROTO).expect("write proto");
+    let handler = GrpcHandler::new(&HttpDefaults::default(), Path::new(".")).expect("handler");
+    let mut vu = vu();
+    let request = grpc_request(
+        &format!("grpc://{}", server.addr),
+        GrpcRequest {
+            proto_files: vec![proto_path],
+            service: "loadr.test.Echo".to_string(),
+            method: "BidiEcho".to_string(),
+            messages: Arc::new(vec![
+                serde_json::json!({"message": "first", "responseCode": 18}),
+                serde_json::json!({"message": "last", "responseCode": 20}),
+            ]),
+            protobuf_only_response: true,
+            protobuf_checks: Some(Arc::new(vec![protobuf_check(
+                0,
+                "code",
+                Some(serde_json::json!(20)),
+                true,
+            )])),
+            ..Default::default()
+        },
+    );
+    let response = handler.execute(&mut vu, &request).await.expect("response");
+    assert_eq!(response.extras["message_count"], 2);
+    assert!(response.grpc_protobuf_outcomes[0].pass);
+    assert_eq!(response.grpc_protobuf_outcomes[0].actual_code, Some(20));
 }
 
 // ---------------------------------------------------------------------------

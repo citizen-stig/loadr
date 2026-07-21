@@ -104,6 +104,38 @@ pub struct GrpcRequest {
     /// (today's behavior), so `derive(Default)` stays safe for the many
     /// tests that construct `GrpcRequest` directly.
     pub discard_response_body: bool,
+    /// Decode response messages for descriptor-aware protobuf checks, but do
+    /// not pay for full DynamicMessage-to-JSON conversion. This is false for
+    /// both the status-only discard path and the existing JSON body path.
+    pub protobuf_only_response: bool,
+    /// Compiled descriptor-aware checks for this request. The Arc is owned by
+    /// the compiled plan and therefore has stable identity for the run; the
+    /// gRPC handler uses that identity to cache resolved field descriptors.
+    pub protobuf_checks: Option<Arc<Vec<GrpcProtobufFieldCheck>>>,
+}
+
+/// A descriptor-aware condition the gRPC handler evaluates directly against
+/// the last decoded response message.
+#[derive(Debug, Clone)]
+pub struct GrpcProtobufFieldCheck {
+    pub id: u32,
+    pub field: Arc<str>,
+    pub equals: Option<serde_json::Value>,
+    pub exists: bool,
+    pub group_failures: bool,
+}
+
+/// Compact outcome returned by the gRPC handler without materializing JSON.
+#[derive(Debug, Clone)]
+pub struct GrpcProtobufFieldOutcome {
+    pub id: u32,
+    pub pass: bool,
+    pub detail: Option<String>,
+    /// Numeric actual value when available, used only by bounded check-group
+    /// mappings. Values outside i64 remain ungroupable and fall into `other`.
+    pub actual_code: Option<i64>,
+    /// True when the descriptor supports presence but the field was absent.
+    pub missing: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -133,6 +165,10 @@ pub struct ProtocolResponse {
     pub url: String,
     /// Protocol-specific extras (ws message counts, grpc messages, ...).
     pub extras: serde_json::Value,
+    /// Internal descriptor-aware gRPC check outcomes. Native protocol-plugin
+    /// response ABIs intentionally do not expose this field.
+    #[doc(hidden)]
+    pub grpc_protobuf_outcomes: Vec<GrpcProtobufFieldOutcome>,
 }
 
 impl ProtocolResponse {

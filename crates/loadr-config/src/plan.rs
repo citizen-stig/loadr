@@ -1671,6 +1671,30 @@ pub enum Condition {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         on_failure: Option<FailureAction>,
     },
+    /// Descriptor-aware assertion over a top-level protobuf response field.
+    /// Unlike JSONPath, this observes proto3 implicit defaults and explicit
+    /// presence without converting the response message to JSON.
+    ProtobufField {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+        /// Exact field name from the response message's `.proto` definition.
+        field: String,
+        /// Expected scalar value. Type compatibility is checked against the
+        /// response descriptor when the gRPC call is resolved.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        equals: Option<serde_json::Value>,
+        /// Require/forbid protobuf presence (default: require). Implicit
+        /// proto3 scalars are always semantically present with their default.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exists: Option<bool>,
+        /// Optional bounded semantic-failure grouping. Only listed numeric
+        /// values receive their own group; all other values collapse to
+        /// `other` rather than creating an unbounded metric series.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failure_groups: Option<BTreeMap<i64, String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        on_failure: Option<FailureAction>,
+    },
     /// Body contains a substring.
     BodyContains {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1772,6 +1796,7 @@ impl Condition {
             | Condition::BodyContains { name, .. }
             | Condition::BodyMatches { name, .. }
             | Condition::Jsonpath { name, .. }
+            | Condition::ProtobufField { name, .. }
             | Condition::Xpath { name, .. }
             | Condition::Duration { name, .. }
             | Condition::Size { name, .. }
@@ -1807,6 +1832,7 @@ impl Condition {
             }
             Condition::BodyMatches { pattern, .. } => format!("body matches /{pattern}/"),
             Condition::Jsonpath { expression, .. } => format!("jsonpath {expression}"),
+            Condition::ProtobufField { field, .. } => format!("protobuf field {field}"),
             Condition::Xpath { expression, .. } => format!("xpath {expression}"),
             Condition::Duration { max, .. } => format!("duration < {max}"),
             Condition::Size { .. } => "body size".to_string(),
@@ -1821,6 +1847,7 @@ impl Condition {
             | Condition::BodyContains { on_failure, .. }
             | Condition::BodyMatches { on_failure, .. }
             | Condition::Jsonpath { on_failure, .. }
+            | Condition::ProtobufField { on_failure, .. }
             | Condition::Xpath { on_failure, .. }
             | Condition::Duration { on_failure, .. }
             | Condition::Size { on_failure, .. }
@@ -2311,6 +2338,37 @@ plugins:
             .executor_spec()
             .unwrap_err()
             .contains("`max_vus` cannot be less"));
+    }
+
+    #[test]
+    fn protobuf_field_condition_round_trips() {
+        let yaml = r#"
+type: protobuf_field
+name: admission_accepted
+field: code
+equals: 0
+failure_groups:
+  18: WrongShard
+  20: PoolAtCapacity
+"#;
+        let condition: Condition = serde_yaml::from_str(yaml).expect("parse condition");
+        match &condition {
+            Condition::ProtobufField {
+                name,
+                field,
+                equals,
+                failure_groups,
+                ..
+            } => {
+                assert_eq!(name.as_deref(), Some("admission_accepted"));
+                assert_eq!(field, "code");
+                assert_eq!(equals.as_ref(), Some(&serde_json::json!(0)));
+                assert_eq!(failure_groups.as_ref().unwrap()[&18], "WrongShard");
+            }
+            other => panic!("expected protobuf condition, got {other:?}"),
+        }
+        let encoded = serde_yaml::to_string(&condition).expect("serialize condition");
+        let _: Condition = serde_yaml::from_str(&encoded).expect("reparse condition");
     }
 
     #[test]

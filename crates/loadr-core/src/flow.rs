@@ -15,8 +15,8 @@ use crate::extract::{CompiledExtractor, ExtractError};
 use crate::metrics::{BuiltinMetrics, MetricKind, Tags};
 use crate::pacing::sample_think_time;
 use crate::protocol::{
-    GrpcRequest, PreparedRequest, ProtocolRegistry, ProtocolResponse, RequestOptions,
-    SocketRequest, WsFrame, WsRequest,
+    GrpcProtobufFieldCheck, GrpcRequest, PreparedRequest, ProtocolRegistry, ProtocolResponse,
+    RequestOptions, SocketRequest, WsFrame, WsRequest,
 };
 use crate::script::{HostHttpRequest, HostHttpResponse, ScriptHost, ScriptLogLevel, VuScript};
 use crate::vu::{json_to_string, VuContext};
@@ -185,6 +185,9 @@ pub struct CompiledRequest {
     pub extract: Vec<CompiledExtractor>,
     pub assert: Vec<CompiledCondition>,
     pub checks: Vec<CompiledCondition>,
+    /// Descriptor-aware protobuf checks, bound to the condition result slots
+    /// above. Empty for every pre-existing plan.
+    pub grpc_protobuf_checks: Option<Arc<Vec<GrpcProtobufFieldCheck>>>,
     /// Compile-time half of the gRPC lazy-decode gate: true when `extract`,
     /// or any `assert`/`checks` condition, needs the response body. `prepare`
     /// ANDs in the runtime half (a script `afterRequest` hook) before setting
@@ -473,16 +476,24 @@ fn compile_request(
         .iter()
         .map(|e| CompiledExtractor::compile(e).map_err(|e| EngineError::Config(e.to_string())))
         .collect::<Result<_, _>>()?;
-    let assert: Vec<CompiledCondition> = req
+    let mut assert: Vec<CompiledCondition> = req
         .assert
         .iter()
         .map(|c| CompiledCondition::compile(c).map_err(EngineError::Config))
         .collect::<Result<_, _>>()?;
-    let checks: Vec<CompiledCondition> = req
+    let mut checks: Vec<CompiledCondition> = req
         .checks
         .iter()
         .map(|c| CompiledCondition::compile(c).map_err(EngineError::Config))
         .collect::<Result<_, _>>()?;
+    let mut grpc_protobuf_checks = Vec::new();
+    for condition in assert.iter_mut().chain(checks.iter_mut()) {
+        if let Some(check) = condition.bind_protobuf_check(grpc_protobuf_checks.len() as u32) {
+            grpc_protobuf_checks.push(check);
+        }
+    }
+    let grpc_protobuf_checks =
+        (!grpc_protobuf_checks.is_empty()).then(|| Arc::new(grpc_protobuf_checks));
     // Compile-time half of the gRPC lazy-decode gate (see
     // `CompiledRequest::reads_response_body`); `Kind::Js` always counts as
     // reading the body since we can't know in advance what the expression
@@ -522,6 +533,7 @@ fn compile_request(
         extract,
         assert,
         checks,
+        grpc_protobuf_checks,
         reads_response_body,
         ws: req.ws.clone(),
         grpc,
@@ -1232,7 +1244,19 @@ impl FlowRunner {
         }
         for condition in &req.checks {
             let result = self.eval_condition(condition, &response, vu, script);
-            let tags = vu.sample_tags(&[("check", &result.name)]);
+            let failure_code = result
+                .failure_group
+                .as_ref()
+                .and_then(|group| group.code)
+                .map(|code| code.to_string());
+            let mut extra_tags = vec![("check", result.name.as_str())];
+            if let Some(group) = &result.failure_group {
+                extra_tags.push(("failure_group", group.label.as_str()));
+            }
+            if let Some(code) = failure_code.as_deref() {
+                extra_tags.push(("failure_code", code));
+            }
+            let tags = vu.sample_tags(&extra_tags);
             vu.metrics.rate(&self.builtins.checks, result.pass, &tags);
         }
         // Record whether this request failed, so `retry` can react to it.
@@ -1676,6 +1700,12 @@ impl FlowRunner {
             } else {
                 req.grpc_literal_messages.is_some()
             };
+            let has_after_request = script
+                .as_ref()
+                .is_some_and(|s| s.has_function("afterRequest"));
+            let has_protobuf_checks = req.grpc_protobuf_checks.is_some();
+            let discard_response_body =
+                !req.reads_response_body && !has_protobuf_checks && !has_after_request;
             options.grpc = Some(GrpcRequest {
                 proto_files: grpc.proto_files.clone(),
                 proto_includes: grpc.proto_includes.clone(),
@@ -1695,10 +1725,12 @@ impl FlowRunner {
                 // Skip decode when nothing in the plan reads the body and no
                 // `afterRequest` hook can see it either (`has_function` is an
                 // O(1) HashSet lookup — no extra caching machinery needed).
-                discard_response_body: !req.reads_response_body
-                    && !script
-                        .as_ref()
-                        .is_some_and(|s| s.has_function("afterRequest")),
+                discard_response_body,
+                protobuf_only_response: !discard_response_body
+                    && has_protobuf_checks
+                    && !req.reads_response_body
+                    && !has_after_request,
+                protobuf_checks: req.grpc_protobuf_checks.clone(),
             });
         }
         if let Some(socket) = &req.socket {

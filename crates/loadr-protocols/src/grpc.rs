@@ -15,15 +15,19 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError, RwLock};
 use std::time::Instant;
 
 use async_trait::async_trait;
+use base64::Engine as _;
 use bytes::{Buf as _, BufMut as _, Bytes};
 use loadr_config::{GrpcTransport, HttpDefaults};
 use loadr_core::error::ProtocolError;
 use loadr_core::protocol::{
-    GrpcRequest, PreparedRequest, ProtocolHandler, ProtocolResponse, Timings,
+    GrpcProtobufFieldCheck, GrpcProtobufFieldOutcome, GrpcRequest, PreparedRequest,
+    ProtocolHandler, ProtocolResponse, Timings,
 };
 use loadr_core::vu::VuContext;
 use prost::Message as _;
-use prost_reflect::{DescriptorPool, DynamicMessage, MethodDescriptor};
+use prost_reflect::{
+    DescriptorPool, DynamicMessage, FieldDescriptor, Kind, MethodDescriptor, Value,
+};
 use tonic::client::GrpcService;
 use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
 use tonic::codegen::{Body as HttpBody, StdError};
@@ -228,6 +232,10 @@ struct CachedCall {
     /// identity (stable for the run: the Arc is owned by the compiled plan).
     encoded: HashMap<usize, EncodedMessages>,
     metadata: CachedMetadata,
+    /// Descriptor-resolved protobuf checks keyed by the compiled plan Arc's
+    /// stable pointer identity. Resolution and expected-value validation are
+    /// paid once per request shape and VU, never once per response.
+    protobuf_check_sets: HashMap<usize, Vec<ResolvedProtobufFieldCheck>>,
 }
 
 struct CachedCallIdentity {
@@ -258,6 +266,14 @@ struct CachedMetadata {
     /// followed by the request headers merged into the gRPC request.
     source: Vec<(String, String)>,
     map: MetadataMap,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedProtobufFieldCheck {
+    id: u32,
+    field: FieldDescriptor,
+    expected: Option<Value>,
+    exists: bool,
 }
 
 impl CachedCall {
@@ -370,6 +386,185 @@ impl CachedMetadata {
             self.map = map;
         }
         Ok(self.map.clone())
+    }
+}
+
+fn resolve_protobuf_checks(
+    output: &prost_reflect::MessageDescriptor,
+    checks: &[GrpcProtobufFieldCheck],
+) -> Result<Vec<ResolvedProtobufFieldCheck>, ProtocolError> {
+    checks
+        .iter()
+        .map(|check| {
+            let field = output.get_field_by_name(&check.field).ok_or_else(|| {
+                ProtocolError::InvalidRequest(format!(
+                    "protobuf field `{}` not found on `{}` (field names are exact and top-level)",
+                    check.field,
+                    output.full_name()
+                ))
+            })?;
+            if field.is_list() || matches!(field.kind(), Kind::Message(_)) {
+                return Err(ProtocolError::InvalidRequest(format!(
+                    "protobuf field `{}` on `{}` must be a singular scalar or enum",
+                    check.field,
+                    output.full_name()
+                )));
+            }
+            if check.group_failures && !protobuf_kind_is_groupable(&field.kind()) {
+                return Err(ProtocolError::InvalidRequest(format!(
+                    "failure_groups requires an integer or enum protobuf field; `{}` is {:?}",
+                    check.field,
+                    field.kind()
+                )));
+            }
+            let expected = check
+                .equals
+                .as_ref()
+                .map(|value| protobuf_expected_value(&field, value))
+                .transpose()?;
+            Ok(ResolvedProtobufFieldCheck {
+                id: check.id,
+                field,
+                expected,
+                exists: check.exists,
+            })
+        })
+        .collect()
+}
+
+fn protobuf_kind_is_groupable(kind: &Kind) -> bool {
+    matches!(
+        kind,
+        Kind::Int32
+            | Kind::Int64
+            | Kind::Uint32
+            | Kind::Uint64
+            | Kind::Sint32
+            | Kind::Sint64
+            | Kind::Fixed32
+            | Kind::Fixed64
+            | Kind::Sfixed32
+            | Kind::Sfixed64
+            | Kind::Enum(_)
+    )
+}
+
+fn protobuf_expected_value(
+    field: &FieldDescriptor,
+    value: &serde_json::Value,
+) -> Result<Value, ProtocolError> {
+    let invalid = || {
+        ProtocolError::InvalidRequest(format!(
+            "protobuf check value {value} does not match field `{}` ({:?})",
+            field.name(),
+            field.kind()
+        ))
+    };
+    let result = match field.kind() {
+        Kind::Double => value.as_f64().map(Value::F64),
+        Kind::Float => value.as_f64().map(|v| Value::F32(v as f32)),
+        Kind::Int32 | Kind::Sint32 | Kind::Sfixed32 => value
+            .as_i64()
+            .and_then(|v| i32::try_from(v).ok())
+            .map(Value::I32),
+        Kind::Int64 | Kind::Sint64 | Kind::Sfixed64 => value.as_i64().map(Value::I64),
+        Kind::Uint32 | Kind::Fixed32 => value
+            .as_u64()
+            .and_then(|v| u32::try_from(v).ok())
+            .map(Value::U32),
+        Kind::Uint64 | Kind::Fixed64 => value.as_u64().map(Value::U64),
+        Kind::Bool => value.as_bool().map(Value::Bool),
+        Kind::String => value.as_str().map(|v| Value::String(v.to_string())),
+        Kind::Bytes => value.as_str().and_then(|v| {
+            base64::engine::general_purpose::STANDARD
+                .decode(v)
+                .ok()
+                .map(|bytes| Value::Bytes(bytes.into()))
+        }),
+        Kind::Enum(desc) => match value {
+            serde_json::Value::String(name) => desc
+                .get_value_by_name(name)
+                .map(|v| Value::EnumNumber(v.number())),
+            _ => value
+                .as_i64()
+                .and_then(|v| i32::try_from(v).ok())
+                .map(Value::EnumNumber),
+        },
+        Kind::Message(_) => None,
+    };
+    result.ok_or_else(invalid)
+}
+
+fn evaluate_protobuf_checks(
+    message: &DynamicMessage,
+    checks: &[ResolvedProtobufFieldCheck],
+) -> Vec<GrpcProtobufFieldOutcome> {
+    checks
+        .iter()
+        .map(|check| {
+            // Proto3 implicit-presence scalars are always semantically
+            // present: an omitted wire value reads as its protobuf default.
+            let present = !check.field.supports_presence() || message.has_field(&check.field);
+            if !present {
+                return GrpcProtobufFieldOutcome {
+                    id: check.id,
+                    pass: !check.exists,
+                    detail: check
+                        .exists
+                        .then(|| format!("protobuf field `{}` is absent", check.field.name())),
+                    actual_code: None,
+                    missing: true,
+                };
+            }
+
+            let actual = message.get_field(&check.field);
+            let actual_code = protobuf_numeric_code(actual.as_ref());
+            if !check.exists {
+                return GrpcProtobufFieldOutcome {
+                    id: check.id,
+                    pass: false,
+                    detail: Some(format!(
+                        "protobuf field `{}` is present with value {:?}",
+                        check.field.name(),
+                        actual
+                    )),
+                    actual_code,
+                    missing: false,
+                };
+            }
+            let pass = check
+                .expected
+                .as_ref()
+                .is_none_or(|expected| actual.as_ref() == expected);
+            GrpcProtobufFieldOutcome {
+                id: check.id,
+                pass,
+                detail: (!pass).then(|| {
+                    format!(
+                        "protobuf field `{}` expected {:?}, got {:?}",
+                        check.field.name(),
+                        check
+                            .expected
+                            .as_ref()
+                            .expect("failed equality has expected"),
+                        actual
+                    )
+                }),
+                actual_code,
+                missing: false,
+            }
+        })
+        .collect()
+}
+
+fn protobuf_numeric_code(value: &Value) -> Option<i64> {
+    match value {
+        Value::I32(v) => Some(i64::from(*v)),
+        Value::I64(v) => Some(*v),
+        Value::U32(v) => Some(i64::from(*v)),
+        Value::U64(v) => i64::try_from(*v).ok(),
+        Value::EnumNumber(v) => Some(i64::from(*v)),
+        _ => None,
     }
 }
 
@@ -714,6 +909,10 @@ impl ProtocolHandler for GrpcHandler {
         let grpc = request.options.grpc.as_ref().ok_or_else(|| {
             ProtocolError::InvalidRequest("grpc request requires `grpc:` options".to_string())
         })?;
+        let protobuf_checks = grpc
+            .protobuf_checks
+            .as_deref()
+            .map_or(&[][..], Vec::as_slice);
         let transport = self.transport_override.unwrap_or(grpc.transport);
 
         // Look up by the raw rendered URL so repeated calls never parse it.
@@ -842,6 +1041,7 @@ impl ProtocolHandler for GrpcHandler {
                     client,
                     encoded: HashMap::new(),
                     metadata: CachedMetadata::default(),
+                    protobuf_check_sets: HashMap::new(),
                 };
                 let state = ctx.extensions.get_or_insert_with(GrpcChannels::default);
                 state.calls.push(cached);
@@ -850,6 +1050,18 @@ impl ProtocolHandler for GrpcHandler {
         };
         let state = ctx.extensions.get_or_insert_with(GrpcChannels::default);
         let cached = &mut state.calls[call_idx];
+
+        let protobuf_checks_key = grpc
+            .protobuf_checks
+            .as_ref()
+            .filter(|checks| !checks.is_empty())
+            .map(|checks| Arc::as_ptr(checks) as usize);
+        if let Some(key) = protobuf_checks_key {
+            if !cached.protobuf_check_sets.contains_key(&key) {
+                let checks = resolve_protobuf_checks(&cached.codec.output, protobuf_checks)?;
+                cached.protobuf_check_sets.insert(key, checks);
+            }
+        }
 
         // Build outbound messages: pre-encoded bytes for literal messages
         // (cached by the message Arc's identity), dynamic otherwise.
@@ -929,7 +1141,7 @@ impl ProtocolHandler for GrpcHandler {
         // Per-call flag on the clone, not the cached codec: a decode call and
         // a discard call to the same method share one `CachedCall` entry.
         let mut codec = cached.codec.clone();
-        codec.discard = grpc.discard_response_body;
+        codec.discard = grpc.discard_response_body && protobuf_checks.is_empty();
         let outcome = match &mut cached.client {
             CachedClient::Buffered(client) => {
                 let call = invoke(client, shape, outbound, path, codec, metadata);
@@ -969,12 +1181,26 @@ impl ProtocolHandler for GrpcHandler {
                             + 5
                     })
                     .sum();
-                let body: Bytes = match responses.last() {
-                    Some(Inbound::Message(m)) => {
-                        let json = serde_json::to_value(m).unwrap_or(serde_json::Value::Null);
-                        serde_json::to_vec(&json).unwrap_or_default().into()
+                let grpc_protobuf_outcomes = match (protobuf_checks_key, responses.last()) {
+                    (Some(key), Some(Inbound::Message(message))) => evaluate_protobuf_checks(
+                        message,
+                        cached
+                            .protobuf_check_sets
+                            .get(&key)
+                            .expect("protobuf check set resolved before invocation"),
+                    ),
+                    _ => Vec::new(),
+                };
+                let body: Bytes = if grpc.protobuf_only_response {
+                    Bytes::new()
+                } else {
+                    match responses.last() {
+                        Some(Inbound::Message(m)) => {
+                            let json = serde_json::to_value(m).unwrap_or(serde_json::Value::Null);
+                            serde_json::to_vec(&json).unwrap_or_default().into()
+                        }
+                        _ => Bytes::new(),
                     }
-                    _ => Bytes::new(),
                 };
                 Ok(ProtocolResponse {
                     status: 0,
@@ -990,6 +1216,7 @@ impl ProtocolHandler for GrpcHandler {
                     extras: serde_json::json!({
                         "message_count": count,
                     }),
+                    grpc_protobuf_outcomes,
                 })
             }
             Err(status) => {
@@ -1112,6 +1339,7 @@ async fn collect_stream(mut stream: tonic::Streaming<Inbound>) -> Result<Vec<Inb
 #[cfg(test)]
 mod tests {
     use super::*;
+    use loadr_core::conditions::CompiledCondition;
 
     #[test]
     fn parse_transport_values() {
@@ -1362,6 +1590,7 @@ message Everything {
             message: "hi".to_string(),
             repeat: 3,
             payload: vec![0xde, 0xad, 0xbe, 0xef],
+            ..Default::default()
         }
         .encode_to_vec();
         assert_eq!(encode_message(&message), expected);
@@ -1388,5 +1617,131 @@ message Everything {
             .expect("rebuild for changed header");
         assert_eq!(second.get("x-h").unwrap().to_str().unwrap(), "beta");
         assert_eq!(second.get("x-static").unwrap().to_str().unwrap(), "1");
+    }
+
+    fn echo_output_descriptor() -> prost_reflect::MessageDescriptor {
+        let pool = DescriptorPool::decode(loadr_testserver::FILE_DESCRIPTOR_SET)
+            .expect("test descriptor set");
+        pool.get_message_by_name("loadr.test.EchoResponse")
+            .expect("EchoResponse descriptor")
+    }
+
+    #[test]
+    fn protobuf_check_rejects_non_scalar_fields_and_typed_mismatches() {
+        let output = echo_output_descriptor();
+        let bad_type = GrpcProtobufFieldCheck {
+            id: 0,
+            field: Arc::from("code"),
+            equals: Some(serde_json::json!("not-a-number")),
+            exists: true,
+            group_failures: false,
+        };
+        let error = resolve_protobuf_checks(&output, &[bad_type]).expect_err("typed mismatch");
+        assert!(error.to_string().contains("does not match field `code`"));
+
+        let missing = GrpcProtobufFieldCheck {
+            id: 0,
+            field: Arc::from("nested.code"),
+            equals: Some(serde_json::json!(0)),
+            exists: true,
+            group_failures: false,
+        };
+        let error = resolve_protobuf_checks(&output, &[missing]).expect_err("exact field name");
+        assert!(error.to_string().contains("not found"));
+    }
+
+    /// Focused response-path microbenchmark. Run explicitly with:
+    ///
+    /// `cargo test -p loadr-protocols grpc_response_path_benchmark --release -- --ignored --nocapture`
+    ///
+    /// The standard test harness does not expose allocator counters, so this
+    /// reports latency and throughput. The cases share the same small message.
+    #[test]
+    #[ignore = "manual response-path benchmark"]
+    fn grpc_response_path_benchmark() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        const ITERATIONS: u64 = 200_000;
+        let output = echo_output_descriptor();
+        let code = output.get_field_by_name("code").expect("code field");
+        let mut message = DynamicMessage::new(output.clone());
+        message.set_field(&code, Value::U32(18));
+        let wire = Bytes::from(message.encode_to_vec());
+
+        let json_spec = loadr_config::Condition::Jsonpath {
+            name: None,
+            expression: "$.code".to_string(),
+            equals: Some(serde_json::json!(0)),
+            exists: None,
+            on_failure: None,
+        };
+        let json_condition = CompiledCondition::compile(&json_spec).expect("compile JSONPath");
+
+        let protobuf_spec = loadr_config::Condition::ProtobufField {
+            name: None,
+            field: "code".to_string(),
+            equals: Some(serde_json::json!(0)),
+            exists: None,
+            failure_groups: None,
+            on_failure: None,
+        };
+        let mut protobuf_condition =
+            CompiledCondition::compile(&protobuf_spec).expect("compile protobuf condition");
+        let check = protobuf_condition
+            .bind_protobuf_check(0)
+            .expect("bind protobuf condition");
+        let resolved = resolve_protobuf_checks(&output, &[check]).expect("resolve check");
+
+        fn measure(mut operation: impl FnMut(), iterations: u64) -> (f64, f64) {
+            let started = Instant::now();
+            for _ in 0..iterations {
+                operation();
+            }
+            let elapsed = started.elapsed().as_secs_f64();
+            (
+                elapsed * 1e9 / iterations as f64,
+                iterations as f64 / elapsed,
+            )
+        }
+
+        let (discard_ns, discard_ops) = measure(
+            || {
+                let mut frame = wire.clone();
+                let len = frame.remaining();
+                frame.advance(len);
+                black_box(len);
+            },
+            ITERATIONS,
+        );
+        let (json_ns, json_ops) = measure(
+            || {
+                let json = serde_json::to_value(&message).expect("dynamic JSON");
+                let response = ProtocolResponse {
+                    body: serde_json::to_vec(&json).expect("JSON bytes").into(),
+                    ..Default::default()
+                };
+                black_box(json_condition.evaluate(&response).pass);
+            },
+            ITERATIONS,
+        );
+        let (protobuf_ns, protobuf_ops) = measure(
+            || {
+                let response = ProtocolResponse {
+                    grpc_protobuf_outcomes: evaluate_protobuf_checks(&message, &resolved),
+                    ..Default::default()
+                };
+                black_box(protobuf_condition.evaluate(&response).pass);
+            },
+            ITERATIONS,
+        );
+
+        println!("status-only discard: {discard_ns:.1} ns/op, {discard_ops:.0} ops/s");
+        println!("JSONPath decode/check: {json_ns:.1} ns/op, {json_ops:.0} ops/s");
+        println!("protobuf field check: {protobuf_ns:.1} ns/op, {protobuf_ops:.0} ops/s");
+        assert!(
+            protobuf_ns < json_ns,
+            "protobuf field path should be cheaper than DynamicMessage-to-JSON + JSONPath"
+        );
     }
 }

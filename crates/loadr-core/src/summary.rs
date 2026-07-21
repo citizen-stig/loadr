@@ -14,6 +14,25 @@ pub struct CheckSummary {
     pub name: String,
     pub passes: u64,
     pub fails: u64,
+    /// Bounded semantic failure breakdown. Omitted for all existing checks
+    /// and for protobuf checks without an explicit `failure_groups` mapping.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failure_groups: Vec<CheckFailureGroupSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CheckFailureGroupSummary {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<i64>,
+    pub label: String,
+    pub count: u64,
+}
+
+#[derive(Default)]
+struct CheckAccumulator {
+    passes: u64,
+    fails: u64,
+    failure_groups: BTreeMap<(Option<i64>, String), u64>,
 }
 
 /// One metric in the summary, merged across all tag combinations.
@@ -199,24 +218,42 @@ impl Summary {
             .collect();
 
         // Check summaries from `checks` series tagged with `check`.
-        let mut checks: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+        let mut checks: BTreeMap<String, CheckAccumulator> = BTreeMap::new();
         for s in snapshot.series.iter().filter(|s| s.metric == "checks") {
             let name = s
                 .tags
                 .get("check")
                 .cloned()
                 .unwrap_or_else(|| "unnamed".to_string());
-            let entry = checks.entry(name).or_insert((0, 0));
+            let entry = checks.entry(name).or_default();
             let passes = s.agg.sum as u64;
-            entry.0 += passes;
-            entry.1 += s.agg.count - passes;
+            entry.passes += passes;
+            let fails = s.agg.count - passes;
+            entry.fails += fails;
+            if fails > 0 {
+                if let Some(label) = s.tags.get("failure_group") {
+                    let code = s
+                        .tags
+                        .get("failure_code")
+                        .and_then(|value| value.parse::<i64>().ok());
+                    *entry
+                        .failure_groups
+                        .entry((code, label.clone()))
+                        .or_default() += fails;
+                }
+            }
         }
         let checks: Vec<CheckSummary> = checks
             .into_iter()
-            .map(|(name, (passes, fails))| CheckSummary {
+            .map(|(name, check)| CheckSummary {
                 name,
-                passes,
-                fails,
+                passes: check.passes,
+                fails: check.fails,
+                failure_groups: check
+                    .failure_groups
+                    .into_iter()
+                    .map(|((code, label), count)| CheckFailureGroupSummary { code, label, count })
+                    .collect(),
             })
             .collect();
 
@@ -281,6 +318,16 @@ impl Summary {
                     c.passes,
                     c.passes + c.fails
                 ));
+                for group in &c.failure_groups {
+                    let code = group
+                        .code
+                        .map(|code| format!(" [code {code}]"))
+                        .unwrap_or_default();
+                    out.push_str(&format!(
+                        "        {}{}: {}\n",
+                        group.label, code, group.count
+                    ));
+                }
             }
             out.push('\n');
         }
@@ -387,7 +434,23 @@ impl Summary {
                 ));
             } else {
                 check_failures += 1;
-                let msg = format!("{} of {} checks failed", c.fails, total);
+                let groups = if c.failure_groups.is_empty() {
+                    String::new()
+                } else {
+                    let values = c
+                        .failure_groups
+                        .iter()
+                        .map(|group| match group.code {
+                            Some(code) => {
+                                format!("{} (code {}): {}", group.label, code, group.count)
+                            }
+                            None => format!("{}: {}", group.label, group.count),
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("; failure groups: {values}")
+                };
+                let msg = format!("{} of {} checks failed{}", c.fails, total, groups);
                 check_cases.push_str(&format!(
                     "    <testcase name=\"{}\" classname=\"check\">\n      <failure message=\"{}\"/>\n    </testcase>\n",
                     xml_escape(&c.name),
@@ -540,6 +603,57 @@ mod tests {
     }
 
     #[test]
+    fn distributed_merge_preserves_bounded_failure_groups() {
+        fn record_failures(agg: &mut Aggregator, code: i64, label: &str, count: usize) {
+            let mut tags = Tags::new();
+            tags.insert("check".into(), "admission_accepted".into());
+            tags.insert("failure_code".into(), code.to_string());
+            tags.insert("failure_group".into(), label.to_string());
+            let tags = Arc::new(tags);
+            for _ in 0..count {
+                agg.record(&Sample {
+                    metric: Arc::from("checks"),
+                    kind: MetricKind::Rate,
+                    value: 0.0,
+                    tags: tags.clone(),
+                    timestamp_ms: now_millis(),
+                });
+            }
+        }
+
+        let mut agent_a = Aggregator::new();
+        let mut agent_b = Aggregator::new();
+        record_failures(&mut agent_a, 18, "WrongShard", 2);
+        record_failures(&mut agent_b, 18, "WrongShard", 3);
+        record_failures(&mut agent_b, 20, "PoolAtCapacity", 4);
+        let mut controller = Aggregator::new();
+        controller.merge_delta(&agent_a.take_delta());
+        controller.merge_delta(&agent_b.take_delta());
+
+        let summary = Summary::build(
+            Some("distributed".into()),
+            "run-groups".into(),
+            now_millis(),
+            vec!["default".into()],
+            &mut controller,
+            Vec::new(),
+            None,
+            Vec::new(),
+        );
+        let check = &summary.checks[0];
+        assert_eq!(check.fails, 9);
+        assert_eq!(check.failure_groups.len(), 2);
+        assert!(check.failure_groups.iter().any(|group| {
+            group.code == Some(18) && group.label == "WrongShard" && group.count == 5
+        }));
+        assert!(check.failure_groups.iter().any(|group| {
+            group.code == Some(20) && group.label == "PoolAtCapacity" && group.count == 4
+        }));
+        assert!(summary.render_console().contains("WrongShard [code 18]: 5"));
+        assert!(summary.render_junit().contains("WrongShard (code 18): 5"));
+    }
+
+    #[test]
     fn console_render_contains_key_lines() {
         let s = build_summary();
         let text = s.render_console();
@@ -613,6 +727,7 @@ mod tests {
     fn json_round_trip() {
         let s = build_summary();
         let json = s.to_json();
+        assert!(json["checks"][0].get("failure_groups").is_none());
         let back: Summary = serde_json::from_value(json).expect("round trip");
         assert_eq!(back.run_id, "run-1");
         assert_eq!(back.checks.len(), 1);

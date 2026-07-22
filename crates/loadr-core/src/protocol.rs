@@ -78,11 +78,11 @@ pub struct WsFrame {
 
 #[derive(Debug, Clone, Default)]
 pub struct GrpcRequest {
-    pub proto_files: Vec<std::path::PathBuf>,
-    pub proto_includes: Vec<std::path::PathBuf>,
+    pub proto_files: Arc<[std::path::PathBuf]>,
+    pub proto_includes: Arc<[std::path::PathBuf]>,
     pub reflection: bool,
-    pub service: String,
-    pub method: String,
+    pub service: Arc<str>,
+    pub method: Arc<str>,
     /// Unary request message (JSON-encoded).
     pub message: Option<Arc<serde_json::Value>>,
     /// Streaming request messages.

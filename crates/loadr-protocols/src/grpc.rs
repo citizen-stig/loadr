@@ -244,13 +244,13 @@ struct CachedCallIdentity {
     url: String,
     endpoint: String,
     tls: bool,
-    service: String,
-    method_name: String,
+    service: Arc<str>,
+    method_name: Arc<str>,
     reflection: bool,
-    proto_files: Vec<PathBuf>,
+    proto_files: Arc<[PathBuf]>,
     /// Part of the identity: the same files can resolve differently under
     /// different include roots.
-    proto_includes: Vec<PathBuf>,
+    proto_includes: Arc<[PathBuf]>,
     pool_size: Option<usize>,
     transport: GrpcTransport,
 }
@@ -285,11 +285,11 @@ impl CachedCall {
 impl CachedCallIdentity {
     fn matches(&self, url: &str, grpc: &GrpcRequest, transport: GrpcTransport) -> bool {
         self.url == url
-            && self.service == grpc.service
-            && self.method_name == grpc.method
+            && shared_eq(&self.service, &grpc.service)
+            && shared_eq(&self.method_name, &grpc.method)
             && self.reflection == grpc.reflection
-            && self.proto_files == grpc.proto_files
-            && self.proto_includes == grpc.proto_includes
+            && shared_eq(&self.proto_files, &grpc.proto_files)
+            && shared_eq(&self.proto_includes, &grpc.proto_includes)
             && self.pool_size == grpc.channel_pool_size
             && self.transport == transport
     }
@@ -358,6 +358,13 @@ fn parse_transport(value: Option<&str>) -> Option<GrpcTransport> {
             None
         }
     }
+}
+
+fn shared_eq<T>(left: &Arc<T>, right: &Arc<T>) -> bool
+where
+    T: ?Sized + PartialEq,
+{
+    Arc::ptr_eq(left, right) || left.as_ref() == right.as_ref()
 }
 
 impl CachedMetadata {
@@ -1008,7 +1015,7 @@ impl ProtocolHandler for GrpcHandler {
                 })?;
                 let method = service
                     .methods()
-                    .find(|m| m.name() == grpc.method)
+                    .find(|m| m.name() == grpc.method.as_ref())
                     .ok_or_else(|| {
                         ProtocolError::InvalidRequest(format!(
                             "method `{}` not found on `{}`",
@@ -1358,11 +1365,11 @@ mod tests {
     #[test]
     fn call_cache_identity_discriminates_raw_url_transport_and_pool_size() {
         let request = GrpcRequest {
-            proto_files: vec![PathBuf::from("echo.proto")],
-            proto_includes: vec![PathBuf::from("protos")],
+            proto_files: vec![PathBuf::from("echo.proto")].into(),
+            proto_includes: vec![PathBuf::from("protos")].into(),
             reflection: false,
-            service: "loadr.test.Echo".to_string(),
-            method: "UnaryEcho".to_string(),
+            service: "loadr.test.Echo".into(),
+            method: "UnaryEcho".into(),
             channel_pool_size: Some(2),
             transport: GrpcTransport::Channel,
             ..GrpcRequest::default()
@@ -1387,6 +1394,23 @@ mod tests {
             GrpcTransport::Channel
         ));
         assert!(!identity.matches("grpc://127.0.0.1:50051", &request, GrpcTransport::Raw));
+
+        let equivalent = GrpcRequest {
+            proto_files: vec![PathBuf::from("echo.proto")].into(),
+            proto_includes: vec![PathBuf::from("protos")].into(),
+            service: "loadr.test.Echo".into(),
+            method: "UnaryEcho".into(),
+            channel_pool_size: Some(2),
+            ..GrpcRequest::default()
+        };
+        assert!(!Arc::ptr_eq(&request.service, &equivalent.service));
+        assert!(identity.matches("grpc://127.0.0.1:50051", &equivalent));
+
+        let different_method = GrpcRequest {
+            method: "OtherMethod".into(),
+            ..equivalent
+        };
+        assert!(!identity.matches("grpc://127.0.0.1:50051", &different_method));
 
         let different_pool = GrpcRequest {
             channel_pool_size: Some(4),

@@ -80,6 +80,7 @@ pub struct RunResult {
 pub struct RunHandle {
     pub run_id: Arc<str>,
     snapshots: watch::Receiver<Arc<Snapshot>>,
+    aggregates: watch::Receiver<Arc<Snapshot>>,
     thresholds: watch::Receiver<Arc<Vec<ThresholdStatus>>>,
     status: watch::Receiver<RunStatus>,
     soft_stop: CancellationToken,
@@ -96,6 +97,13 @@ impl RunHandle {
 
     pub fn watch_snapshots(&self) -> watch::Receiver<Arc<Snapshot>> {
         self.snapshots.clone()
+    }
+
+    /// Exact cumulative rollups for the whole run and each scenario. Unlike a
+    /// regular snapshot, tagged histograms are merged before percentiles are
+    /// calculated.
+    pub fn aggregate_snapshot(&self) -> Arc<Snapshot> {
+        self.aggregates.borrow().clone()
     }
 
     pub fn threshold_statuses(&self) -> Arc<Vec<ThresholdStatus>> {
@@ -173,6 +181,7 @@ pub struct Engine {
     // Handle plumbing.
     handle: RunHandle,
     snapshots_tx: watch::Sender<Arc<Snapshot>>,
+    aggregates_tx: watch::Sender<Arc<Snapshot>>,
     thresholds_tx: watch::Sender<Arc<Vec<ThresholdStatus>>>,
     status_tx: watch::Sender<RunStatus>,
     external_targets: HashMap<String, watch::Receiver<u64>>,
@@ -306,12 +315,14 @@ impl Engine {
                 .as_str(),
         );
         let (snapshots_tx, snapshots_rx) = watch::channel(Arc::new(Snapshot::default()));
+        let (aggregates_tx, aggregates_rx) = watch::channel(Arc::new(Snapshot::default()));
         let (thresholds_tx, thresholds_rx) = watch::channel(Arc::new(Vec::new()));
         let (status_tx, status_rx) = watch::channel(RunStatus::Pending);
         let (pause_tx, _pause_rx) = watch::channel(false);
         let handle = RunHandle {
             run_id: run_id.clone(),
             snapshots: snapshots_rx,
+            aggregates: aggregates_rx,
             thresholds: thresholds_rx,
             status: status_rx,
             soft_stop: CancellationToken::new(),
@@ -336,6 +347,7 @@ impl Engine {
             http_defaults: Arc::new(plan.defaults.http.clone()),
             handle,
             snapshots_tx,
+            aggregates_tx,
             thresholds_tx,
             status_tx,
             external_targets,
@@ -388,6 +400,7 @@ impl Engine {
         // Aggregator task.
         let agg_task = {
             let snapshots_tx = self.snapshots_tx.clone();
+            let aggregates_tx = self.aggregates_tx.clone();
             let thresholds_tx = self.thresholds_tx.clone();
             let thresholds = std::mem::take(&mut self.thresholds);
             let abort_tx = abort_tx.clone();
@@ -396,7 +409,7 @@ impl Engine {
                 sample_source,
                 outputs,
                 thresholds,
-                snapshots_tx,
+                (snapshots_tx, aggregates_tx),
                 thresholds_tx,
                 abort_tx,
                 interval,
@@ -698,7 +711,7 @@ async fn aggregator_loop(
     source: SampleSource,
     mut outputs: Vec<Box<dyn Output>>,
     thresholds: Vec<CompiledThreshold>,
-    snapshots_tx: watch::Sender<Arc<Snapshot>>,
+    snapshot_txs: (watch::Sender<Arc<Snapshot>>, watch::Sender<Arc<Snapshot>>),
     thresholds_tx: watch::Sender<Arc<Vec<ThresholdStatus>>>,
     abort_tx: mpsc::UnboundedSender<String>,
     interval: Duration,
@@ -708,6 +721,7 @@ async fn aggregator_loop(
     Vec<ThresholdStatus>,
     Vec<TimelinePoint>,
 ) {
+    let (snapshots_tx, aggregates_tx) = snapshot_txs;
     let mut agg = Aggregator::new();
     let mut timeline: Vec<TimelinePoint> = Vec::new();
     let mut ticker = tokio::time::interval(interval);
@@ -756,8 +770,8 @@ async fn aggregator_loop(
                             batch.clear();
                         }
                         tick(
-                            &mut agg, &mut outputs, &thresholds, &snapshots_tx, &thresholds_tx,
-                            &abort_tx, &mut timeline, wants_delta, &mut abort_sent,
+                            &mut agg, &mut outputs, &thresholds, &snapshots_tx, &aggregates_tx,
+                            &thresholds_tx, &abort_tx, &mut timeline, wants_delta, &mut abort_sent,
                         )
                         .await;
                     }
@@ -775,8 +789,8 @@ async fn aggregator_loop(
                     _ = ticker.tick() => {
                         shards.drain_into(&mut agg);
                         tick(
-                            &mut agg, &mut outputs, &thresholds, &snapshots_tx, &thresholds_tx,
-                            &abort_tx, &mut timeline, wants_delta, &mut abort_sent,
+                            &mut agg, &mut outputs, &thresholds, &snapshots_tx, &aggregates_tx,
+                            &thresholds_tx, &abort_tx, &mut timeline, wants_delta, &mut abort_sent,
                         )
                         .await;
                     }
@@ -793,6 +807,7 @@ async fn aggregator_loop(
         &mut outputs,
         &thresholds,
         &snapshots_tx,
+        &aggregates_tx,
         &thresholds_tx,
         &mut timeline,
         wants_delta,
@@ -810,18 +825,21 @@ async fn tick(
     outputs: &mut [Box<dyn Output>],
     thresholds: &[CompiledThreshold],
     snapshots_tx: &watch::Sender<Arc<Snapshot>>,
+    aggregates_tx: &watch::Sender<Arc<Snapshot>>,
     thresholds_tx: &watch::Sender<Arc<Vec<ThresholdStatus>>>,
     abort_tx: &mpsc::UnboundedSender<String>,
     timeline: &mut Vec<TimelinePoint>,
     wants_delta: bool,
     abort_sent: &mut bool,
 ) {
+    let aggregates = Arc::new(agg.aggregate_snapshot(&[&["scenario"]]));
     let snapshot = Arc::new(agg.snapshot());
-    timeline.push(TimelinePoint::from_snapshot(&snapshot));
+    timeline.push(TimelinePoint::from_snapshots(&snapshot, Some(&aggregates)));
     for output in outputs.iter_mut() {
         output.on_snapshot(&snapshot).await;
     }
     let _ = snapshots_tx.send(snapshot);
+    let _ = aggregates_tx.send(aggregates);
     if wants_delta {
         dispatch_delta(agg, outputs, false).await;
     }
@@ -841,12 +859,14 @@ async fn finalize(
     outputs: &mut [Box<dyn Output>],
     thresholds: &[CompiledThreshold],
     snapshots_tx: &watch::Sender<Arc<Snapshot>>,
+    aggregates_tx: &watch::Sender<Arc<Snapshot>>,
     thresholds_tx: &watch::Sender<Arc<Vec<ThresholdStatus>>>,
     timeline: &mut Vec<TimelinePoint>,
     wants_delta: bool,
 ) -> Vec<ThresholdStatus> {
     let (statuses, _) = evaluate_all(thresholds, agg, agg.elapsed());
     let _ = thresholds_tx.send(Arc::new(statuses.clone()));
+    let final_aggregates = Arc::new(agg.aggregate_snapshot(&[&["scenario"]]));
     let final_snapshot = Arc::new(agg.snapshot());
     if final_snapshot.interval_secs > 0.0
         && final_snapshot
@@ -854,9 +874,13 @@ async fn finalize(
             .iter()
             .any(|s| s.interval_count > 0 || s.metric == "vus")
     {
-        timeline.push(TimelinePoint::from_snapshot(&final_snapshot));
+        timeline.push(TimelinePoint::from_snapshots(
+            &final_snapshot,
+            Some(&final_aggregates),
+        ));
     }
     let _ = snapshots_tx.send(final_snapshot);
+    let _ = aggregates_tx.send(final_aggregates);
     if wants_delta {
         // Final flush: the run is ending, so block until it's accepted
         // (matches the pre-existing blocking final-flush behavior) rather

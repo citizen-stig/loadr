@@ -517,7 +517,7 @@ async fn submit_remote(args: &RunArgs, controller: &str) -> anyhow::Result<i32> 
             .or_else(|| info["state"].as_str())
             .unwrap_or("unknown");
         match state {
-            "finished" | "failed" => {
+            "finished" | "degraded" | "aborted" | "failed" => {
                 let summary = crate::commands::controller::http_json(
                     &client,
                     http::Method::GET,
@@ -570,13 +570,31 @@ impl loadr_plugin_webui::UiBackend for SingleRunBackend {
     }
 
     fn runs(&self) -> Vec<loadr_plugin_webui::RunInfo> {
-        let (state, passed) = match self.handle.status() {
+        let (mut state, mut passed) = match self.handle.status() {
             loadr_core::RunStatus::Pending => ("pending", None),
             loadr_core::RunStatus::Running => ("running", None),
             loadr_core::RunStatus::Stopping => ("stopping", None),
             loadr_core::RunStatus::Finished { passed } => ("finished", Some(passed)),
         };
         let summary = self.summary.lock();
+        if summary
+            .as_ref()
+            .is_some_and(|summary| summary.aborted.is_some())
+        {
+            state = "aborted";
+            passed = Some(false);
+        }
+        if state == "finished"
+            && summary.as_ref().is_none_or(|summary| {
+                summary.thresholds.is_empty()
+                    || summary
+                        .thresholds
+                        .iter()
+                        .any(|threshold| threshold.observed.is_none())
+            })
+        {
+            passed = None;
+        }
         vec![loadr_plugin_webui::RunInfo {
             run_id: self.handle.run_id.to_string(),
             name: Some(self.name.clone()),
@@ -584,11 +602,16 @@ impl loadr_plugin_webui::UiBackend for SingleRunBackend {
             passed,
             started_ms: self.started_ms,
             ended_ms: summary.as_ref().map(|s| s.ended_ms),
+            observed_ms: loadr_core::metrics::now_millis(),
             scenarios: summary
                 .as_ref()
                 .map(|s| s.scenarios.clone())
                 .unwrap_or_default(),
             agents: Vec::new(),
+            contributing_agents: Vec::new(),
+            lost_agents: Vec::new(),
+            complete: None,
+            on_agent_loss: None,
         }]
     }
 
@@ -663,5 +686,15 @@ impl loadr_plugin_webui::UiBackend for SingleRunBackend {
 
     fn recent_logs(&self) -> Vec<loadr_plugin_webui::LogLine> {
         Vec::new()
+    }
+
+    fn capabilities(&self) -> loadr_plugin_webui::UiCapabilities {
+        loadr_plugin_webui::UiCapabilities {
+            mode: "single_run".to_string(),
+            can_start_runs: false,
+            can_edit_tests: false,
+            logs_available: false,
+            persistent_history: false,
+        }
     }
 }

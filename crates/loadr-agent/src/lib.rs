@@ -25,14 +25,14 @@ pub const FILE_DESCRIPTOR_SET: &[u8] =
 
 /// Coordination protocol version. Registration with a different version is
 /// rejected by the controller.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 pub use agent::{
     Agent, AgentConfig, AgentTls, DataSourceFactory, ProtocolFactory, RunnerDeps, ScriptFactory,
 };
 pub use controller::{
     AgentInfo, Controller, ControllerConfig, ControllerHandle, ControllerTls, FleetMetric,
-    OnAgentLoss, RunMetricsView, RunSummaryInfo, SubmitOptions,
+    OnAgentLoss, RunMetricsView, RunOperationalInfo, RunSummaryInfo, SubmitOptions,
 };
 pub use error::AgentError;
 

@@ -164,7 +164,10 @@ impl TestServer {
             let (status, detail) = self.call("GET", &format!("/api/runs/{run_id}"), None).await;
             assert_eq!(status, http::StatusCode::OK, "run detail: {detail}");
             let state = detail["run"]["state"].as_str().unwrap_or("").to_string();
-            if state == "finished" || state == "failed" {
+            if matches!(
+                state.as_str(),
+                "finished" | "degraded" | "aborted" | "failed"
+            ) {
                 return detail;
             }
             assert!(
@@ -286,10 +289,10 @@ async fn run_lifecycle_and_summary() {
 
     let detail = server.wait_finished(&run_id, Duration::from_secs(15)).await;
     assert_eq!(detail["run"]["state"], "finished");
-    assert_eq!(detail["run"]["passed"], true);
+    assert!(detail["run"]["passed"].is_null());
     assert_eq!(detail["run"]["scenarios"][0], "hit");
 
-    // Run list shows it finished and passed.
+    // A run without thresholds is finished, not presented as a gated pass.
     let (status, runs) = server.call("GET", "/api/runs", None).await;
     assert_eq!(status, http::StatusCode::OK);
     let run = runs
@@ -298,7 +301,7 @@ async fn run_lifecycle_and_summary() {
         .expect("run in list")
         .clone();
     assert_eq!(run["state"], "finished");
-    assert_eq!(run["passed"], true);
+    assert!(run["passed"].is_null());
     assert_eq!(run["name"], "tiny");
     assert!(
         run["ended_ms"].as_u64().expect("ended_ms")
@@ -316,6 +319,11 @@ async fn run_lifecycle_and_summary() {
         .find(|m| m["metric"] == "http_reqs")
         .expect("http_reqs metric");
     assert_eq!(http_reqs["agg"]["sum"], 20.0);
+    let request_reqs = metrics
+        .iter()
+        .find(|m| m["metric"] == "request_reqs")
+        .expect("canonical request rollup");
+    assert_eq!(request_reqs["agg"]["sum"], 20.0);
 
     // Snapshot endpoint serves the last-known snapshot for finished runs.
     let (status, snapshot) = server
@@ -332,9 +340,14 @@ async fn run_lifecycle_and_summary() {
         failures.is_object(),
         "failures breakdown present: {overview}"
     );
-    assert!(failures["total"].is_number());
+    assert!(failures["event_total"].is_number());
+    assert!(failures["failed_requests"].is_number());
     assert!(failures["by_status"].is_array());
     assert!(failures["by_exception"].is_array());
+    assert_eq!(
+        overview["metrics"]["metric_contract"]["latency_quality"],
+        "exact"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -635,6 +648,12 @@ async fn stop_endpoint_ends_run_early() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn overview_shape() {
     let server = TestServer::start(AuthConfig::default(), None).await;
+
+    let (status, capabilities) = server.call("GET", "/api/capabilities", None).await;
+    assert_eq!(status, http::StatusCode::OK);
+    assert_eq!(capabilities["mode"], "standalone");
+    assert_eq!(capabilities["logs_available"], true);
+    assert_eq!(capabilities["persistent_history"], true);
 
     // Empty backend: nulls and zero counts.
     let (status, overview) = server.call("GET", "/api/overview", None).await;

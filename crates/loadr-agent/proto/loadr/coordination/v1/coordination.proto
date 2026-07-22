@@ -18,6 +18,7 @@ message AgentMessage {
     Heartbeat heartbeat = 2;
     MetricsBatch metrics = 3;
     RunEvent event = 4;
+    ControlAck control_ack = 5;
   }
 }
 
@@ -95,4 +96,15 @@ message Control {
   string action = 2;
   string scenario = 3;
   uint64 value = 4;
+  uint64 command_id = 5;
+}
+
+message ControlAck {
+  string run_id = 1;
+  uint64 command_id = 2;
+  string action = 3;
+  string scenario = 4;
+  uint64 value = 5;
+  bool applied = 6;
+  string detail = 7;
 }

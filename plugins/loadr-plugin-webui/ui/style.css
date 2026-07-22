@@ -310,10 +310,17 @@ canvas.chart-short {
   border-color: var(--accent);
 }
 .pill-pending,
-.pill-stopping {
+.pill-stopping,
+.pill-degraded,
+.pill-aborted {
   color: var(--warn);
   background: rgba(210, 153, 34, 0.12);
   border-color: var(--warn);
+}
+.pill-finished {
+  color: var(--muted);
+  background: var(--panel-2);
+  border-color: var(--border);
 }
 .pill-passed {
   color: var(--ok);

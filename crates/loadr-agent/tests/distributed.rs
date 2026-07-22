@@ -371,6 +371,45 @@ thresholds:
         assert_eq!(*sum, 40.0, "agent {instance} share of shared iterations");
     }
 
+    // The controller's Prometheus source view has trusted per-agent labels
+    // and a separate exact fleet aggregate.
+    let metrics_view = handle.run_metrics_view(&run_id).expect("metrics view");
+    let detailed_agents: HashSet<&str> = metrics_view
+        .detailed
+        .series
+        .iter()
+        .filter(|series| series.metric == "http_reqs")
+        .filter_map(|series| series.tags.get("loadr_agent").map(String::as_str))
+        .collect();
+    assert_eq!(detailed_agents, HashSet::from(["a1", "a2", "a3"]));
+    assert!(metrics_view
+        .detailed
+        .series
+        .iter()
+        .filter(|series| series.metric == "http_reqs")
+        .all(|series| series
+            .tags
+            .get("loadr_agent_id")
+            .is_some_and(|id| !id.is_empty())));
+    let fleet_reqs = metrics_view
+        .fleet
+        .iter()
+        .find(|metric| metric.metric == "http_reqs")
+        .expect("fleet requests");
+    assert_eq!(fleet_reqs.agg.sum, 120.0);
+    let fleet_duration = metrics_view
+        .fleet
+        .iter()
+        .find(|metric| metric.metric == "http_req_duration")
+        .expect("fleet duration");
+    assert_eq!(fleet_duration.agg.p95, duration.agg.p95);
+    let fleet_vus = metrics_view
+        .fleet
+        .iter()
+        .find(|metric| metric.metric == "vus")
+        .expect("fleet VUs");
+    assert_eq!(fleet_vus.agg.last, Some(0.0));
+
     // Centrally evaluated thresholds pass on the merged totals.
     let thresholds = handle.run_thresholds(&run_id);
     assert_eq!(thresholds.len(), 1);

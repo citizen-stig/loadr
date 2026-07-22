@@ -601,6 +601,9 @@ impl Engine {
         // Stop gauge reporter, close the bus (or shard loop), finish aggregation.
         gauge_task.1.cancel();
         let _ = gauge_task.0.await;
+        // Publish explicit terminal live-gauge values before closing the bus,
+        // so scrape-based outputs do not retain stale non-zero values.
+        bus.gauge(&self.builtins.vus, 0.0, &Arc::new(Tags::new()));
         bus.gauge(
             &requests_in_flight_metric,
             bus.requests_in_flight() as f64,

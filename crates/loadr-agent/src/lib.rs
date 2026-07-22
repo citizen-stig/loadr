@@ -31,8 +31,8 @@ pub use agent::{
     Agent, AgentConfig, AgentTls, DataSourceFactory, ProtocolFactory, RunnerDeps, ScriptFactory,
 };
 pub use controller::{
-    AgentInfo, Controller, ControllerConfig, ControllerHandle, ControllerTls, OnAgentLoss,
-    RunSummaryInfo, SubmitOptions,
+    AgentInfo, Controller, ControllerConfig, ControllerHandle, ControllerTls, FleetMetric,
+    OnAgentLoss, RunMetricsView, RunSummaryInfo, SubmitOptions,
 };
 pub use error::AgentError;
 

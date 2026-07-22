@@ -2489,8 +2489,8 @@ mod request_metrics_tests {
                 grpc: Some(GrpcRequest {
                     service: "checkout.Payment".to_string(),
                     method: "Charge".to_string(),
-                    message: Some(serde_json::json!({"id": 1})),
-                    messages: vec![serde_json::json!({"id": 2})],
+                    message: Some(Arc::new(serde_json::json!({"id": 1}))),
+                    messages: Arc::new(vec![serde_json::json!({"id": 2})]),
                     metadata: vec![("trace-id".to_string(), "abc".to_string())],
                     ..Default::default()
                 }),

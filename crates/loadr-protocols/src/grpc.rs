@@ -476,6 +476,11 @@ impl ProtocolHandler for GrpcHandler {
 
         // Build outbound messages: pre-encoded bytes for literal messages
         // (cached by the message Arc's identity), dynamic otherwise.
+        let raw: Vec<&serde_json::Value> = if !grpc.messages.is_empty() {
+            grpc.messages.iter().collect()
+        } else {
+            grpc.message.iter().map(|m| m.as_ref()).collect()
+        };
         let literal_key = if grpc.message_literal {
             if !grpc.messages.is_empty() {
                 Some(Arc::as_ptr(&grpc.messages) as usize)
@@ -488,11 +493,6 @@ impl ProtocolHandler for GrpcHandler {
         let (outbound, bytes_sent) = match literal_key {
             Some(key) => {
                 if !cached.encoded.contains_key(&key) {
-                    let raw: Vec<&serde_json::Value> = if !grpc.messages.is_empty() {
-                        grpc.messages.iter().collect()
-                    } else {
-                        grpc.message.iter().map(|m| m.as_ref()).collect()
-                    };
                     let mut frames = Vec::with_capacity(raw.len());
                     let mut total: u64 = 0;
                     for json in raw {
@@ -525,11 +525,6 @@ impl ProtocolHandler for GrpcHandler {
                 (outbound, enc.bytes_sent)
             }
             None => {
-                let raw: Vec<&serde_json::Value> = if !grpc.messages.is_empty() {
-                    grpc.messages.iter().collect()
-                } else {
-                    grpc.message.iter().map(|m| m.as_ref()).collect()
-                };
                 let mut messages = Vec::with_capacity(raw.len().max(1));
                 if raw.is_empty() {
                     messages.push(DynamicMessage::new(cached.input_desc.clone()));

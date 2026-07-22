@@ -1330,6 +1330,7 @@ mod metrics_tests {
             paused: Mutex::new(Some(false)),
             pending_controls: Mutex::new(HashMap::new()),
             summaries: Mutex::new(Vec::new()),
+            merged_summary: Mutex::new(None),
             threshold_statuses: Mutex::new(Vec::new()),
             abort_reason: Mutex::new(None),
             snapshot_tx,

@@ -73,7 +73,7 @@ fn req(url: &str, protocol: &str) -> PreparedRequest {
     PreparedRequest {
         name: url.to_string(),
         protocol: protocol.to_string(),
-        method: "GET".to_string(),
+        method: "GET".into(),
         url: url.to_string(),
         headers: Vec::new(),
         body: Bytes::new(),
@@ -490,9 +490,9 @@ async fn grpc_protobuf_field_uses_implicit_default_without_json() {
     let request = grpc_request(
         &format!("grpc://{}", server.addr),
         GrpcRequest {
-            proto_files: vec![proto_path],
-            service: "loadr.test.Echo".to_string(),
-            method: "UnaryEcho".to_string(),
+            proto_files: vec![proto_path].into(),
+            service: "loadr.test.Echo".into(),
+            method: "UnaryEcho".into(),
             message: Some(Arc::new(serde_json::json!({"message": "default"}))),
             protobuf_only_response: true,
             protobuf_checks: Some(Arc::new(vec![protobuf_check(
@@ -531,9 +531,9 @@ async fn grpc_protobuf_field_reports_semantic_rejection_codes() {
             let request = grpc_request(
                 &format!("grpc://{}", server.addr),
                 GrpcRequest {
-                    proto_files: vec![proto_path.clone()],
-                    service: "loadr.test.Echo".to_string(),
-                    method: "UnaryEcho".to_string(),
+                    proto_files: vec![proto_path.clone()].into(),
+                    service: "loadr.test.Echo".into(),
+                    method: "UnaryEcho".into(),
                     message: Some(Arc::new(serde_json::json!({"responseCode": code}))),
                     transport,
                     protobuf_only_response: true,
@@ -567,9 +567,9 @@ async fn grpc_protobuf_presence_distinguishes_optional_and_implicit_fields() {
     let request = grpc_request(
         &format!("grpc://{}", server.addr),
         GrpcRequest {
-            proto_files: vec![proto_path.clone()],
-            service: "loadr.test.Echo".to_string(),
-            method: "UnaryEcho".to_string(),
+            proto_files: vec![proto_path.clone()].into(),
+            service: "loadr.test.Echo".into(),
+            method: "UnaryEcho".into(),
             message: Some(Arc::new(serde_json::json!({}))),
             protobuf_only_response: true,
             protobuf_checks: Some(Arc::new(vec![
@@ -588,9 +588,9 @@ async fn grpc_protobuf_presence_distinguishes_optional_and_implicit_fields() {
     let request = grpc_request(
         &format!("grpc://{}", server.addr),
         GrpcRequest {
-            proto_files: vec![proto_path],
-            service: "loadr.test.Echo".to_string(),
-            method: "UnaryEcho".to_string(),
+            proto_files: vec![proto_path].into(),
+            service: "loadr.test.Echo".into(),
+            method: "UnaryEcho".into(),
             message: Some(Arc::new(serde_json::json!({
                 "responseCode": 18,
                 "ownerHint": 7
@@ -620,9 +620,9 @@ async fn grpc_protobuf_field_transport_failure_has_no_message_outcome() {
     let request = grpc_request(
         &format!("grpc://{}", server.addr),
         GrpcRequest {
-            proto_files: vec![proto_path],
-            service: "loadr.test.Echo".to_string(),
-            method: "UnaryEcho".to_string(),
+            proto_files: vec![proto_path].into(),
+            service: "loadr.test.Echo".into(),
+            method: "UnaryEcho".into(),
             message: Some(Arc::new(serde_json::json!({"failTransport": true}))),
             protobuf_only_response: true,
             protobuf_checks: Some(Arc::new(vec![protobuf_check(
@@ -690,9 +690,9 @@ async fn grpc_unary_literal_message_cache() {
         let request = grpc_request(
             &format!("grpc://{}", server.addr),
             GrpcRequest {
-                proto_files: vec![proto_path.clone()],
-                service: "loadr.test.Echo".to_string(),
-                method: "UnaryEcho".to_string(),
+                proto_files: vec![proto_path.clone()].into(),
+                service: "loadr.test.Echo".into(),
+                method: "UnaryEcho".into(),
                 message: Some(Arc::new(serde_json::json!({"message": "cached"}))),
                 message_literal: true,
                 transport,
@@ -881,9 +881,9 @@ async fn grpc_unary_discard_skips_body() {
     let mut vu = vu();
 
     let base = GrpcRequest {
-        proto_files: vec![proto_path],
-        service: "loadr.test.Echo".to_string(),
-        method: "UnaryEcho".to_string(),
+        proto_files: vec![proto_path].into(),
+        service: "loadr.test.Echo".into(),
+        method: "UnaryEcho".into(),
         message: Some(Arc::new(serde_json::json!({"message": "discard-me"}))),
         ..Default::default()
     };
@@ -943,9 +943,9 @@ async fn grpc_server_streaming_discard_counts_all_frames() {
     let mut vu = vu();
 
     let base = GrpcRequest {
-        proto_files: vec![proto_path],
-        service: "loadr.test.Echo".to_string(),
-        method: "ServerStreamEcho".to_string(),
+        proto_files: vec![proto_path].into(),
+        service: "loadr.test.Echo".into(),
+        method: "ServerStreamEcho".into(),
         message: Some(Arc::new(
             serde_json::json!({"message": "stream", "repeat": 3}),
         )),
@@ -1028,9 +1028,9 @@ async fn run_grpc_shape(
     let request = grpc_request(
         &format!("grpc://{}", server.addr),
         GrpcRequest {
-            proto_files: vec![proto_path],
-            service: "loadr.test.Echo".to_string(),
-            method: method.to_string(),
+            proto_files: vec![proto_path].into(),
+            service: "loadr.test.Echo".into(),
+            method: method.into(),
             message: message.map(Arc::new),
             messages: Arc::new(messages),
             transport,
@@ -1143,8 +1143,8 @@ async fn grpc_raw_via_reflection() {
         &format!("grpc://{}", server.addr),
         GrpcRequest {
             reflection: true,
-            service: "loadr.test.Echo".to_string(),
-            method: "UnaryEcho".to_string(),
+            service: "loadr.test.Echo".into(),
+            method: "UnaryEcho".into(),
             message: Some(Arc::new(serde_json::json!({"message": "raw reflected"}))),
             transport: GrpcTransport::Raw,
             ..Default::default()
@@ -1173,9 +1173,9 @@ async fn grpc_raw_unary_pooled_channels() {
     let request = grpc_request(
         &format!("grpc://{}", server.addr),
         GrpcRequest {
-            proto_files: vec![proto_path],
-            service: "loadr.test.Echo".to_string(),
-            method: "UnaryEcho".to_string(),
+            proto_files: vec![proto_path].into(),
+            service: "loadr.test.Echo".into(),
+            method: "UnaryEcho".into(),
             message: Some(Arc::new(serde_json::json!({"message": "raw pooled"}))),
             channel_pool_size: Some(2),
             transport: GrpcTransport::Raw,
@@ -1210,9 +1210,9 @@ async fn grpc_raw_reconnects_after_server_restart() {
     let request = grpc_request(
         &format!("grpc://{addr}"),
         GrpcRequest {
-            proto_files: vec![proto_path],
-            service: "loadr.test.Echo".to_string(),
-            method: "UnaryEcho".to_string(),
+            proto_files: vec![proto_path].into(),
+            service: "loadr.test.Echo".into(),
+            method: "UnaryEcho".into(),
             message: Some(Arc::new(serde_json::json!({"message": "before restart"}))),
             transport: GrpcTransport::Raw,
             ..Default::default()
@@ -1295,9 +1295,9 @@ async fn grpc_raw_tls_insecure_skip_verify() {
     let request = grpc_request(
         &format!("grpcs://{}", server.addr),
         GrpcRequest {
-            proto_files: vec![proto_path],
-            service: "loadr.test.Echo".to_string(),
-            method: "UnaryEcho".to_string(),
+            proto_files: vec![proto_path].into(),
+            service: "loadr.test.Echo".into(),
+            method: "UnaryEcho".into(),
             message: Some(Arc::new(serde_json::json!({"message": "over tls"}))),
             transport: GrpcTransport::Raw,
             ..Default::default()
@@ -1331,9 +1331,9 @@ async fn grpc_raw_tls_with_ca_file() {
     let request = grpc_request(
         &format!("grpcs://{}", server.addr),
         GrpcRequest {
-            proto_files: vec![proto_path],
-            service: "loadr.test.Echo".to_string(),
-            method: "UnaryEcho".to_string(),
+            proto_files: vec![proto_path].into(),
+            service: "loadr.test.Echo".into(),
+            method: "UnaryEcho".into(),
             message: Some(Arc::new(serde_json::json!({"message": "verified tls"}))),
             transport: GrpcTransport::Raw,
             ..Default::default()
@@ -1360,9 +1360,9 @@ async fn grpc_rendered_unary_bytes_sent_and_payload_roundtrip() {
     let request = grpc_request(
         &format!("grpc://{}", server.addr),
         GrpcRequest {
-            proto_files: vec![proto_path],
-            service: "loadr.test.Echo".to_string(),
-            method: "UnaryEcho".to_string(),
+            proto_files: vec![proto_path].into(),
+            service: "loadr.test.Echo".into(),
+            method: "UnaryEcho".into(),
             message: Some(Arc::new(serde_json::json!({
                 "message": "parity",
                 "payload": payload_b64.as_str(),
@@ -1403,9 +1403,9 @@ async fn grpc_rendered_client_streaming_bytes_sent_parity() {
     let request = grpc_request(
         &format!("grpc://{}", server.addr),
         GrpcRequest {
-            proto_files: vec![proto_path.clone()],
-            service: "loadr.test.Echo".to_string(),
-            method: "ClientStreamEcho".to_string(),
+            proto_files: vec![proto_path.clone()].into(),
+            service: "loadr.test.Echo".into(),
+            method: "ClientStreamEcho".into(),
             messages: Arc::new(vec![
                 serde_json::json!({"message": "one"}),
                 serde_json::json!({"message": "two", "payload": big_b64.as_str()}),
@@ -1438,9 +1438,9 @@ async fn grpc_rendered_client_streaming_bytes_sent_parity() {
     let empty = grpc_request(
         &format!("grpc://{}", server.addr),
         GrpcRequest {
-            proto_files: vec![proto_path],
-            service: "loadr.test.Echo".to_string(),
-            method: "UnaryEcho".to_string(),
+            proto_files: vec![proto_path].into(),
+            service: "loadr.test.Echo".into(),
+            method: "UnaryEcho".into(),
             ..Default::default()
         },
     );
@@ -1465,9 +1465,9 @@ async fn grpc_rendered_message_schema_mismatch_error() {
     let request = grpc_request(
         &format!("grpc://{}", server.addr),
         GrpcRequest {
-            proto_files: vec![proto_path],
-            service: "loadr.test.Echo".to_string(),
-            method: "UnaryEcho".to_string(),
+            proto_files: vec![proto_path].into(),
+            service: "loadr.test.Echo".into(),
+            method: "UnaryEcho".into(),
             message: Some(Arc::new(serde_json::json!({"message": 42}))),
             ..Default::default()
         },
@@ -1493,8 +1493,8 @@ async fn grpc_protobuf_field_via_reflection() {
         &format!("grpc://{}", server.addr),
         GrpcRequest {
             reflection: true,
-            service: "loadr.test.Echo".to_string(),
-            method: "UnaryEcho".to_string(),
+            service: "loadr.test.Echo".into(),
+            method: "UnaryEcho".into(),
             message: Some(Arc::new(serde_json::json!({"responseCode": 20}))),
             protobuf_only_response: true,
             protobuf_checks: Some(Arc::new(vec![protobuf_check(
@@ -1523,9 +1523,9 @@ async fn grpc_protobuf_streaming_checks_last_response_message() {
     let request = grpc_request(
         &format!("grpc://{}", server.addr),
         GrpcRequest {
-            proto_files: vec![proto_path],
-            service: "loadr.test.Echo".to_string(),
-            method: "BidiEcho".to_string(),
+            proto_files: vec![proto_path].into(),
+            service: "loadr.test.Echo".into(),
+            method: "BidiEcho".into(),
             messages: Arc::new(vec![
                 serde_json::json!({"message": "first", "responseCode": 18}),
                 serde_json::json!({"message": "last", "responseCode": 20}),

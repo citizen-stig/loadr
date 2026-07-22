@@ -1404,13 +1404,21 @@ mod tests {
             ..GrpcRequest::default()
         };
         assert!(!Arc::ptr_eq(&request.service, &equivalent.service));
-        assert!(identity.matches("grpc://127.0.0.1:50051", &equivalent));
+        assert!(identity.matches(
+            "grpc://127.0.0.1:50051",
+            &equivalent,
+            GrpcTransport::Channel
+        ));
 
         let different_method = GrpcRequest {
             method: "OtherMethod".into(),
             ..equivalent
         };
-        assert!(!identity.matches("grpc://127.0.0.1:50051", &different_method));
+        assert!(!identity.matches(
+            "grpc://127.0.0.1:50051",
+            &different_method,
+            GrpcTransport::Channel
+        ));
 
         let different_pool = GrpcRequest {
             channel_pool_size: Some(4),

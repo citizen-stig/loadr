@@ -616,7 +616,7 @@ impl Engine {
         let _ = gauge_task.0.await;
         // Publish explicit terminal live-gauge values before closing the bus,
         // so scrape-based outputs do not retain stale non-zero values.
-        bus.gauge(&self.builtins.vus, 0.0, &Arc::new(Tags::new()));
+        bus.gauge(&self.builtins.vus, 0.0, &self.gauge_tags);
         bus.gauge(
             &requests_in_flight_metric,
             bus.requests_in_flight() as f64,

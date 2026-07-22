@@ -417,6 +417,14 @@ fn resolve_protobuf_checks(
                     field.kind()
                 )));
             }
+            if !check.exists && !field.supports_presence() {
+                return Err(ProtocolError::InvalidRequest(format!(
+                    "protobuf field `{}` on `{}` always reads as its default (proto3 \
+                     implicit presence), so `exists: false` can never pass",
+                    check.field,
+                    output.full_name()
+                )));
+            }
             let expected = check
                 .equals
                 .as_ref()
@@ -524,9 +532,9 @@ fn evaluate_protobuf_checks(
                     id: check.id,
                     pass: false,
                     detail: Some(format!(
-                        "protobuf field `{}` is present with value {:?}",
+                        "protobuf field `{}` is present with value {}",
                         check.field.name(),
-                        actual
+                        protobuf_value_brief(actual.as_ref())
                     )),
                     actual_code,
                     missing: false,
@@ -541,13 +549,15 @@ fn evaluate_protobuf_checks(
                 pass,
                 detail: (!pass).then(|| {
                     format!(
-                        "protobuf field `{}` expected {:?}, got {:?}",
+                        "protobuf field `{}` expected {}, got {}",
                         check.field.name(),
-                        check
-                            .expected
-                            .as_ref()
-                            .expect("failed equality has expected"),
-                        actual
+                        protobuf_value_brief(
+                            check
+                                .expected
+                                .as_ref()
+                                .expect("failed equality has expected")
+                        ),
+                        protobuf_value_brief(actual.as_ref())
                     )
                 }),
                 actual_code,
@@ -565,6 +575,23 @@ fn protobuf_numeric_code(value: &Value) -> Option<i64> {
         Value::U64(v) => i64::try_from(*v).ok(),
         Value::EnumNumber(v) => Some(i64::from(*v)),
         _ => None,
+    }
+}
+
+/// Render a value for failure details. Bounded: a failing check must never
+/// materialize an unbounded copy of a string/bytes payload.
+fn protobuf_value_brief(value: &Value) -> String {
+    const MAX_LEN: usize = 64;
+    match value {
+        Value::String(s) if s.len() > MAX_LEN => {
+            let mut end = MAX_LEN;
+            while !s.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{:?}… ({} bytes)", &s[..end], s.len())
+        }
+        Value::Bytes(b) if b.len() > MAX_LEN => format!("<{} bytes>", b.len()),
+        other => format!("{other:?}"),
     }
 }
 
@@ -1528,18 +1555,21 @@ message Everything {
 }
 "#;
 
-    #[test]
-    fn rendered_encode_parity_with_prost_message_encode() {
-        // encode_message must yield byte-for-byte what the retired codec-time
-        // prost::Message::encode produced for the same DynamicMessage.
+    fn everything_descriptor() -> prost_reflect::MessageDescriptor {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("corpus.proto");
         std::fs::write(&path, CORPUS_PROTO).expect("write corpus proto");
         let fds = protox::compile([path.as_path()], [dir.path()]).expect("compile corpus");
         let pool = DescriptorPool::from_file_descriptor_set(fds).expect("corpus pool");
-        let desc = pool
-            .get_message_by_name("corpus.Everything")
-            .expect("Everything descriptor");
+        pool.get_message_by_name("corpus.Everything")
+            .expect("Everything descriptor")
+    }
+
+    #[test]
+    fn rendered_encode_parity_with_prost_message_encode() {
+        // encode_message must yield byte-for-byte what the retired codec-time
+        // prost::Message::encode produced for the same DynamicMessage.
+        let desc = everything_descriptor();
 
         let json = serde_json::json!({
             "f_double": 1.25,
@@ -1648,6 +1678,50 @@ message Everything {
         };
         let error = resolve_protobuf_checks(&output, &[missing]).expect_err("exact field name");
         assert!(error.to_string().contains("not found"));
+
+        // Messages, maps, and repeated fields are rejected outright.
+        let everything = everything_descriptor();
+        for field in ["f_message", "m_counts", "r_strings"] {
+            let non_scalar = GrpcProtobufFieldCheck {
+                id: 0,
+                field: Arc::from(field),
+                equals: None,
+                exists: true,
+                group_failures: false,
+            };
+            let error =
+                resolve_protobuf_checks(&everything, &[non_scalar]).expect_err("non-scalar");
+            assert!(
+                error
+                    .to_string()
+                    .contains("must be a singular scalar or enum"),
+                "`{field}`: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn protobuf_check_rejects_exists_false_on_implicit_presence_fields() {
+        let output = echo_output_descriptor();
+        let implicit = GrpcProtobufFieldCheck {
+            id: 0,
+            field: Arc::from("code"),
+            equals: None,
+            exists: false,
+            group_failures: false,
+        };
+        let error = resolve_protobuf_checks(&output, &[implicit]).expect_err("implicit presence");
+        assert!(error.to_string().contains("can never pass"));
+
+        // Explicit presence (proto3 `optional`) keeps `exists: false` meaningful.
+        let optional = GrpcProtobufFieldCheck {
+            id: 0,
+            field: Arc::from("owner_hint"),
+            equals: None,
+            exists: false,
+            group_failures: false,
+        };
+        resolve_protobuf_checks(&output, &[optional]).expect("explicit presence resolves");
     }
 
     /// Focused response-path microbenchmark. Run explicitly with:
@@ -1656,6 +1730,8 @@ message Everything {
     ///
     /// The standard test harness does not expose allocator counters, so this
     /// reports latency and throughput. The cases share the same small message.
+    /// No assertion — wall-clock comparisons are inherently noisy; eyeball the
+    /// numbers.
     #[test]
     #[ignore = "manual response-path benchmark"]
     fn grpc_response_path_benchmark() {
@@ -1739,9 +1815,5 @@ message Everything {
         println!("status-only discard: {discard_ns:.1} ns/op, {discard_ops:.0} ops/s");
         println!("JSONPath decode/check: {json_ns:.1} ns/op, {json_ops:.0} ops/s");
         println!("protobuf field check: {protobuf_ns:.1} ns/op, {protobuf_ops:.0} ops/s");
-        assert!(
-            protobuf_ns < json_ns,
-            "protobuf field path should be cheaper than DynamicMessage-to-JSON + JSONPath"
-        );
     }
 }

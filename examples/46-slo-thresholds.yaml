@@ -4,7 +4,7 @@
 #
 # Supported objectives match the fixed points the histogram summary carries:
 # 50, 90, 95, 99, 99.9 (the % sign is optional). Bounds accept duration units
-# (300ms, 1.5s) or plain milliseconds, and the classic k6 syntax mixes in
+# (300ms, 1.5s) or plain milliseconds, and the classic `p(95)<500` syntax mixes in
 # freely.
 #
 #   loadr run examples/46-slo-thresholds.yaml
@@ -41,7 +41,7 @@ thresholds:
   http_req_duration:
     - "slo(99%) < 300ms"
     - "slo(99.9%) < 1s"
-  # A stricter per-endpoint SLO via a tag selector, mixed with k6 syntax.
+  # A stricter per-endpoint SLO via a tag selector, mixed with expression syntax.
   "http_req_duration{name:checkout}":
     - "slo(95%) < 250ms"
     - "p(50)<150"

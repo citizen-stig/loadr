@@ -8,9 +8,16 @@
 <title>loadr — the load testing platform. k6, JMeter, Gatling & Locust ideas in one Rust binary.</title>
 <meta name="description" content="loadr is a modern load testing platform: declarative YAML tests, embedded JavaScript, HTTP/2, WebSocket, gRPC, GraphQL, TCP & UDP, WASM plugins, distributed agents with exact percentiles, and a built-in live web UI. One binary.">
 <meta property="og:title" content="loadr — the load testing platform">
-<meta property="og:description" content="A k6-style developer experience with JMeter-grade depth, in one Rust binary: declarative YAML, embedded JavaScript, exact percentiles, distributed by design.">
+<meta property="og:description" content="Developer-first load testing with JMeter-grade depth, in one Rust binary: declarative YAML, embedded JavaScript, exact percentiles, distributed by design.">
 <meta property="og:url" content="https://loadr.io/">
 <meta property="og:type" content="website">
+<meta property="og:image" content="https://loadr.io/assets/mascot/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="loadr — find the breaking point.">
+<meta name="twitter:description" content="Developer-first load testing with JMeter-grade depth, in one Rust binary.">
+<meta name="twitter:image" content="https://loadr.io/assets/mascot/og.png">
 <link rel="icon" type="image/png" sizes="64x64" href="/assets/favicon-64.png">
 <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 <link rel="alternate icon" href="/assets/favicon.ico">
@@ -53,8 +60,12 @@
         </div>
       </div>
 
-      <!-- Real run output -->
-      <div class="term p-0 min-w-0">
+      <!-- Mascot + real run output -->
+      <div class="min-w-0">
+      <img src="/assets/mascot/hero.png" width="900" height="1350"
+           alt="loadr — the performance-testing android presenting live telemetry"
+           class="mx-auto -mb-4 w-56 sm:w-64 lg:w-72 drop-shadow-[0_24px_48px_rgba(220,38,38,0.22)]" />
+      <div class="term p-0">
         <div class="flex items-center gap-2 border-b border-edge px-4 py-3">
           <span class="h-3 w-3 rounded-full bg-ember/80"></span>
           <span class="h-3 w-3 rounded-full bg-edge-bright"></span>
@@ -78,6 +89,7 @@
     ✓ http_req_duration: p(95)&lt;500 (observed: 10.73)
     ✓ checks: rate&gt;0.95 (observed: 1.00)
     ✓ http_req_failed: rate&lt;0.01 (observed: 0.00)</code></pre>
+      </div>
       </div>
     </div>
 
@@ -134,18 +146,31 @@
         <p class="mt-3 text-xs text-smoke">Free · SHA-256 checksums · SLSA build provenance on every download</p>
       </div>
 
-      <!-- Screenshot (clickable → download) -->
-      <a href="/download/#desktop" class="term block overflow-hidden p-0 transition hover:border-ember/50" aria-label="Download loadr Desktop">
+      <!-- Screenshot slideshow -->
+      <div class="term overflow-hidden p-0" data-desk-show>
         <div class="flex items-center gap-2 border-b border-edge px-4 py-3">
           <span class="h-3 w-3 rounded-full bg-ember/80"></span>
           <span class="h-3 w-3 rounded-full bg-edge-bright"></span>
           <span class="h-3 w-3 rounded-full bg-edge-bright"></span>
           <span class="ml-3 font-mono text-xs text-smoke">loadr Desktop</span>
+          <span class="ml-auto font-mono text-xs text-flare" data-desk-caption>Canvas editor</span>
         </div>
-        <img src="/assets/desktop-app.png" width="1270" height="760" loading="lazy"
-             alt="loadr Desktop live run cockpit — requests per second, p95 latency, error rate and a throughput chart"
-             class="w-full" />
-      </a>
+        <div class="group relative aspect-[1280/831] w-full bg-ink" aria-roledescription="carousel" aria-label="loadr Desktop screenshots">
+          <img data-desk-slide data-caption="Visual canvas editor — compose any plan as a node graph" src="/assets/desktop/03-canvas.png" width="1280" height="831" alt="loadr Desktop — visual canvas plan editor with a node graph and a per-component form inspector" class="absolute inset-0 h-full w-full object-cover object-top opacity-100 transition-opacity duration-500 ease-out" />
+          <img data-desk-slide data-caption="Forms-first editor with a live outline" src="/assets/desktop/01-form.png" width="1280" height="831" alt="loadr Desktop — forms-first plan editor with an outline rail" class="absolute inset-0 h-full w-full object-cover object-top opacity-0 transition-opacity duration-500 ease-out" />
+          <img data-desk-slide data-caption="Live Monaco YAML — never required" src="/assets/desktop/02-yaml.png" width="1280" height="831" alt="loadr Desktop — Monaco YAML editor view" class="absolute inset-0 h-full w-full object-cover object-top opacity-0 transition-opacity duration-500 ease-out" />
+          <img data-desk-slide data-caption="Live run cockpit — req/s, p95, errors" src="/assets/desktop/04-run.png" width="1280" height="831" alt="loadr Desktop — live run cockpit with requests per second, p95 latency, failures and a throughput chart" class="absolute inset-0 h-full w-full object-cover object-top opacity-0 transition-opacity duration-500 ease-out" />
+          <img data-desk-slide data-caption="Payload Lab — adversarial payloads &amp; complexity probe" src="/assets/desktop/05-payload-lab.png" width="1280" height="831" alt="loadr Desktop — Payload Lab with the adversarial payload catalog and complexity probe" class="absolute inset-0 h-full w-full object-cover object-top opacity-0 transition-opacity duration-500 ease-out" />
+
+          <button type="button" data-desk-prev aria-label="Previous screenshot" class="absolute left-2 top-1/2 z-10 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full border border-edge bg-coal/85 text-smoke opacity-0 backdrop-blur transition hover:border-ember/60 hover:text-white focus:opacity-100 group-hover:opacity-100">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+          </button>
+          <button type="button" data-desk-next aria-label="Next screenshot" class="absolute right-2 top-1/2 z-10 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full border border-edge bg-coal/85 text-smoke opacity-0 backdrop-blur transition hover:border-ember/60 hover:text-white focus:opacity-100 group-hover:opacity-100">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>
+          </button>
+          <div class="absolute inset-x-0 bottom-3 z-10 flex items-center justify-center gap-2" data-desk-dots></div>
+        </div>
+      </div>
     </div>
   </div>
 </section>
@@ -243,6 +268,47 @@
   </div>
 </section>
 
+<!-- ======================================================= FLAGSHIP FAMILIES -->
+<section class="border-t border-edge/60 py-24">
+  <div class="mx-auto max-w-7xl px-5">
+    <p class="kicker">Built in, not bolted on</p>
+    <h2 class="mt-3 max-w-3xl text-3xl font-extrabold tracking-tight text-white sm:text-4xl">Commands the other tools don't have.</h2>
+    <p class="mt-4 max-w-2xl text-smoke">Recording, generation, analysis and adversarial testing — one binary, one specialist doing all of it.</p>
+    <div class="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+      <a href="/docs/guides/record.html" class="fcard group flex gap-4 rounded-2xl border border-edge bg-panel p-6">
+        <img src="/assets/mascot/feature-session-recorder.png" width="380" height="380" alt="" class="h-24 w-24 shrink-0 object-contain" loading="lazy" />
+        <div class="min-w-0"><h3 class="font-bold text-white group-hover:text-flare">Session recorder</h3>
+        <p class="mt-1.5 text-sm text-smoke"><code class="text-flare">loadr record</code> — a capturing HTTP(S) proxy that emits a ready-to-run scenario with tokens and ids auto-correlated.</p></div>
+      </a>
+      <a href="/docs/guides/gen.html" class="fcard group flex gap-4 rounded-2xl border border-edge bg-panel p-6">
+        <img src="/assets/mascot/feature-gen.png" width="380" height="380" alt="" class="h-24 w-24 shrink-0 object-contain" loading="lazy" />
+        <div class="min-w-0"><h3 class="font-bold text-white group-hover:text-flare">Generate from a contract</h3>
+        <p class="mt-1.5 text-sm text-smoke"><code class="text-flare">loadr gen</code> turns OpenAPI, Postman, GraphQL or gRPC into a runnable plan — <code>--fuzz</code> adds adversarial variants.</p></div>
+      </a>
+      <a href="/docs/guides/explain.html" class="fcard group flex gap-4 rounded-2xl border border-edge bg-panel p-6">
+        <img src="/assets/mascot/feature-ai-copilot.png" width="380" height="380" alt="" class="h-24 w-24 shrink-0 object-contain" loading="lazy" />
+        <div class="min-w-0"><h3 class="font-bold text-white group-hover:text-flare">AI copilot</h3>
+        <p class="mt-1.5 text-sm text-smoke"><code class="text-flare">loadr scenario</code> writes a validated plan from a sentence; <code>loadr explain</code> reads a run back in plain language.</p></div>
+      </a>
+      <a href="/docs/guides/history.html" class="fcard group flex gap-4 rounded-2xl border border-edge bg-panel p-6">
+        <img src="/assets/mascot/feature-results-intelligence.png" width="380" height="380" alt="" class="h-24 w-24 shrink-0 object-contain" loading="lazy" />
+        <div class="min-w-0"><h3 class="font-bold text-white group-hover:text-flare">Regression intelligence</h3>
+        <p class="mt-1.5 text-sm text-smoke"><code class="text-flare">loadr history</code> flags statistical regressions with a robust median/MAD z-score — one noisy CI run can't false-alarm.</p></div>
+      </a>
+      <a href="/docs/guides/payload.html" class="fcard group flex gap-4 rounded-2xl border border-edge bg-panel p-6">
+        <img src="/assets/mascot/feature-payload-lab.png" width="380" height="380" alt="" class="h-24 w-24 shrink-0 object-contain" loading="lazy" />
+        <div class="min-w-0"><h3 class="font-bold text-white group-hover:text-flare">Payload Lab</h3>
+        <p class="mt-1.5 text-sm text-smoke"><code class="text-flare">loadr payload</code> + <code>sweep --complexity</code> generates adversarial input and fits the exponent — a DoS finder in one command.</p></div>
+      </a>
+      <a href="#desktop-app" class="fcard group flex items-center gap-4 rounded-2xl border border-ember/30 bg-blood/5 p-6">
+        <img src="/assets/mascot/desktop-app.png" width="620" height="413" alt="" class="h-24 w-24 shrink-0 object-contain" loading="lazy" />
+        <div class="min-w-0"><h3 class="font-bold text-white group-hover:text-flare">…and a desktop app</h3>
+        <p class="mt-1.5 text-sm text-smoke">A native GUI over the same engine — compose visually, run locally, watch percentiles live. <span class="text-flare">See it →</span></p></div>
+      </a>
+    </div>
+  </div>
+</section>
+
 <!-- ======================================================= FEATURES (exhaustive) -->
 <section id="features" class="border-t border-edge/60 bg-coal/50 py-24">
   <div class="mx-auto max-w-7xl px-5">
@@ -262,7 +328,7 @@
       </a>
       <a href="/docs/yaml/thresholds.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">Thresholds as CI gates</h3>
-        <p class="mt-2 text-sm text-smoke"><code>p(95)&lt;400</code>, <code>rate&gt;0.99</code>, any percentile, tag-filtered selectors, <code>abort_on_fail</code> circuit breakers with warm-up delay. Exit code 99 on failure — k6-compatible.</p>
+        <p class="mt-2 text-sm text-smoke"><code>p(95)&lt;400</code>, <code>rate&gt;0.99</code>, any percentile, tag-filtered selectors, <code>abort_on_fail</code> circuit breakers with warm-up delay. Exit code 99 on failure.</p>
       </a>
       <a href="/docs/yaml/thresholds.html#slo-objectives" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">SLO error budgets</h3>
@@ -284,9 +350,25 @@
         <h3 class="font-bold text-white">Payloads &amp; complexity testing</h3>
         <p class="mt-2 text-sm text-smoke"><code>loadr payload</code> generates adversarial input — nested JSON/markdown, billion-laughs, ReDoS, hash-collision and more. Scale it with <code>sweep --complexity</code> and loadr fits the exponent: <code>O(n^1.6) ⚠</code> exits 99 when a parser scales super-linearly. A DoS finder in one command.</p>
       </a>
+      <a href="/docs/guides/record.html" class="fcard rounded-xl border border-edge bg-panel p-6">
+        <h3 class="font-bold text-white">Session recorder</h3>
+        <p class="mt-2 text-sm text-smoke"><code>loadr record</code> is a capturing HTTP(S) proxy — drive your app through it and it emits a ready-to-run scenario with tokens, CSRF and ids <strong class="text-ash">auto-correlated</strong>. HTTPS via an install-once local CA. No devtools HAR dance.</p>
+      </a>
+      <a href="/docs/guides/gen.html" class="fcard rounded-xl border border-edge bg-panel p-6">
+        <h3 class="font-bold text-white">Generate from a contract</h3>
+        <p class="mt-2 text-sm text-smoke"><code>loadr gen openapi|postman|graphql|grpc</code> turns an API contract into a runnable scenario — one request per operation, params and bodies from the schema. <code>--fuzz</code> adds spec-invalid &amp; adversarial variants gated on <em class="text-ash">never a 5xx</em>.</p>
+      </a>
+      <a href="/docs/guides/explain.html" class="fcard rounded-xl border border-edge bg-panel p-6">
+        <h3 class="font-bold text-white">AI copilot</h3>
+        <p class="mt-2 text-sm text-smoke"><code>loadr scenario "500 rps on /checkout for 10m"</code> generates a validated plan (Anthropic). And <code>loadr explain summary.json</code> gives a deterministic, no-model root-cause read — saturation vs a slow path vs healthy.</p>
+      </a>
+      <a href="/docs/guides/history.html" class="fcard rounded-xl border border-edge bg-panel p-6">
+        <h3 class="font-bold text-white">History &amp; regression detection</h3>
+        <p class="mt-2 text-sm text-smoke"><code>loadr history</code> records every run in a local SQLite store and flags <strong class="text-ash">statistical</strong> regressions — a robust median/MAD z-score against a window, so one noisy CI run can't false-alarm. Exit 99 gates the merge.</p>
+      </a>
       <a href="/docs/yaml/assertions-checks.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">Checks + JMeter assertions</h3>
-        <p class="mt-2 text-sm text-smoke">k6-style checks that never fail requests, and JMeter-style assertions that do: status, body contains/regex, JSONPath, XPath, duration, size, headers, JS expressions — with abort actions.</p>
+        <p class="mt-2 text-sm text-smoke">Non-blocking checks that never fail requests, plus hard assertions that do: status, body contains/regex, JSONPath, XPath, duration, size, headers, JS expressions — with abort actions.</p>
       </a>
       <a href="/docs/yaml/extraction.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">Correlation &amp; extraction</h3>
@@ -310,7 +392,7 @@
       </a>
       <a href="/docs/js/overview.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">Embedded JavaScript</h3>
-        <p class="mt-2 text-sm text-smoke">QuickJS per VU with k6-style imports (<code>k6/http</code>, <code>check</code>, <code>sleep</code>, metrics), <code>setup()</code>/<code>teardown()</code>, scenario functions, <code>beforeRequest</code>/<code>afterRequest</code> hooks, inline <code>${js: …}</code> — sandboxed with time &amp; memory limits.</p>
+        <p class="mt-2 text-sm text-smoke">QuickJS per VU with a native module API (<code>loadr/http</code>, <code>check</code>, <code>sleep</code>, metrics), <code>setup()</code>/<code>teardown()</code>, scenario functions, <code>beforeRequest</code>/<code>afterRequest</code> hooks, inline <code>${js: …}</code> — sandboxed with time &amp; memory limits.</p>
       </a>
       <a href="/docs/yaml/timers.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">Timers &amp; pacing</h3>
@@ -362,7 +444,7 @@
       </a>
       <a href="/docs/getting-started/cli.html" class="fcard rounded-xl border border-edge bg-panel p-6">
         <h3 class="font-bold text-white">Reports &amp; tooling</h3>
-        <p class="mt-2 text-sm text-smoke">k6-style console summaries, JSON export, self-contained HTML reports (<code>loadr report</code>), shell completions, JSON Schema output, structured logs, <code>--quiet</code>/<code>-v</code> spectrum.</p>
+        <p class="mt-2 text-sm text-smoke">Rich console summaries, JSON export, self-contained HTML reports (<code>loadr report</code>), shell completions, JSON Schema output, structured logs, <code>--quiet</code>/<code>-v</code> spectrum.</p>
       </a>
     </div>
   </div>
@@ -420,10 +502,10 @@ thresholds:
       </div>
 
       <div class="tabpanel codebox hidden">
-        <div class="codebar"><span>script.js</span><span>k6-compatible feel · QuickJS sandbox</span></div>
-        <pre><code data-lang="js">import http from 'k6/http';
-import { check, sleep, group } from 'k6';
-import { Trend } from 'k6/metrics';
+        <div class="codebar"><span>script.js</span><span>loadr scripting · QuickJS sandbox</span></div>
+        <pre><code data-lang="js">import http from 'loadr/http';
+import { check, sleep, group } from 'loadr';
+import { Trend } from 'loadr/metrics';
 
 const apiLatency = new Trend('api_latency');
 
@@ -729,7 +811,7 @@ $ loadr validate converted.yaml
           <h3 class="text-lg font-bold text-white">k6</h3>
           <span class="text-xs font-semibold uppercase tracking-wider text-ember">the model</span>
         </div>
-        <p class="mt-3 text-sm leading-relaxed text-smoke">The execution model is k6's: the seven executors, open/closed load, the four metric types, thresholds with <code class="text-flare">abortOnFail</code> and exit code 99, checks and groups — and an embedded-JS experience so close the API is import-compatible (<code class="text-flare">import http from 'k6/http'</code>).</p>
+        <p class="mt-3 text-sm leading-relaxed text-smoke">loadr's execution model gives you the seven executors, open/closed load, the four metric types, thresholds with <code class="text-flare">abortOnFail</code> and exit code 99, checks and groups — with a native embedded-JS API (<code class="text-flare">import http from 'loadr/http'</code>). Coming from k6? <code class="text-flare">loadr convert</code> brings your scripts across unchanged.</p>
       </div>
       <div class="rounded-2xl border border-edge bg-panel p-7">
         <div class="flex items-baseline justify-between">
@@ -755,7 +837,7 @@ $ loadr validate converted.yaml
     </div>
 
     <p class="mt-8 max-w-3xl text-sm leading-relaxed text-smoke">
-      The combination is the point: k6's model <em class="not-italic text-ash">and</em> JMeter's arsenal <em class="not-italic text-ash">and</em> Gatling's DSL <em class="not-italic text-ash">and</em> Locust's behaviour model — in one binary, with correct distributed percentiles, a plugin system and six protocols, rarely found together in a single tool.
+      The combination is the point: everything you'd reach for k6, JMeter, Gatling or Locust to do — scriptable execution <em class="not-italic text-ash">and</em> a deep assertion arsenal <em class="not-italic text-ash">and</em> a flow-control DSL <em class="not-italic text-ash">and</em> weighted-behaviour modelling — in one binary, with correct distributed percentiles, a plugin system and six protocols, rarely found together in a single tool.
       <a href="/docs/credits.html" class="font-semibold text-flare hover:underline">Full credits →</a>
     </p>
     <p class="mt-4 text-xs text-smoke">Trademarks and project names belong to their respective owners. loadr is independent and not affiliated with or endorsed by k6/Grafana Labs, the Apache Software Foundation, Gatling Corp, or the Locust project.</p>
@@ -813,9 +895,29 @@ $ loadr validate converted.yaml
   </div>
 </section>
 
+<!-- ======================================================= STRESS BANNER -->
+<section class="border-t border-edge/60 bg-coal/40 py-20">
+  <div class="mx-auto max-w-6xl px-5">
+    <div class="grid items-center gap-8 lg:grid-cols-[1fr_auto]">
+      <div>
+        <h2 class="text-3xl font-extrabold tracking-tight text-white sm:text-4xl">Break things <span class="text-flare">on purpose.</span></h2>
+        <p class="mt-4 max-w-xl text-lg text-smoke">Drive real load, adversarial payloads and fault injection at your system — from one binary — and find the limit before your users do.</p>
+        <div class="mt-7 flex flex-wrap gap-4">
+          <a href="/download/" class="glow rounded-xl bg-blood px-6 py-3.5 font-bold text-white">Get loadr</a>
+          <a href="/demos/" class="rounded-xl border border-edge-bright bg-panel px-6 py-3.5 font-semibold text-ash hover:border-ember/60 hover:text-white">See it work</a>
+        </div>
+      </div>
+      <img src="/assets/mascot/stress-break-things.png" width="900" height="600" alt="" aria-hidden="true"
+           class="hidden w-80 justify-self-end lg:block xl:w-96" loading="lazy" />
+    </div>
+  </div>
+</section>
+
 <!-- ======================================================= INSTALL -->
 <section id="install" class="relative overflow-hidden border-t border-edge/60 bg-coal/50 py-24">
   <div class="pointer-events-none absolute -bottom-40 left-1/2 h-80 w-[50rem] -translate-x-1/2 rounded-full bg-blood/15 blur-[120px]"></div>
+  <img src="/assets/mascot/download-cta.png" width="440" height="440" alt="" aria-hidden="true"
+       class="pointer-events-none absolute -top-4 right-2 hidden w-40 lg:block xl:w-48" loading="lazy" />
   <div class="mx-auto max-w-5xl px-5">
     <p class="kicker">Install</p>
     <h2 class="mt-3 text-3xl font-extrabold tracking-tight text-white sm:text-4xl">Running in under a minute</h2>
@@ -864,6 +966,8 @@ $ loadr report results.json -o report.html     # self-contained HTML report</cod
 <!-- ======================================================= DOCS CTA -->
 <section class="border-t border-edge/60 py-24">
   <div class="mx-auto max-w-4xl px-5 text-center">
+    <img src="/assets/mascot/docs.png" width="400" height="267" alt="" aria-hidden="true"
+         class="mx-auto mb-6 w-52 max-w-[70vw]" loading="lazy" />
     <h2 class="text-3xl font-extrabold tracking-tight text-white sm:text-4xl">The documentation is <span class="text-ember">exhaustive.</span></h2>
     <p class="mx-auto mt-4 max-w-2xl text-smoke">
       A getting-started path, the complete YAML reference, the full JS API,

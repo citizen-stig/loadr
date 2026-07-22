@@ -12,3 +12,9 @@ node_modules
 .idea
 .vscode
 .claude/
+
+# generated sweep output (regenerable)
+loadr-sweep/
+
+# regenerable book PDF (build via book/build/build.sh)
+book/*.pdf

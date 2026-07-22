@@ -114,7 +114,7 @@ export default function App() {
           <Button icon={Copy} onClick={duplicate}>Duplicate</Button>
           <div className="mx-1 h-5 w-px bg-edge" />
           <Button icon={Puzzle} onClick={() => setShowPlugins(true)}>Plugins</Button>
-          <Button icon={Layers} onClick={() => setShowPayload(true)}>Payload Lab</Button>
+          <Button icon={Layers} onClick={() => setShowPayload(true)}>Complexity test</Button>
         </div>
       </header>
 

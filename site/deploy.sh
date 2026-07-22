@@ -15,6 +15,9 @@ python3 "$ROOT/site/build-plugins.py"
 echo "==> generating demo pages"
 python3 "$ROOT/site/build-demos.py"
 
+echo "==> generating blog pages"
+python3 "$ROOT/site/build-blog.py"
+
 echo "==> building CSS"
 (cd "$ROOT/site" && npx @tailwindcss/cli -i src/input.css -o assets/site.css --minify)
 
@@ -31,6 +34,8 @@ mkdir -p "$DIST/download"
 cp "$ROOT/site/downloads.html" "$DIST/download/index.html"
 mkdir -p "$DIST/plugins"
 cp -r "$ROOT/site/plugins/." "$DIST/plugins/"
+mkdir -p "$DIST/blog"
+cp -r "$ROOT/site/blog/." "$DIST/blog/"
 mkdir -p "$DIST/privacy"
 cp "$ROOT/site/privacy.html" "$DIST/privacy/index.html"
 mkdir -p "$DIST/cookies"
@@ -38,6 +43,12 @@ cp "$ROOT/site/cookies.html" "$DIST/cookies/index.html"
 cp "$ROOT/site/assets/site.css" "$ROOT/site/assets/site.js" "$ROOT/site/assets/consent.js" \
    "$ROOT/site/assets/favicon-64.png" "$ROOT/site/assets/favicon.ico" "$ROOT/site/assets/apple-touch-icon.png" \
    "$ROOT/site/assets/logo-mark.png" "$ROOT/site/assets/desktop-app.png" "$DIST/assets/"
+mkdir -p "$DIST/assets/desktop"
+cp "$ROOT/site/assets/desktop/"*.png "$DIST/assets/desktop/"
+mkdir -p "$DIST/assets/canvas-walk"
+cp -r "$ROOT/site/assets/canvas-walk/." "$DIST/assets/canvas-walk/"
+mkdir -p "$DIST/assets/mascot"
+cp "$ROOT/site/assets/mascot/"*.png "$DIST/assets/mascot/"
 cp -r "$ROOT/docs/book/." "$DIST/docs/"
 
 # Examples: browsable raw files + a download bundle + a generated index page.

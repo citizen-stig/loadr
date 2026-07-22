@@ -1,8 +1,8 @@
 # JS API reference
 
-All globals are also importable k6-style: `import http from 'k6/http'`,
-`import { check, sleep, group } from 'k6'`,
-`import { Counter, Gauge, Rate, Trend } from 'k6/metrics'`.
+The `loadr` module re-exports the whole standard library, so a single specifier works: `import { http, check, sleep, Trend } from 'loadr'`. Or import from the focused sub-modules:
+`import http from 'loadr/http'`, `import { check, sleep, group } from 'loadr'`,
+`import { Counter, Gauge, Rate, Trend } from 'loadr/metrics'`.
 
 ## `http`
 

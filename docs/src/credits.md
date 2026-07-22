@@ -6,14 +6,15 @@ design borrows the best ideas from four projects, deliberately and gratefully.
 
 ## [k6](https://k6.io) — the model
 
-loadr's core execution model is k6's. The seven executors
-(`constant-vus`, `ramping-vus`, `constant-arrival-rate`, `ramping-arrival-rate`,
-`per-vu-iterations`, `shared-iterations`, `externally-controlled`), the
-open/closed load distinction, the four metric types (Counter, Gauge, Rate,
-Trend), thresholds as pass/fail criteria with `abortOnFail` and exit code 99,
-checks, groups, tags, and the embedded-JavaScript developer experience all
-follow k6's semantics — so much so that the JS API is import-compatible
-(`import http from 'k6/http'`) and `loadr convert` imports k6 scripts directly.
+loadr independently implements the modern load-testing execution model that k6
+helped popularize: the seven executor types (`constant-vus`, `ramping-vus`,
+`constant-arrival-rate`, `ramping-arrival-rate`, `per-vu-iterations`,
+`shared-iterations`, `externally-controlled`), the open/closed load distinction,
+four metric types (Counter, Gauge, Rate, Trend), thresholds as pass/fail gates
+with `abortOnFail` and exit code 99, checks, groups and tags. It is a fresh Rust
+implementation — not a fork or a port, and no k6 source is used. For teams moving
+across, `loadr convert` imports existing k6 scripts and the JS runtime accepts
+their imports so they run unchanged.
 
 ## [Apache JMeter](https://jmeter.apache.org) — the arsenal
 
@@ -44,9 +45,10 @@ distributed master/worker model informed loadr's controller/agent design.
 
 ## What loadr adds
 
-The combination is the point — k6's model *and* JMeter's arsenal *and*
-Gatling's DSL *and* Locust's behaviour model in one binary — plus a few things
-none of them ship together: a single static binary with no runtime
+The combination is the point — everything you would reach for k6, JMeter,
+Gatling or Locust to do — scriptable execution *and* a deep assertion arsenal
+*and* a flow-control DSL *and* weighted-behaviour modelling — in one binary,
+plus a few things none of them ship together: a single static binary with no runtime
 (no JVM, no Python, no Go toolchain, no `protoc`, no OpenSSL); **mathematically
 correct distributed percentiles** via HDR-histogram merging (not averaging); a
 sandboxed WASM + native **plugin** system that needs no rebuild; six protocols

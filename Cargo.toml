@@ -10,6 +10,10 @@ members = [
     "crates/loadr-agent",
     "crates/loadr-convert",
     "crates/loadr-payload",
+    "crates/loadr-record",
+    "crates/loadr-gen",
+    "crates/loadr-history",
+    "crates/loadr-ai",
     "crates/loadr-browser",
     "crates/loadr-cli",
     "plugins/loadr-plugin-webui",
@@ -69,6 +73,10 @@ loadr-plugin-api = { path = "crates/loadr-plugin-api", version = "1.0.0" }
 loadr-agent = { path = "crates/loadr-agent", version = "1.0.0" }
 loadr-convert = { path = "crates/loadr-convert", version = "1.0.0" }
 loadr-payload = { path = "crates/loadr-payload", version = "1.0.0" }
+loadr-record = { path = "crates/loadr-record", version = "1.0.0" }
+loadr-gen = { path = "crates/loadr-gen", version = "1.0.0" }
+loadr-history = { path = "crates/loadr-history", version = "1.0.0" }
+loadr-ai = { path = "crates/loadr-ai", version = "1.0.0" }
 loadr-browser = { path = "crates/loadr-browser", version = "1.0.0" }
 loadr-plugin-webui = { path = "plugins/loadr-plugin-webui", version = "1.0.0" }
 loadr-testserver = { path = "testsupport/loadr-testserver" }
@@ -112,6 +120,7 @@ prost = "0.14"
 prost-types = "0.14"
 prost-reflect = { version = "0.16", features = ["serde"] }
 protox = "0.9"
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 rquickjs = { version = "0.12", features = ["loader", "array-buffer", "futures", "macro"] }
 

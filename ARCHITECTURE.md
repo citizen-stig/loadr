@@ -93,14 +93,14 @@ decompression are implemented in `loadr-protocols::http`.
 
 ### ADR-005: Metrics engine
 
-Four metric kinds, k6-compatible: **Counter**, **Gauge**, **Rate**, **Trend** (HDR histogram,
+Four metric kinds: **Counter**, **Gauge**, **Rate**, **Trend** (HDR histogram,
 3 significant figures, auto-resizing). Each sample carries a tag set; aggregation keys are
 `(metric, sorted-tags)`. Built-in metrics mirror k6 (`http_req_duration`,
 `http_req_connecting`, `http_req_tls_handshaking`, `http_req_waiting`, `http_reqs`, `vus`,
 `iterations`, `checks`, `data_sent`, `data_received`, …) plus per-protocol families. Custom
 metrics are declared in YAML or created from JS. Thresholds are parsed into an expression AST
 (`p(99)<250`, `rate>0.95`, `count<100`, `avg<200`, with `abortOnFail` + `delayAbortEval`) and
-evaluated continuously; failures set exit code 99 (k6-compatible) and can abort the run.
+evaluated continuously; failures set exit code 99 and can abort the run.
 
 ### ADR-006: Executor model
 

@@ -215,13 +215,10 @@ impl SpanIndex {
             if let Some((_, l, c)) = self.entries.iter().find(|(p, _, _)| *p == candidate) {
                 return Some((*l, *c));
             }
-            // Trim the last segment (`.seg` or `[n]`).
-            if let Some(idx) = candidate.rfind(['.', '[']) {
-                candidate.truncate(idx);
-                if candidate.is_empty() {
-                    return None;
-                }
-            } else {
+            // Trim the last segment (`.seg` or `[n]`); no separator left → no match.
+            let idx = candidate.rfind(['.', '['])?;
+            candidate.truncate(idx);
+            if candidate.is_empty() {
                 return None;
             }
         }

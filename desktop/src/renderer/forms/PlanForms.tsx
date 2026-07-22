@@ -24,6 +24,7 @@ import {
 import { asArr as arr, asObj as obj, stepSummary } from '../../shared/step';
 import type { PlanDoc } from '../state/usePlanDoc';
 import { useSelection } from '../state/selection';
+import { PayloadPicker } from './PayloadPicker';
 import { dragEndIndices } from './dnd';
 import {
   Badge, Button, Checkbox, Disclosure, Field, IconButton, NumberInput, Select, Textarea, TextInput,
@@ -32,7 +33,7 @@ import {
   ArrowDown, ArrowUp, ChevronDown, ChevronRight, Grip, Plus, STEP_ICON, Trash, type Icon,
 } from '../ui/icons';
 
-const EXECUTORS: ExecutorKind[] = [
+export const EXECUTORS: ExecutorKind[] = [
   'constant-vus', 'ramping-vus', 'constant-arrival-rate', 'ramping-arrival-rate',
   'per-vu-iterations', 'shared-iterations', 'externally-controlled',
 ];
@@ -105,20 +106,32 @@ function ScenarioForm({ doc, name, sc }: { doc: PlanDoc; name: string; sc: Scena
         <IconButton icon={Trash} tone="danger" label={`remove scenario ${name}`} onClick={() => doc.apply((p) => deleteIn(p, ['scenarios', name]))} />
       </div>
       <div className="space-y-4 p-3">
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Executor">
-            <Select aria-label="Executor" value={sc.executor} onChange={(e) => doc.apply((p) => setExecutor(p, name, e.target.value))}>
-              {EXECUTORS.map((ex) => <option key={ex} value={ex}>{ex}</option>)}
-            </Select>
-          </Field>
-          {'vus' in sc && <Field label="VUs"><NumField value={sc.vus} onChange={(v) => doc.update([...base, 'vus'], v)} /></Field>}
-          {'duration' in sc && <Field label="Duration"><TextInput value={sc.duration ?? ''} placeholder="30s" onChange={(e) => doc.update([...base, 'duration'], e.target.value)} /></Field>}
-          {'rate' in sc && <Field label="Rate"><NumField value={sc.rate} onChange={(v) => doc.update([...base, 'rate'], v)} /></Field>}
-          {'iterations' in sc && <Field label="Iterations"><NumField value={sc.iterations} onChange={(v) => doc.update([...base, 'iterations'], v)} /></Field>}
-          {'pre_allocated_vus' in sc && <Field label="Pre-allocated VUs"><NumField value={sc.pre_allocated_vus} onChange={(v) => doc.update([...base, 'pre_allocated_vus'], v)} /></Field>}
-        </div>
+        <ScenarioParamFields doc={doc} name={name} sc={sc} />
         <FlowEditor doc={doc} path={[...base, 'flow']} steps={sc.flow ?? []} title="Flow" />
       </div>
+    </div>
+  );
+}
+
+// The scenario's own parameters (executor + its knobs) — no flow. Shared by
+// the Form view and the canvas inspector, which shows the flow on the canvas.
+export function ScenarioParamFields({ doc, name, sc }: { doc: PlanDoc; name: string; sc: Scenario }) {
+  const base = ['scenarios', name];
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <Field label="Executor">
+        <Select aria-label="Executor" value={sc.executor} onChange={(e) => doc.apply((p) => setExecutor(p, name, e.target.value))}>
+          {EXECUTORS.map((ex) => <option key={ex} value={ex}>{ex}</option>)}
+        </Select>
+      </Field>
+      {'vus' in sc && <Field label="VUs"><NumField value={sc.vus} onChange={(v) => doc.update([...base, 'vus'], v)} /></Field>}
+      {'duration' in sc && <Field label="Duration"><TextInput value={sc.duration ?? ''} placeholder="30s" onChange={(e) => doc.update([...base, 'duration'], e.target.value)} /></Field>}
+      {'rate' in sc && <Field label="Rate"><NumField value={sc.rate} onChange={(v) => doc.update([...base, 'rate'], v)} /></Field>}
+      {'iterations' in sc && <Field label="Iterations"><NumField value={sc.iterations} onChange={(v) => doc.update([...base, 'iterations'], v)} /></Field>}
+      {'pre_allocated_vus' in sc && <Field label="Pre-allocated VUs"><NumField value={sc.pre_allocated_vus} onChange={(v) => doc.update([...base, 'pre_allocated_vus'], v)} /></Field>}
+      {'max_vus' in sc && <Field label="Max VUs"><NumField value={sc.max_vus} onChange={(v) => doc.update([...base, 'max_vus'], v)} /></Field>}
+      {'start_rate' in sc && <Field label="Start rate"><NumField value={sc.start_rate} onChange={(v) => doc.update([...base, 'start_rate'], v)} /></Field>}
+      {'time_unit' in sc && <Field label="Time unit"><TextInput value={sc.time_unit ?? ''} placeholder="1s" onChange={(e) => doc.update([...base, 'time_unit'], e.target.value)} /></Field>}
     </div>
   );
 }
@@ -232,7 +245,7 @@ function StepCard({
 }
 
 // ---- per-kind forms -------------------------------------------------------
-function StepFields({
+export function StepFields({
   doc, base, step, kind,
 }: { doc: PlanDoc; base: Path; step: Step; kind: StepKind | null }) {
   const body = obj(step[kind ?? '']);
@@ -257,9 +270,20 @@ function StepFields({
           </Field>
           <KeyValueEditor doc={doc} path={[...base, 'headers']} value={obj(body.headers)} label="Headers" keyPlaceholder="Authorization" valPlaceholder="Bearer …" />
           <KeyValueEditor doc={doc} path={[...base, 'params']} value={obj(body.params)} label="Query params" keyPlaceholder="page" valPlaceholder="1" />
-          <Field label="Body" hint="raw string or ${...} template">
+          <div>
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="text-xs font-medium text-smoke">
+                Body <span className="font-normal text-mist">— raw string, <code>${'{...}'}</code> template, or</span>
+              </span>
+              <PayloadPicker
+                onPick={(p) => {
+                  set('body', `\${payload:${p.name}:${p.default}}`);
+                  doc.update([...base, 'headers', 'Content-Type'], p.contentType);
+                }}
+              />
+            </div>
             <Textarea rows={3} value={typeof body.body === 'string' ? body.body : body.body == null ? '' : JSON.stringify(body.body, null, 2)} placeholder={'{ "email": "${user.email}" }'} onChange={(e) => set('body', e.target.value || undefined)} />
-          </Field>
+          </div>
           <Disclosure label={`Assertions, checks & extracts${advancedCount(body)}`}>
             <div className="grid grid-cols-2 gap-2">
               <Field label="Timeout" hint="per-request override"><TextInput value={(body.timeout as string) ?? ''} placeholder="5s" onChange={(e) => set('timeout', e.target.value || undefined)} /></Field>

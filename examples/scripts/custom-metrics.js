@@ -2,8 +2,8 @@
 //
 // One exported iteration (`exec: shop`) that drives a small purchase funnel and
 // records four user-defined metrics alongside loadr's built-in HTTP stats.
-import http from 'k6/http';
-import { check, sleep } from 'k6';
+import http from 'loadr/http';
+import { check, sleep } from 'loadr';
 
 export function shop() {
   // Browse — record whether the catalogue response came from cache.

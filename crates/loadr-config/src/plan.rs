@@ -58,7 +58,7 @@ pub struct TestPlan {
     /// Named scenarios; each runs concurrently with its own executor.
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub scenarios: IndexMap<String, Scenario>,
-    /// Pass/fail criteria over metrics, k6-compatible (e.g. `p(95)<400`).
+    /// Pass/fail criteria over metrics, e.g. `p(95)<400`.
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub thresholds: IndexMap<String, ThresholdList>,
     /// Metric outputs/exporters.

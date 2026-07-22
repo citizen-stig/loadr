@@ -2,7 +2,7 @@
 
 Thresholds are the pass/fail contract of a test, evaluated continuously
 during the run and finally at the end. Any failing threshold makes
-`loadr run` exit with code **99** (k6-compatible).
+`loadr run` exit with code **99**.
 
 ```yaml
 thresholds:
@@ -70,7 +70,7 @@ thresholds:
 
 ## Semantics worth knowing
 
-- A threshold over a metric with **no samples passes** (matching k6) — but
+- A threshold over a metric with **no samples passes** (by design) — but
   `loadr validate` warns when the metric name is unknown.
 - `abort_on_fail` triggers a graceful stop (in-flight iterations finish,
   summary still produced, exit code 99).

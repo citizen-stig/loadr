@@ -45,6 +45,17 @@ enum Command {
     Sweep(commands::sweep::SweepArgs),
     /// Generate adversarial payloads for algorithmic-complexity (DoS) testing
     Payload(commands::payload::PayloadArgs),
+    /// Record live HTTP(S) traffic through a proxy into an auto-correlated scenario
+    Record(commands::record::RecordArgs),
+    /// Generate a scenario from an API contract (OpenAPI) with example data
+    Gen(commands::gen::GenArgs),
+    /// Explain a run summary in plain language (root-cause read)
+    Explain(commands::explain::ExplainArgs),
+    /// Generate a scenario from a natural-language description (LLM)
+    Scenario(commands::scenario::ScenarioArgs),
+    /// Durable run history + statistical regression detection
+    #[command(subcommand)]
+    History(commands::history::HistoryCommand),
     /// Run the distributed-mode controller
     Controller(commands::controller::ControllerArgs),
     /// Run a load-generating agent
@@ -91,6 +102,11 @@ fn run(cli: Cli) -> anyhow::Result<i32> {
         Command::Compare(args) => commands::compare::execute(args),
         Command::Sweep(args) => commands::sweep::execute(args),
         Command::Payload(args) => commands::payload::execute(args),
+        Command::Record(args) => commands::record::execute(args),
+        Command::Gen(args) => commands::gen::execute(args),
+        Command::Explain(args) => commands::explain::execute(args),
+        Command::Scenario(args) => commands::scenario::execute(args),
+        Command::History(cmd) => commands::history::execute(cmd),
         Command::Controller(args) => commands::controller::execute(args),
         Command::Agent(args) => commands::agent::execute(args),
         Command::Plugin(cmd) => commands::plugin::execute(cmd),

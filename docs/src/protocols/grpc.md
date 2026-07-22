@@ -30,6 +30,53 @@ grpc:
   message: { name: "world" }
 ```
 
+## Protobuf field checks
+
+Use `protobuf_field` when an application-level result is carried in the
+response message even though the gRPC transport status is OK:
+
+```yaml
+checks:
+  - type: status
+    name: grpc_transport_ok
+    equals: 0
+  - type: protobuf_field
+    name: admission_accepted
+    field: code
+    equals: 0
+    failure_groups:
+      18: WrongShard
+      20: PoolAtCapacity
+      21: MempoolByteLimitExceeded
+```
+
+`field` is the exact top-level protobuf field name, not its ProtoJSON name.
+Singular scalar and enum fields are supported; nested paths, messages, maps,
+and repeated fields are rejected. `equals` is checked using the field's
+descriptor type. Enum expectations may be their numeric value or declared
+name; byte expectations use base64.
+
+Presence follows protobuf rather than JSON semantics:
+
+- An omitted proto3 implicit-presence scalar is present with its type's
+  default value. Thus an omitted `uint32 code` satisfies `equals: 0` and
+  `exists: true`.
+- An omitted `optional uint32 owner_hint` is absent and satisfies
+  `exists: false`. An explicitly encoded optional zero is present.
+
+The response is decoded to a `DynamicMessage` for these checks, but it is not
+converted to JSON unless an extractor, JSON/body check, or `afterRequest` hook
+also needs the JSON body. Existing JSONPath behavior and its default-omitting
+ProtoJSON representation are unchanged.
+
+`failure_groups` is optional and valid only under `checks`. It bounds metric
+cardinality: mapped failures receive `failure_code` and `failure_group` tags;
+unmapped numeric values collapse to `failure_group=other` without a raw code.
+Missing optional fields use `missing`, and transport/parse/empty-stream cases
+use `no_response`. The final console, JSON, HTML, and JUnit summaries include
+the grouped counts. Without `failure_groups`, no extra metric series or
+summary fields are added.
+
 ## Streaming
 
 All four shapes are supported. Streaming requests provide `messages`
@@ -52,6 +99,10 @@ The response body is the (last) response message rendered as JSON, so
 `jsonpath` extraction/assertions work naturally. `extras.message_count` holds
 the number of streamed responses.
 
+`protobuf_field` also evaluates the last response message. An empty successful
+stream has no response and therefore fails the check (`no_response` when
+grouping is configured).
+
 **Automatic skip**: when nothing needs the response body — no `extract`, no
 `assert`/`checks` beyond `status`/`duration`/`header` (jsonpath, body/size
 checks, `js`, ... all count as reading it), and no script `afterRequest`
@@ -60,6 +111,11 @@ conversion. This is automatic, with no config knob; the common status-only
 load-generation case gets the full speedup for free. `body` is empty and
 `message_count` still reflects every frame received; stream draining, status
 and timings are unaffected.
+
+With protobuf-only checks, loadr builds the `DynamicMessage` required for
+descriptor-aware evaluation but still skips JSON serialization. Resolved
+field descriptors and typed expected values are cached with the existing
+per-VU call state.
 
 ## Semantics & metrics
 

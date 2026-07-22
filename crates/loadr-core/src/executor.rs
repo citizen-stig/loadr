@@ -848,8 +848,11 @@ async fn run_arrival_rate(
     let deadline = tokio::time::sleep_until(soft_deadline.into());
     tokio::pin!(deadline);
     let mut last = Instant::now();
-    // Wall-clock deadline of the active batch; enforced only on the tick.
+    // Wall-clock deadline of the active batch; enforced on dispatcher wakes.
     let mut expiry: Option<Instant> = None;
+    // Distinguishes reaching the schedule's natural end from stop/cancel:
+    // only a natural end drains the final flushed batch before closing.
+    let mut natural_end = false;
 
     loop {
         let deadline_elapsed = tokio::select! {
@@ -859,8 +862,10 @@ async fn run_arrival_rate(
             _ = &mut deadline => true,
         };
         // A configurable tick may be as long as (or longer than) the whole
-        // schedule. Credit the interval through the deadline before exiting,
-        // and use the deadline itself as a wake-up so the flush is not late.
+        // schedule. Credit and publish the interval ending at the deadline
+        // before exiting, with the deadline itself as a wake-up so the flush
+        // is not late; every path below breaks once the deadline elapsed, so
+        // the completed sleep is never polled again.
         let now = Instant::now().min(soft_deadline);
         let deadline_elapsed = deadline_elapsed || now >= soft_deadline;
         record_dropped(gate.expire_due(&mut expiry, now));
@@ -873,6 +878,7 @@ async fn run_arrival_rate(
             }
             last = now;
             if deadline_elapsed {
+                natural_end = true;
                 break;
             }
             continue;
@@ -881,39 +887,56 @@ async fn run_arrival_rate(
         last = now;
         emitted += schedule.rate_at(started.elapsed()) * dt;
         let due = emitted as u64;
-        if due > 0 {
-            emitted -= due as f64;
-            // Grow for arrivals the parked workers can't absorb, up to max_vus.
-            // Workers waiting out a pause are not counted, so the first tick
-            // after a resume may over-spawn slightly — capped by max_vus.
-            let parked = gate.parked.load(Ordering::SeqCst);
-            let grow = due
-                .saturating_sub(parked)
-                .min(max_vus.saturating_sub(allocated));
-            for _ in 0..grow {
-                worker_handles.push(spawn_worker(
-                    env.clone(),
-                    scenario_cancel.clone(),
-                    gate.clone(),
-                ));
+        if due == 0 {
+            if deadline_elapsed {
+                natural_end = true;
+                break;
             }
-            allocated += grow;
-            gate.publish(due, &mut expiry, now, tick);
+            continue;
         }
+        emitted -= due as f64;
+        // Grow for arrivals the parked workers can't absorb, up to max_vus.
+        // Workers waiting out a pause are not counted, so the first tick
+        // after a resume may over-spawn slightly — capped by max_vus.
+        let parked = gate.parked.load(Ordering::SeqCst);
+        let grow = due
+            .saturating_sub(parked)
+            .min(max_vus.saturating_sub(allocated));
+        for _ in 0..grow {
+            worker_handles.push(spawn_worker(
+                env.clone(),
+                scenario_cancel.clone(),
+                gate.clone(),
+            ));
+        }
+        allocated += grow;
+        gate.publish(due, &mut expiry, now, tick);
         if deadline_elapsed {
-            // Final interval: the batch flushed above stays claimable for
-            // one dispatch interval so the workers it was assigned to run
-            // it (the pre-gate dispatcher handed final arrivals to workers
-            // before exiting); the unclaimed remainder is swept as dropped
-            // here and by the close below.
-            if let Some(at) = expiry {
-                tokio::select! {
-                    _ = scenario_cancel.cancelled() => {}
-                    _ = tokio::time::sleep_until(at.into()) => {}
-                }
-                record_dropped(gate.expire_due(&mut expiry, Instant::now()));
-            }
+            natural_end = true;
             break;
+        }
+    }
+    // A natural end flushes the final partial interval above, but closing in
+    // the same poll would drop all of it: closure fails the acquires of
+    // permits tokio has already assigned to parked workers (the closed bit
+    // wins — see ArrivalGate), before those workers ever run. Let the active
+    // batch live out its claim window instead: ticks keep driving expiry, so
+    // this waits at most one dispatch interval, and stop/cancel (including
+    // the graceful-stop watchdog) still exits immediately.
+    if natural_end {
+        while expiry.is_some() {
+            tokio::select! {
+                _ = scenario_cancel.cancelled() => break,
+                _ = env.soft_stop.cancelled() => break,
+                _ = ticker.tick() => {}
+            }
+            if *env.pause.borrow() {
+                if expiry.take().is_some() {
+                    record_dropped(gate.take_unclaimed());
+                }
+                break;
+            }
+            record_dropped(gate.expire_due(&mut expiry, Instant::now()));
         }
     }
     // Deadline, soft stop, or cancellation: unclaimed budget is dropped, and

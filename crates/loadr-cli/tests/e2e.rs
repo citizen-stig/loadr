@@ -311,8 +311,8 @@ scenarios:
 /// Saturated open model: with `max_vus` far below the schedule, unclaimed
 /// arrivals must surface as dropped iterations — and none may vanish.
 /// Completed plus dropped matches the scheduled arrivals within one tick's
-/// batch (`ceil(rate*tick)+1`), widened by one more tick's arrivals because a
-/// stalled final tick enlarges the unpublished tail (the exact identity is
+/// batch (`ceil(rate*tick)+1`); the deadline flush publishes the final
+/// partial interval, so there is no unpublished tail (the exact identity is
 /// unit-tested on the dispatcher's gate). The dispatch tick is pinned on the
 /// child process — `dispatch_tick()` is a process-wide `OnceLock`, so setting
 /// it on the test process would not work.
@@ -378,11 +378,11 @@ scenarios:
         dropped > 0.0,
         "saturated pool dropped nothing\nstdout: {stdout}"
     );
-    // Conservation at 20ms tick: ceil(200*0.02)+1 = 5, plus one tick's
-    // arrivals (4) of wall-clock slack for the final-tick tail.
+    // Conservation at 20ms tick: ceil(200*0.02)+1 = 5. The deadline flush
+    // publishes the final partial interval, so no extra tail slack is needed.
     let scheduled = 200.0 * 2.0;
     assert!(
-        ((completed + dropped) - scheduled).abs() <= 9.0,
+        ((completed + dropped) - scheduled).abs() <= 5.0,
         "conservation violated: completed={completed} dropped={dropped}\nstdout: {stdout}"
     );
 }

@@ -114,9 +114,7 @@ assignment referencing a plugin without the `data_source` capability (or not
 loaded at all) fails cleanly before the synchronized start barrier.
 
 See [Native data-source plugins](../plugins/developing.md#native-data-source-plugins)
-for how to write one, and
-[the gRPC feeder design](../custom-grpc-plugin-feeder.md) for the motivating
-use case.
+for how to write one.
 
 To measure the generator's maximum throughput without involving gRPC or another
 backend, render a plugin value into a request handled by the built-in

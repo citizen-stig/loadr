@@ -52,7 +52,9 @@ and live Run dashboards groups them by *cause* so you can see *why* requests
 failed, not just *how many*. Four groups are shown, each row carrying its count
 and share of the group, with a bar for quick scanning:
 
-- **HTTP status** — responses classified as failed by the run's expected-response rules, grouped by status code.
+- **Response status** — failed responses grouped by protocol and status code.
+  Known HTTP and gRPC statuses include their canonical names, such as
+  `HTTP · Internal Server Error (500)` and `gRPC · UNAVAILABLE (14)`.
 - **Transport / error** — connection-level failures grouped by a coarse kind
   (`timeout`, `dns`, `tls`, `connection_refused`, `connection_reset`,
   `connection`, `transport`) plus prepare/protocol/extraction errors.
@@ -76,7 +78,7 @@ adding the breakdown categories.
 Two buttons in the panel header export the current breakdown entirely in the
 browser — no server round-trip:
 
-- **↓ CSV** — a `category,cause,count,share_pct` file
+- **↓ CSV** — a `category,protocol,cause,count,share_pct` file
   (`loadr-failures-<timestamp>.csv`) ready for spreadsheets or further
   analysis.
 - **↓ Report** — a self-contained HTML report
@@ -84,7 +86,8 @@ browser — no server round-trip:
 
 The breakdown is also available programmatically as the `failures` object on
 the live metrics payload (see the `/api/overview` and `/api/runs/:id/stream`
-responses).
+responses). Status buckets retain the compatibility `key` and additionally
+carry `protocol`, `status`, and an optional `status_name`.
 
 ## Authentication
 

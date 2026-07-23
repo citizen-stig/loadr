@@ -704,6 +704,12 @@ async fn static_spa_served_with_content_types() {
         .unwrap_or("");
     assert!(ct.contains("javascript"), "{ct}");
     assert!(!body.is_empty());
+    let app_js = String::from_utf8_lossy(&body);
+    assert!(app_js.contains("Response status"));
+    assert!(app_js.contains("response_status"));
+    assert!(app_js.contains("category,protocol,cause,count,share_pct"));
+    assert!(!app_js.contains("Failed HTTP status"));
+    assert!(!app_js.contains("failGroupCard('by_status', 'HTTP status')"));
 
     let (status, headers, _) = server.raw("/style.css").await;
     assert_eq!(status, http::StatusCode::OK);

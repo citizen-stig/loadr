@@ -107,22 +107,41 @@
     return s;
   }
 
-  // Flatten a failures breakdown object into CSV rows: category, cause, count, share.
+  function responseStatusLabel(row) {
+    const status = row && row.status != null ? String(row.status) : String((row && row.key) || '');
+    if (status === 'other') return status;
+    const protocol = row && row.protocol;
+    const protocolLabel =
+      {
+        http: 'HTTP',
+        grpc: 'gRPC',
+        graphql: 'GraphQL',
+        sse: 'SSE',
+        browser: 'Browser',
+        ws: 'WebSocket',
+      }[protocol] || protocol;
+    const detail = row && row.status_name ? row.status_name + ' (' + status + ')' : status;
+    return protocolLabel ? protocolLabel + ' · ' + detail : detail;
+  }
+
+  // Flatten a failures breakdown object into CSV rows:
+  // category, protocol, cause, count, share.
   function failuresToCsv(f) {
-    const lines = ['category,cause,count,share_pct'];
+    const lines = ['category,protocol,cause,count,share_pct'];
     if (f) {
       const groups = [
-        ['http_status', f.by_status],
-        ['transport_error', f.by_error_kind],
-        ['failed_check', f.by_check],
-        ['script_exception', f.by_exception],
+        ['response_status', f.by_status, true],
+        ['transport_error', f.by_error_kind, false],
+        ['failed_check', f.by_check, false],
+        ['script_exception', f.by_exception, false],
       ];
-      for (const [category, rows] of groups) {
+      for (const [category, rows, isStatus] of groups) {
         for (const r of rows || []) {
           lines.push(
             [
               csvField(category),
-              csvField(r.key),
+              csvField(isStatus ? r.protocol : ''),
+              csvField(isStatus && r.status != null ? r.status : r.key),
               csvField(r.count),
               csvField(((r.share || 0) * 100).toFixed(2)),
             ].join(',')
@@ -137,13 +156,13 @@
   function failuresToHtml(f, runLabel) {
     const esc = (s) =>
       String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-    const section = (title, rows) => {
+    const section = (title, rows, label = (row) => row.key) => {
       const body = (rows || []).length
         ? (rows || [])
             .map(
               (r) =>
                 '<tr><td>' +
-                esc(r.key) +
+                esc(label(r)) +
                 '</td><td class="n">' +
                 esc(r.count) +
                 '</td><td class="n">' +
@@ -177,7 +196,7 @@
       ' failure events (categories may overlap) · generated ' +
       esc(new Date().toLocaleString()) +
       '</p>' +
-      section('Failed HTTP status', f && f.by_status) +
+      section('Failed response status', f && f.by_status, responseStatusLabel) +
       section('Transport / error kind', f && f.by_error_kind) +
       section('Failed checks', f && f.by_check) +
       section('Script exceptions', f && f.by_exception) +
@@ -413,7 +432,7 @@
       h(
         'div',
         { class: 'fail-grid' },
-        failGroupCard('by_status', 'HTTP status'),
+        failGroupCard('by_status', 'Response status'),
         failGroupCard('by_error_kind', 'Transport / error'),
         failGroupCard('by_check', 'Failed checks'),
         failGroupCard('by_exception', 'Script exceptions')
@@ -683,16 +702,17 @@
           return;
         }
         failGroups[key].replaceChildren(
-          ...rows.map((r) =>
-            h(
+          ...rows.map((r) => {
+            const label = key === 'by_status' ? responseStatusLabel(r) : r.key;
+            return h(
               'div',
-              { class: 'fail-row', title: r.key },
+              { class: 'fail-row', title: label },
               h('div', { class: 'fail-bar' }, h('div', { class: 'fail-bar-fill', style: 'width:' + Math.max(2, (r.share || 0) * 100).toFixed(1) + '%' })),
-              h('span', { class: 'fail-key mono' }, r.key),
+              h('span', { class: 'fail-key mono' }, label),
               h('span', { class: 'fail-count mono' }, fmt.num(r.count, 0)),
               h('span', { class: 'fail-share mono muted' }, ((r.share || 0) * 100).toFixed(1) + '%')
-            )
-          )
+            );
+          })
         );
       };
       renderGroup('by_status');

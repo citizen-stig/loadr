@@ -685,6 +685,10 @@ async fn static_spa_served_with_content_types() {
         .unwrap_or("");
     assert!(ct.contains("javascript"), "{ct}");
     assert!(!body.is_empty());
+    let app = String::from_utf8_lossy(&body);
+    assert!(app.contains("title: a.name"));
+    assert!(app.contains("title: a.id"));
+    assert!(app.contains("a.peer_addr"));
 
     let (status, headers, _) = server.raw("/style.css").await;
     assert_eq!(status, http::StatusCode::OK);

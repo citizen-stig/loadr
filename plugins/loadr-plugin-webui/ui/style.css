@@ -656,6 +656,14 @@ canvas.chart-short {
   font-size: 13px;
   margin-bottom: 8px;
 }
+.agent-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  margin-bottom: 8px;
+}
 .agent-labels {
   display: flex;
   flex-wrap: wrap;

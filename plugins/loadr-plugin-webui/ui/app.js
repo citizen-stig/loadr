@@ -1256,8 +1256,8 @@
                   'div',
                   { class: 'agent-head' },
                   h('span', { class: 'health-dot ' + (a.healthy ? 'ok' : 'bad') }),
-                  h('strong', null, a.name),
-                  h('span', { class: 'muted mono' }, a.id.slice(0, 8))
+                  h('strong', { title: a.name }, a.name),
+                  h('span', { class: 'muted mono', title: a.id }, a.id.slice(0, 8))
                 ),
                 h(
                   'div',
@@ -1265,6 +1265,17 @@
                   h('span', null, fmt.num(a.active_vus, 0) + ' VUs'),
                   h('span', null, a.cores + ' cores'),
                   h('span', { class: 'muted' }, 'seen ' + fmt.ago(a.last_heartbeat_ms))
+                ),
+                h(
+                  'div',
+                  { class: 'agent-meta mono' },
+                  h(
+                    'span',
+                    { class: 'muted', title: a.peer_addr || 'peer unavailable' },
+                    'peer ' + (a.peer_addr || 'unavailable')
+                  ),
+                  h('span', { class: 'muted' }, a.version ? 'v' + a.version : 'version unavailable'),
+                  h('span', { class: 'muted' }, 'rev ' + (a.revision || 'unavailable'))
                 ),
                 h(
                   'div',

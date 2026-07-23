@@ -62,6 +62,10 @@ pub struct AgentView {
     pub healthy: bool,
     pub active_vus: u64,
     pub cores: u32,
+    /// Direct peer socket observed by the controller for the current session.
+    pub peer_addr: Option<String>,
+    pub version: Option<String>,
+    pub revision: Option<String>,
     /// Absolute wall-clock time (ms since the UNIX epoch) of the last heartbeat,
     /// so the UI can render "seen Ns ago".
     pub last_heartbeat_ms: u64,
@@ -143,4 +147,48 @@ pub(crate) fn now_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod agent_view_tests {
+    use super::*;
+
+    #[test]
+    fn agent_debug_metadata_has_stable_json_fields() {
+        let view = AgentView {
+            id: "agent-a".to_string(),
+            name: "worker-a".to_string(),
+            healthy: true,
+            active_vus: 4,
+            cores: 8,
+            peer_addr: Some("10.0.0.4:49152".to_string()),
+            version: Some("1.29.0".to_string()),
+            revision: Some("0123456789ab".to_string()),
+            last_heartbeat_ms: 123,
+            labels: BTreeMap::new(),
+        };
+
+        let value = serde_json::to_value(view).expect("serialize agent");
+        assert_eq!(value["peer_addr"], "10.0.0.4:49152");
+        assert_eq!(value["version"], "1.29.0");
+        assert_eq!(value["revision"], "0123456789ab");
+    }
+
+    #[test]
+    fn missing_debug_metadata_deserializes_as_unavailable() {
+        let view: AgentView = serde_json::from_value(serde_json::json!({
+            "id": "agent-a",
+            "name": "worker-a",
+            "healthy": false,
+            "active_vus": 0,
+            "cores": 8,
+            "last_heartbeat_ms": 123,
+            "labels": {}
+        }))
+        .expect("deserialize old agent payload");
+
+        assert_eq!(view.peer_addr, None);
+        assert_eq!(view.version, None);
+        assert_eq!(view.revision, None);
+    }
 }

@@ -461,6 +461,24 @@ async fn agent_reconnects_and_re_registers() {
     )
     .await;
 
+    let initial = handle
+        .agents()
+        .into_iter()
+        .find(|agent| agent.id == "agent-phoenix")
+        .expect("registered agent");
+    assert!(
+        initial.peer_addr.is_some(),
+        "controller captures peer socket"
+    );
+    assert_eq!(
+        initial.version.as_deref(),
+        Some(loadr_core::build_info::VERSION)
+    );
+    assert_eq!(
+        initial.revision.as_deref(),
+        Some(loadr_core::build_info::GIT_REVISION)
+    );
+
     first.cancel();
     wait_until(
         || {
@@ -486,7 +504,13 @@ async fn agent_reconnects_and_re_registers() {
         "re-registration",
     )
     .await;
-    assert_eq!(handle.agents().len(), 1, "same id replaces the old entry");
+    let agents = handle.agents();
+    assert_eq!(agents.len(), 1, "same id replaces the old entry");
+    assert!(agents[0].peer_addr.is_some());
+    assert_eq!(
+        agents[0].revision.as_deref(),
+        Some(loadr_core::build_info::GIT_REVISION)
+    );
 
     handle.shutdown();
 }

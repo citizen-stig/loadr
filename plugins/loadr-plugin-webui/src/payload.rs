@@ -124,40 +124,37 @@ fn top_buckets(mut counts: Vec<(String, u64)>, limit: usize) -> Vec<Value> {
 /// Group failed requests, failed checks, and script exceptions by cause.
 ///
 /// Sources, all from data the engine already tracks:
-/// - HTTP status codes: failing `http_req_failed` samples bucketed by their
-///   non-zero `status` tag. This respects custom expected-response rules.
-/// - Transport/error kinds: `http_req_failed` series carrying an `error_kind`
-///   (transport failures) or `error` (prepare/protocol/extraction) tag.
+/// - Failed requests: the `http_req_failed` rate, which every protocol records
+///   (sum = number of failing samples in a Rate series). Series carrying an
+///   `error_kind` (transport failures) or `error` (prepare/protocol/extraction)
+///   tag are bucketed by that kind; everything else failed on status and is
+///   bucketed by its non-zero `status` tag — HTTP 4xx/5xx codes as-is, gRPC
+///   codes by name (`UNAVAILABLE (14)`) via the `proto` tag. Deriving from the
+///   failure rate (not `http_reqs` >= 400) respects custom expected-response
+///   rules.
 /// - Failed checks: the failing fraction of each `checks` series, by `check` tag.
 /// - Script exceptions: the `vu_exceptions` counter, by `exception` tag.
 pub(crate) fn failures_breakdown(snap: &Snapshot) -> Value {
     use std::collections::BTreeMap;
     const LIMIT: usize = 12;
 
-    // Status failures from the failure rate itself. Using `http_reqs` and a
-    // hard-coded >=400 test would misclassify custom expected statuses.
     let mut by_status: BTreeMap<String, u64> = BTreeMap::new();
-    for s in snap.series.iter().filter(|s| s.metric == "http_req_failed") {
-        let Some(status) = s.tags.get("status") else {
-            continue;
-        };
-        let code: i64 = status.parse().unwrap_or(0);
-        if code > 0 && s.agg.sum > 0.0 {
-            *by_status.entry(status.clone()).or_default() += s.agg.sum.max(0.0) as u64;
-        }
-    }
-
-    // Transport / error-kind failures from http_req_failed series tags.
     let mut by_error_kind: BTreeMap<String, u64> = BTreeMap::new();
     for s in snap.series.iter().filter(|s| s.metric == "http_req_failed") {
-        let kind = s
-            .tags
-            .get("error_kind")
-            .or_else(|| s.tags.get("error"))
-            .cloned();
-        if let Some(kind) = kind {
-            // sum = number of failing samples in a Rate series.
-            *by_error_kind.entry(kind).or_default() += s.agg.sum.max(0.0) as u64;
+        let fails = s.agg.sum.max(0.0) as u64;
+        if fails == 0 {
+            continue;
+        }
+        if let Some(kind) = s.tags.get("error_kind").or_else(|| s.tags.get("error")) {
+            *by_error_kind.entry(kind.clone()).or_default() += fails;
+        } else {
+            let key = match s.tags.get("status") {
+                Some(status) if status != "0" => {
+                    status_key(status, s.tags.get("proto").map(String::as_str))
+                }
+                _ => "unknown".to_string(),
+            };
+            *by_status.entry(key).or_default() += fails;
         }
     }
 
@@ -205,6 +202,41 @@ pub(crate) fn failures_breakdown(snap: &Snapshot) -> Value {
         "by_error_kind": top_buckets(by_error_kind.into_iter().collect(), LIMIT),
         "by_check": top_buckets(by_check.into_iter().collect(), LIMIT),
         "by_exception": top_buckets(by_exception.into_iter().collect(), LIMIT),
+    })
+}
+
+/// Label a failing `status` tag, naming gRPC codes so non-HTTP failures stay
+/// readable next to plain HTTP statuses.
+fn status_key(status: &str, proto: Option<&str>) -> String {
+    if proto == Some("grpc") {
+        if let Some(name) = status.parse().ok().and_then(grpc_code_name) {
+            return format!("{name} ({status})");
+        }
+    }
+    status.to_string()
+}
+
+/// tonic isn't a dependency of this crate; the 16 canonical gRPC codes are
+/// stable, so a local table is fine.
+fn grpc_code_name(code: i64) -> Option<&'static str> {
+    Some(match code {
+        1 => "CANCELLED",
+        2 => "UNKNOWN",
+        3 => "INVALID_ARGUMENT",
+        4 => "DEADLINE_EXCEEDED",
+        5 => "NOT_FOUND",
+        6 => "ALREADY_EXISTS",
+        7 => "PERMISSION_DENIED",
+        8 => "RESOURCE_EXHAUSTED",
+        9 => "FAILED_PRECONDITION",
+        10 => "ABORTED",
+        11 => "OUT_OF_RANGE",
+        12 => "UNIMPLEMENTED",
+        13 => "INTERNAL",
+        14 => "UNAVAILABLE",
+        15 => "DATA_LOSS",
+        16 => "UNAUTHENTICATED",
+        _ => return None,
     })
 }
 
@@ -629,13 +661,13 @@ mod tests {
         let mut agg = Aggregator::new();
         for i in 0..10 {
             agg.record(&sample(
-                "risotto_reqs",
+                "mongo_reqs",
                 MetricKind::Counter,
                 1.0,
                 &[("scenario", "transfers")],
             ));
             agg.record(&sample(
-                "risotto_req_duration",
+                "mongo_req_duration",
                 MetricKind::Trend,
                 1.0 + i as f64,
                 &[("scenario", "transfers")],
@@ -817,6 +849,48 @@ mod tests {
         let by_exc = f["by_exception"].as_array().expect("by_exception");
         assert_eq!(by_exc.len(), 1);
         assert_eq!(by_exc[0]["count"], 6);
+    }
+
+    /// gRPC failures carry small numeric codes (1..16) and no error tag; they
+    /// must land in by_status with a readable name, not vanish (issue: the
+    /// CSV/Report buttons stayed disabled on gRPC runs with failures).
+    #[test]
+    fn failures_breakdown_grpc_status_failures() {
+        let mut agg = Aggregator::new();
+        for _ in 0..5 {
+            agg.record(&sample(
+                "http_req_failed",
+                MetricKind::Rate,
+                0.0,
+                &[("status", "0"), ("proto", "grpc")],
+            ));
+        }
+        for _ in 0..3 {
+            agg.record(&sample(
+                "http_req_failed",
+                MetricKind::Rate,
+                1.0,
+                &[("status", "14"), ("proto", "grpc")],
+            ));
+        }
+        for _ in 0..2 {
+            agg.record(&sample(
+                "http_req_failed",
+                MetricKind::Rate,
+                1.0,
+                &[("status", "7"), ("proto", "grpc")],
+            ));
+        }
+        let snap = agg.snapshot();
+        let f = failures_breakdown(&snap);
+        assert_eq!(f["event_total"], 5);
+        assert_eq!(f["failed_requests"], 5);
+        let by_status = f["by_status"].as_array().expect("by_status");
+        assert_eq!(by_status.len(), 2);
+        assert_eq!(by_status[0]["key"], "UNAVAILABLE (14)");
+        assert_eq!(by_status[0]["count"], 3);
+        assert_eq!(by_status[1]["key"], "PERMISSION_DENIED (7)");
+        assert_eq!(by_status[1]["count"], 2);
     }
 
     #[test]

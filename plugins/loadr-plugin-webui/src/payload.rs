@@ -121,11 +121,80 @@ fn top_buckets(mut counts: Vec<(String, u64)>, limit: usize) -> Vec<Value> {
     out
 }
 
+fn response_status_name(protocol: &str, status: &str) -> Option<&'static str> {
+    let code: u16 = status.parse().ok()?;
+    match protocol {
+        "http" | "graphql" | "sse" | "browser" | "ws" => {
+            http::StatusCode::from_u16(code).ok()?.canonical_reason()
+        }
+        "grpc" => match code {
+            0 => Some("OK"),
+            1 => Some("CANCELLED"),
+            2 => Some("UNKNOWN"),
+            3 => Some("INVALID_ARGUMENT"),
+            4 => Some("DEADLINE_EXCEEDED"),
+            5 => Some("NOT_FOUND"),
+            6 => Some("ALREADY_EXISTS"),
+            7 => Some("PERMISSION_DENIED"),
+            8 => Some("RESOURCE_EXHAUSTED"),
+            9 => Some("FAILED_PRECONDITION"),
+            10 => Some("ABORTED"),
+            11 => Some("OUT_OF_RANGE"),
+            12 => Some("UNIMPLEMENTED"),
+            13 => Some("INTERNAL"),
+            14 => Some("UNAVAILABLE"),
+            15 => Some("DATA_LOSS"),
+            16 => Some("UNAUTHENTICATED"),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn status_bucket(protocol: &str, status: &str, count: u64, category_total: u64) -> Value {
+    let share = if category_total > 0 {
+        count as f64 / category_total as f64
+    } else {
+        0.0
+    };
+    json!({
+        "key": status,
+        "protocol": if protocol.is_empty() { None } else { Some(protocol) },
+        "status": status,
+        "status_name": response_status_name(protocol, status),
+        "count": count,
+        "share": share,
+    })
+}
+
+/// Sort response statuses by count and keep protocols separate when their
+/// numeric status spaces overlap (for example HTTP and gRPC).
+fn top_status_buckets(mut counts: Vec<((String, String), u64)>, limit: usize) -> Vec<Value> {
+    counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    let total: u64 = counts.iter().map(|(_, count)| count).sum();
+    let mut out = Vec::new();
+    if counts.len() > limit {
+        let (head, tail) = counts.split_at(limit.saturating_sub(1));
+        for ((protocol, status), count) in head {
+            out.push(status_bucket(protocol, status, *count, total));
+        }
+        let other: u64 = tail.iter().map(|(_, count)| count).sum();
+        if other > 0 {
+            out.push(bucket("other".to_string(), other, total));
+        }
+    } else {
+        for ((protocol, status), count) in &counts {
+            out.push(status_bucket(protocol, status, *count, total));
+        }
+    }
+    out
+}
+
 /// Group failed requests, failed checks, and script exceptions by cause.
 ///
 /// Sources, all from data the engine already tracks:
-/// - HTTP status codes: failing `http_req_failed` samples bucketed by their
-///   non-zero `status` tag. This respects custom expected-response rules.
+/// - Response status codes: failing `http_req_failed` samples bucketed by their
+///   `proto` and non-zero `status` tags.
 /// - Transport/error kinds: `http_req_failed` series carrying an `error_kind`
 ///   (transport failures) or `error` (prepare/protocol/extraction) tag.
 /// - Failed checks: the failing fraction of each `checks` series, by `check` tag.
@@ -136,14 +205,15 @@ pub(crate) fn failures_breakdown(snap: &Snapshot) -> Value {
 
     // Status failures from the failure rate itself. Using `http_reqs` and a
     // hard-coded >=400 test would misclassify custom expected statuses.
-    let mut by_status: BTreeMap<String, u64> = BTreeMap::new();
+    let mut by_status: BTreeMap<(String, String), u64> = BTreeMap::new();
     for s in snap.series.iter().filter(|s| s.metric == "http_req_failed") {
         let Some(status) = s.tags.get("status") else {
             continue;
         };
         let code: i64 = status.parse().unwrap_or(0);
         if code > 0 && s.agg.sum > 0.0 {
-            *by_status.entry(status.clone()).or_default() += s.agg.sum.max(0.0) as u64;
+            let protocol = s.tags.get("proto").cloned().unwrap_or_default();
+            *by_status.entry((protocol, status.clone())).or_default() += s.agg.sum.max(0.0) as u64;
         }
     }
 
@@ -185,7 +255,7 @@ pub(crate) fn failures_breakdown(snap: &Snapshot) -> Value {
     }
 
     let sum_counts = |m: &BTreeMap<String, u64>| -> u64 { m.values().sum() };
-    let status_total = sum_counts(&by_status);
+    let status_total: u64 = by_status.values().sum();
     let error_total = sum_counts(&by_error_kind);
     let check_total = sum_counts(&by_check);
     let exception_total = sum_counts(&by_exception);
@@ -201,7 +271,7 @@ pub(crate) fn failures_breakdown(snap: &Snapshot) -> Value {
         "failed_requests": failed_requests,
         "failed_checks": check_total,
         "exceptions": exception_total,
-        "by_status": top_buckets(by_status.into_iter().collect(), LIMIT),
+        "by_status": top_status_buckets(by_status.into_iter().collect(), LIMIT),
         "by_error_kind": top_buckets(by_error_kind.into_iter().collect(), LIMIT),
         "by_check": top_buckets(by_check.into_iter().collect(), LIMIT),
         "by_exception": top_buckets(by_exception.into_iter().collect(), LIMIT),
@@ -743,7 +813,7 @@ mod tests {
                 "http_req_failed",
                 MetricKind::Rate,
                 1.0,
-                &[("status", "500")],
+                &[("status", "500"), ("proto", "http")],
             ));
         }
         for _ in 0..2 {
@@ -757,7 +827,7 @@ mod tests {
                 "http_req_failed",
                 MetricKind::Rate,
                 1.0,
-                &[("status", "404")],
+                &[("status", "404"), ("proto", "http")],
             ));
         }
         // 4 transport timeouts via http_req_failed with an error_kind tag.
@@ -800,6 +870,9 @@ mod tests {
         assert_eq!(by_status.len(), 2);
         // Highest count first: 500 with 3.
         assert_eq!(by_status[0]["key"], "500");
+        assert_eq!(by_status[0]["protocol"], "http");
+        assert_eq!(by_status[0]["status"], "500");
+        assert_eq!(by_status[0]["status_name"], "Internal Server Error");
         assert_eq!(by_status[0]["count"], 3);
         let share = by_status[0]["share"].as_f64().expect("share");
         assert!((share - 3.0 / 5.0).abs() < 1e-9);
@@ -817,6 +890,59 @@ mod tests {
         let by_exc = f["by_exception"].as_array().expect("by_exception");
         assert_eq!(by_exc.len(), 1);
         assert_eq!(by_exc[0]["count"], 6);
+    }
+
+    #[test]
+    fn failures_breakdown_keeps_protocol_status_spaces_distinct() {
+        let mut agg = Aggregator::new();
+        for _ in 0..2 {
+            agg.record(&sample(
+                "http_req_failed",
+                MetricKind::Rate,
+                1.0,
+                &[("status", "14"), ("proto", "grpc")],
+            ));
+        }
+        agg.record(&sample(
+            "http_req_failed",
+            MetricKind::Rate,
+            1.0,
+            &[("status", "16"), ("proto", "grpc")],
+        ));
+        agg.record(&sample(
+            "http_req_failed",
+            MetricKind::Rate,
+            1.0,
+            &[("status", "14"), ("proto", "risotto")],
+        ));
+        agg.record(&sample(
+            "http_req_failed",
+            MetricKind::Rate,
+            1.0,
+            &[("status", "599"), ("proto", "http")],
+        ));
+
+        let f = failures_breakdown(&agg.snapshot());
+        assert_eq!(f["event_total"], 5);
+        assert_eq!(f["failed_requests"], 5);
+        let statuses = f["by_status"].as_array().expect("by_status");
+        assert_eq!(statuses.len(), 4);
+
+        let find = |protocol: &str, status: &str| {
+            statuses
+                .iter()
+                .find(|row| row["protocol"] == protocol && row["status"] == status)
+                .expect("protocol/status bucket")
+        };
+        let unavailable = find("grpc", "14");
+        assert_eq!(unavailable["key"], "14");
+        assert_eq!(unavailable["status_name"], "UNAVAILABLE");
+        assert_eq!(unavailable["count"], 2);
+        assert!((unavailable["share"].as_f64().expect("share") - 0.4).abs() < 1e-9);
+
+        assert_eq!(find("grpc", "16")["status_name"], "UNAUTHENTICATED");
+        assert!(find("risotto", "14")["status_name"].is_null());
+        assert!(find("http", "599")["status_name"].is_null());
     }
 
     #[test]
@@ -853,6 +979,8 @@ mod tests {
         let by_status = f["by_status"].as_array().expect("by_status");
         assert_eq!(by_status.len(), 12);
         assert_eq!(by_status.last().unwrap()["key"], "other");
+        assert!(by_status[0]["protocol"].is_null());
+        assert!(by_status[0]["status"].is_string());
         // All 20 failures still accounted for across the 12 rows.
         let summed: u64 = by_status.iter().map(|b| b["count"].as_u64().unwrap()).sum();
         assert_eq!(summed, 20);

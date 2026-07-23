@@ -103,7 +103,7 @@
     const lines = ['category,cause,count,share_pct'];
     if (f) {
       const groups = [
-        ['http_status', f.by_status],
+        ['status', f.by_status],
         ['transport_error', f.by_error_kind],
         ['failed_check', f.by_check],
         ['script_exception', f.by_exception],
@@ -168,7 +168,7 @@
       ' total failures · generated ' +
       esc(new Date().toLocaleString()) +
       '</p>' +
-      section('HTTP status (4xx / 5xx)', f && f.by_status) +
+      section('Status codes', f && f.by_status) +
       section('Transport / error kind', f && f.by_error_kind) +
       section('Failed checks', f && f.by_check) +
       section('Script exceptions', f && f.by_exception) +
@@ -373,14 +373,17 @@
     const failSummary = h('span', { class: 'mono muted' }, 'no failures yet');
     const failGroupCard = (key, title) =>
       h('div', { class: 'fail-group' }, h('h4', null, title), failGroups[key]);
+    // Start disabled: there is nothing to export until a snapshot reports
+    // failures, and an enabled button that silently no-ops reads as broken.
+    const noFailuresTip = 'No failures recorded yet — enabled once the run reports failures';
     const dlCsvBtn = h(
       'button',
-      { class: 'btn btn-ghost btn-sm', type: 'button', title: 'Download breakdown as CSV' },
+      { class: 'btn btn-ghost btn-sm', type: 'button', disabled: true, title: noFailuresTip },
       '↓ CSV'
     );
     const dlHtmlBtn = h(
       'button',
-      { class: 'btn btn-ghost btn-sm', type: 'button', title: 'Download breakdown as an HTML report' },
+      { class: 'btn btn-ghost btn-sm', type: 'button', disabled: true, title: noFailuresTip },
       '↓ Report'
     );
     dlCsvBtn.addEventListener('click', () => downloadFailuresCsv(lastFailures));
@@ -397,7 +400,7 @@
       h(
         'div',
         { class: 'fail-grid' },
-        failGroupCard('by_status', 'HTTP status'),
+        failGroupCard('by_status', 'Status codes'),
         failGroupCard('by_error_kind', 'Transport / error'),
         failGroupCard('by_check', 'Failed checks'),
         failGroupCard('by_exception', 'Script exceptions')
@@ -585,6 +588,8 @@
       }
       dlCsvBtn.disabled = total === 0;
       dlHtmlBtn.disabled = total === 0;
+      dlCsvBtn.title = total === 0 ? noFailuresTip : 'Download breakdown as CSV';
+      dlHtmlBtn.title = total === 0 ? noFailuresTip : 'Download breakdown as an HTML report';
 
       const renderGroup = (key) => {
         const rows = (f && f[key]) || [];

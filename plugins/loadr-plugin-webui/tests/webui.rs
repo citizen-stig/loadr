@@ -708,6 +708,8 @@ async fn static_spa_served_with_content_types() {
     assert!(app_js.contains("Response status"));
     assert!(app_js.contains("response_status"));
     assert!(app_js.contains("category,protocol,cause,count,share_pct"));
+    assert!(app_js.contains("failureEventTotal"));
+    assert!(app_js.contains("No failures recorded yet"));
     assert!(!app_js.contains("Failed HTTP status"));
     assert!(!app_js.contains("failGroupCard('by_status', 'HTTP status')"));
 

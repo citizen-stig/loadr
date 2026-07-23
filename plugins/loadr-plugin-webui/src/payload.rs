@@ -193,42 +193,35 @@ fn top_status_buckets(mut counts: Vec<((String, String), u64)>, limit: usize) ->
 /// Group failed requests, failed checks, and script exceptions by cause.
 ///
 /// Sources, all from data the engine already tracks:
-/// - Response status codes: failing `http_req_failed` samples bucketed by their
-///   `proto` and non-zero `status` tags.
-/// - Transport/error kinds: `http_req_failed` series carrying an `error_kind`
-///   (transport failures) or `error` (prepare/protocol/extraction) tag.
+/// - Failed requests: `http_req_failed` samples carrying an `error_kind`
+///   (transport failures) or `error` (prepare/protocol/extraction) tag are
+///   bucketed by that kind. Remaining failures are bucketed by `proto` and
+///   non-zero `status`, with missing/zero statuses reported as `unknown`.
 /// - Failed checks: the failing fraction of each `checks` series, by `check` tag.
 /// - Script exceptions: the `vu_exceptions` counter, by `exception` tag.
 pub(crate) fn failures_breakdown(snap: &Snapshot) -> Value {
     use std::collections::BTreeMap;
     const LIMIT: usize = 12;
 
-    // Status failures from the failure rate itself. Using `http_reqs` and a
-    // hard-coded >=400 test would misclassify custom expected statuses.
     let mut by_status: BTreeMap<(String, String), u64> = BTreeMap::new();
-    for s in snap.series.iter().filter(|s| s.metric == "http_req_failed") {
-        let Some(status) = s.tags.get("status") else {
-            continue;
-        };
-        let code: i64 = status.parse().unwrap_or(0);
-        if code > 0 && s.agg.sum > 0.0 {
-            let protocol = s.tags.get("proto").cloned().unwrap_or_default();
-            *by_status.entry((protocol, status.clone())).or_default() += s.agg.sum.max(0.0) as u64;
-        }
-    }
-
-    // Transport / error-kind failures from http_req_failed series tags.
     let mut by_error_kind: BTreeMap<String, u64> = BTreeMap::new();
     for s in snap.series.iter().filter(|s| s.metric == "http_req_failed") {
-        let kind = s
-            .tags
-            .get("error_kind")
-            .or_else(|| s.tags.get("error"))
-            .cloned();
-        if let Some(kind) = kind {
-            // sum = number of failing samples in a Rate series.
-            *by_error_kind.entry(kind).or_default() += s.agg.sum.max(0.0) as u64;
+        let fails = s.agg.sum.max(0.0) as u64;
+        if fails == 0 {
+            continue;
         }
+        if let Some(kind) = s.tags.get("error_kind").or_else(|| s.tags.get("error")) {
+            *by_error_kind.entry(kind.clone()).or_default() += fails;
+            continue;
+        }
+        let protocol = s.tags.get("proto").cloned().unwrap_or_default();
+        let status = s
+            .tags
+            .get("status")
+            .filter(|status| status.parse::<i64>().is_ok_and(|code| code > 0))
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string());
+        *by_status.entry((protocol, status)).or_default() += fails;
     }
 
     // Failed checks: count = total evaluations, sum = passes, so fails = count - sum.
@@ -814,6 +807,42 @@ mod tests {
         assert_eq!(find("grpc", "16")["status_name"], "UNAUTHENTICATED");
         assert!(find("risotto", "14")["status_name"].is_null());
         assert!(find("http", "599")["status_name"].is_null());
+    }
+
+    #[test]
+    fn failures_breakdown_prefers_error_kind_and_keeps_unknown_failures() {
+        let mut agg = Aggregator::new();
+        agg.record(&sample(
+            "http_req_failed",
+            MetricKind::Rate,
+            1.0,
+            &[
+                ("status", "500"),
+                ("proto", "http"),
+                ("error_kind", "connection_reset"),
+            ],
+        ));
+        agg.record(&sample(
+            "http_req_failed",
+            MetricKind::Rate,
+            1.0,
+            &[("status", "0"), ("proto", "grpc")],
+        ));
+
+        let f = failures_breakdown(&agg.snapshot());
+        assert_eq!(f["event_total"], 2);
+        assert_eq!(f["failed_requests"], 2);
+
+        let statuses = f["by_status"].as_array().expect("by_status");
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0]["protocol"], "grpc");
+        assert_eq!(statuses[0]["status"], "unknown");
+        assert!(statuses[0]["status_name"].is_null());
+
+        let errors = f["by_error_kind"].as_array().expect("by_error_kind");
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0]["key"], "connection_reset");
+        assert_eq!(errors[0]["count"], 1);
     }
 
     #[test]

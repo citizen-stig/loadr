@@ -124,6 +124,11 @@
     return protocolLabel ? protocolLabel + ' · ' + detail : detail;
   }
 
+  function failureEventTotal(f) {
+    if (!f) return 0;
+    return (f.event_total != null ? f.event_total : f.total) || 0;
+  }
+
   // Flatten a failures breakdown object into CSV rows:
   // category, protocol, cause, count, share.
   function failuresToCsv(f) {
@@ -179,7 +184,7 @@
         '</tbody></table>'
       );
     };
-    const total = (f && f.event_total) || 0;
+    const total = failureEventTotal(f);
     return (
       '<!doctype html><html><head><meta charset="utf-8"><title>loadr failure breakdown</title>' +
       '<style>body{font:14px system-ui,sans-serif;margin:2rem;color:#111;background:#fff}' +
@@ -220,12 +225,12 @@
   }
 
   function downloadFailuresCsv(f) {
-    if (!f || !f.total) return;
+    if (!failureEventTotal(f)) return;
     triggerDownload('loadr-failures-' + fileStamp() + '.csv', failuresToCsv(f), 'text/csv;charset=utf-8');
   }
 
   function downloadFailuresHtml(f, runLabel) {
-    if (!f || !f.total) return;
+    if (!failureEventTotal(f)) return;
     triggerDownload('loadr-failures-' + fileStamp() + '.html', failuresToHtml(f, runLabel), 'text/html;charset=utf-8');
   }
 
@@ -408,14 +413,15 @@
     const failSummary = h('span', { class: 'mono muted' }, 'no failures yet');
     const failGroupCard = (key, title) =>
       h('div', { class: 'fail-group' }, h('h4', null, title), failGroups[key]);
+    const noFailuresTip = 'No failures recorded yet — enabled once the run reports failures';
     const dlCsvBtn = h(
       'button',
-      { class: 'btn btn-ghost btn-sm', type: 'button', title: 'Download breakdown as CSV' },
+      { class: 'btn btn-ghost btn-sm', type: 'button', disabled: true, title: noFailuresTip },
       '↓ CSV'
     );
     const dlHtmlBtn = h(
       'button',
-      { class: 'btn btn-ghost btn-sm', type: 'button', title: 'Download breakdown as an HTML report' },
+      { class: 'btn btn-ghost btn-sm', type: 'button', disabled: true, title: noFailuresTip },
       '↓ Report'
     );
     dlCsvBtn.addEventListener('click', () => downloadFailuresCsv(lastFailures));
@@ -676,7 +682,7 @@
     // Render the failure breakdown groups and refresh the download buttons.
     function updateFailures(f) {
       lastFailures = f || null;
-      const total = (f && f.event_total) || 0;
+      const total = failureEventTotal(f);
       if (total > 0) {
         failSummary.textContent =
           fmt.num(total, 0) +
@@ -694,6 +700,8 @@
       }
       dlCsvBtn.disabled = total === 0;
       dlHtmlBtn.disabled = total === 0;
+      dlCsvBtn.title = total === 0 ? noFailuresTip : 'Download breakdown as CSV';
+      dlHtmlBtn.title = total === 0 ? noFailuresTip : 'Download breakdown as an HTML report';
 
       const renderGroup = (key) => {
         const rows = (f && f[key]) || [];

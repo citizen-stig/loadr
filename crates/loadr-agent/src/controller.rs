@@ -104,6 +104,10 @@ pub struct AgentInfo {
     pub name: String,
     pub labels: HashMap<String, String>,
     pub cores: u32,
+    /// Direct peer socket observed by the controller for the current session.
+    pub peer_addr: Option<SocketAddr>,
+    pub version: Option<String>,
+    pub revision: Option<String>,
     pub connected_secs: u64,
     /// Milliseconds since the last heartbeat/traffic.
     pub last_heartbeat_ms: u64,
@@ -202,6 +206,9 @@ struct AgentEntry {
     name: String,
     labels: HashMap<String, String>,
     cores: u32,
+    peer_addr: Option<SocketAddr>,
+    version: Option<String>,
+    revision: Option<String>,
     connected_at: Instant,
     last_heartbeat: Instant,
     active_vus: u64,
@@ -269,14 +276,27 @@ struct Inner {
     control_counter: AtomicU64,
 }
 
+fn non_empty(value: &str) -> Option<String> {
+    (!value.is_empty()).then(|| value.to_string())
+}
+
 impl Inner {
-    fn register_agent(&self, reg: &pb::Register, sender: AgentSender, session: u64) {
+    fn register_agent(
+        &self,
+        reg: &pb::Register,
+        peer_addr: Option<SocketAddr>,
+        sender: AgentSender,
+        session: u64,
+    ) {
         self.agents.lock().insert(
             reg.agent_id.clone(),
             AgentEntry {
                 name: reg.agent_name.clone(),
                 labels: reg.labels.clone(),
                 cores: reg.cpu_cores,
+                peer_addr,
+                version: non_empty(&reg.loadr_version),
+                revision: non_empty(&reg.build_revision),
                 connected_at: Instant::now(),
                 last_heartbeat: Instant::now(),
                 active_vus: 0,
@@ -656,6 +676,7 @@ impl Coordination for CoordinationService {
         &self,
         request: Request<Streaming<pb::AgentMessage>>,
     ) -> Result<Response<Self::SessionStream>, Status> {
+        let peer_addr = request.remote_addr();
         let mut inbound = request.into_inner();
         let first = inbound
             .message()
@@ -688,7 +709,7 @@ impl Coordination for CoordinationService {
             .map_err(|_| Status::unavailable("session closed"))?;
 
         let session = self.inner.session_counter.fetch_add(1, Ordering::Relaxed) + 1;
-        self.inner.register_agent(&reg, tx, session);
+        self.inner.register_agent(&reg, peer_addr, tx, session);
         tracing::info!(agent = %reg.agent_id, name = %reg.agent_name, "agent registered");
 
         let inner = self.inner.clone();
@@ -1135,6 +1156,9 @@ impl ControllerHandle {
                 name: e.name.clone(),
                 labels: e.labels.clone(),
                 cores: e.cores,
+                peer_addr: e.peer_addr,
+                version: e.version.clone(),
+                revision: e.revision.clone(),
                 connected_secs: e.connected_at.elapsed().as_secs(),
                 last_heartbeat_ms: e.last_heartbeat.elapsed().as_millis() as u64,
                 active_vus: e.active_vus,
@@ -1359,6 +1383,9 @@ mod metrics_tests {
                 name: "worker-a".into(),
                 labels: HashMap::new(),
                 cores: 1,
+                peer_addr: None,
+                version: None,
+                revision: None,
                 connected_at: Instant::now(),
                 last_heartbeat: Instant::now(),
                 active_vus: 0,
@@ -1408,5 +1435,77 @@ mod metrics_tests {
         // …then an in-flight delta lands. It must not resurrect the gauge.
         inner.handle_agent_message("agent-a", batch(&delta));
         assert_eq!(fleet_vus(), Some(0.0));
+    }
+}
+
+#[cfg(test)]
+mod registration_tests {
+    use super::*;
+
+    fn test_inner() -> Inner {
+        Inner {
+            controller_id: "controller-test".to_string(),
+            liveness: Duration::from_secs(6),
+            agents: Mutex::new(HashMap::new()),
+            runs: Mutex::new(HashMap::new()),
+            session_counter: AtomicU64::new(0),
+            control_counter: AtomicU64::new(0),
+        }
+    }
+
+    fn registration(id: &str, version: &str, revision: &str) -> pb::Register {
+        pb::Register {
+            agent_id: id.to_string(),
+            agent_name: "worker".to_string(),
+            protocol_version: PROTOCOL_VERSION,
+            loadr_version: version.to_string(),
+            cpu_cores: 8,
+            labels: HashMap::new(),
+            resume_run_id: String::new(),
+            build_revision: revision.to_string(),
+        }
+    }
+
+    fn sender() -> AgentSender {
+        mpsc::channel(1).0
+    }
+
+    #[test]
+    fn registration_accepts_missing_debug_metadata() {
+        let inner = test_inner();
+        inner.register_agent(&registration("agent-a", "", ""), None, sender(), 1);
+
+        let agents = inner.agents.lock();
+        let agent = agents.get("agent-a").expect("registered agent");
+        assert_eq!(agent.peer_addr, None);
+        assert_eq!(agent.version, None);
+        assert_eq!(agent.revision, None);
+    }
+
+    #[test]
+    fn same_id_replaces_peer_and_build_metadata() {
+        let inner = test_inner();
+        let first_peer = "10.0.0.4:41000".parse().expect("first peer");
+        let second_peer = "10.0.0.4:42000".parse().expect("second peer");
+
+        inner.register_agent(
+            &registration("agent-a", "1.28.0", "aaaaaaaaaaaa"),
+            Some(first_peer),
+            sender(),
+            1,
+        );
+        inner.register_agent(
+            &registration("agent-a", "1.29.0", "bbbbbbbbbbbb"),
+            Some(second_peer),
+            sender(),
+            2,
+        );
+
+        let agents = inner.agents.lock();
+        assert_eq!(agents.len(), 1);
+        let agent = agents.get("agent-a").expect("registered agent");
+        assert_eq!(agent.peer_addr, Some(second_peer));
+        assert_eq!(agent.version.as_deref(), Some("1.29.0"));
+        assert_eq!(agent.revision.as_deref(), Some("bbbbbbbbbbbb"));
     }
 }

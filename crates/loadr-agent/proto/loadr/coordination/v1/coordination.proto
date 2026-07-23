@@ -31,6 +31,8 @@ message Register {
   map<string, string> labels = 6;
   // Set on reconnection when a run is still in flight (controller decides policy).
   string resume_run_id = 7;
+  // Source revision embedded when this agent binary was built.
+  string build_revision = 8;
 }
 
 message Heartbeat {

@@ -224,12 +224,13 @@ async fn run_session(
             agent_id: agent_id.to_string(),
             agent_name: config.agent_name.clone(),
             protocol_version: PROTOCOL_VERSION,
-            loadr_version: env!("CARGO_PKG_VERSION").to_string(),
+            loadr_version: loadr_core::build_info::VERSION.to_string(),
             cpu_cores: std::thread::available_parallelism()
                 .map(|n| n.get() as u32)
                 .unwrap_or(1),
             labels: config.labels.clone(),
             resume_run_id,
+            build_revision: loadr_core::build_info::GIT_REVISION.to_string(),
         })),
     };
     tx.try_send(register)

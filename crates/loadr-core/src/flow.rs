@@ -189,9 +189,11 @@ pub struct CompiledRequest {
     /// above. Empty for every pre-existing plan.
     pub grpc_protobuf_checks: Option<Arc<Vec<GrpcProtobufFieldCheck>>>,
     /// Compile-time half of the gRPC lazy-decode gate: true when `extract`,
-    /// or any `assert`/`checks` condition, needs the response body. `prepare`
-    /// ANDs in the runtime half (a script `afterRequest` hook) before setting
-    /// `GrpcRequest.discard_response_body`.
+    /// or any `assert`/`checks` condition, needs the response body. Protobuf
+    /// field checks deliberately do not count — they read the decoded message,
+    /// not the JSON body. `prepare` ANDs in the remaining gate inputs
+    /// (`grpc_protobuf_checks` and a script `afterRequest` hook) before
+    /// setting `GrpcRequest.discard_response_body`.
     pub reads_response_body: bool,
     pub ws: Option<loadr_config::WsOptions>,
     pub grpc: Option<loadr_config::GrpcOptions>,
@@ -1244,19 +1246,21 @@ impl FlowRunner {
         }
         for condition in &req.checks {
             let result = self.eval_condition(condition, &response, vu, script);
-            let failure_code = result
-                .failure_group
-                .as_ref()
-                .and_then(|group| group.code)
-                .map(|code| code.to_string());
-            let mut extra_tags = vec![("check", result.name.as_str())];
-            if let Some(group) = &result.failure_group {
-                extra_tags.push(("failure_group", group.label.as_str()));
-            }
-            if let Some(code) = failure_code.as_deref() {
-                extra_tags.push(("failure_code", code));
-            }
-            let tags = vu.sample_tags(&extra_tags);
+            // Grouped failures are the rare branch; the common all-pass path
+            // must stay a stack slice with no per-check allocation.
+            let tags = match &result.failure_group {
+                None => vu.sample_tags(&[("check", &result.name)]),
+                Some(group) => match group.code.map(|code| code.to_string()) {
+                    None => {
+                        vu.sample_tags(&[("check", &result.name), ("failure_group", &group.label)])
+                    }
+                    Some(code) => vu.sample_tags(&[
+                        ("check", &result.name),
+                        ("failure_group", &group.label),
+                        ("failure_code", &code),
+                    ]),
+                },
+            };
             vu.metrics.rate(&self.builtins.checks, result.pass, &tags);
         }
         // Record whether this request failed, so `retry` can react to it.
@@ -1726,8 +1730,9 @@ impl FlowRunner {
                 // `afterRequest` hook can see it either (`has_function` is an
                 // O(1) HashSet lookup — no extra caching machinery needed).
                 discard_response_body,
-                protobuf_only_response: !discard_response_body
-                    && has_protobuf_checks
+                // Checks are the only body reader: decode the message, skip
+                // the JSON conversion.
+                protobuf_only_response: has_protobuf_checks
                     && !req.reads_response_body
                     && !has_after_request,
                 protobuf_checks: req.grpc_protobuf_checks.clone(),

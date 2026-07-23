@@ -15,8 +15,8 @@ use crate::extract::{CompiledExtractor, ExtractError};
 use crate::metrics::{BuiltinMetrics, MetricKind, MetricRegistry, MetricsBus, Tags};
 use crate::pacing::sample_think_time;
 use crate::protocol::{
-    GrpcRequest, PreparedRequest, ProtocolRegistry, ProtocolResponse, RequestOptions,
-    SocketRequest, Timings, WsFrame, WsRequest,
+    GrpcProtobufFieldCheck, GrpcRequest, PreparedRequest, ProtocolRegistry, ProtocolResponse,
+    RequestOptions, SocketRequest, Timings, WsFrame, WsRequest,
 };
 use crate::script::{HostHttpRequest, HostHttpResponse, ScriptHost, ScriptLogLevel, VuScript};
 use crate::vu::{json_to_string, VuContext};
@@ -185,10 +185,15 @@ pub struct CompiledRequest {
     pub extract: Vec<CompiledExtractor>,
     pub assert: Vec<CompiledCondition>,
     pub checks: Vec<CompiledCondition>,
+    /// Descriptor-aware protobuf checks, bound to the condition result slots
+    /// above. Empty for every pre-existing plan.
+    pub grpc_protobuf_checks: Option<Arc<Vec<GrpcProtobufFieldCheck>>>,
     /// Compile-time half of the gRPC lazy-decode gate: true when `extract`,
-    /// or any `assert`/`checks` condition, needs the response body. `prepare`
-    /// ANDs in the runtime half (a script `afterRequest` hook) before setting
-    /// `GrpcRequest.discard_response_body`.
+    /// or any `assert`/`checks` condition, needs the response body. Protobuf
+    /// field checks deliberately do not count — they read the decoded message,
+    /// not the JSON body. `prepare` ANDs in the remaining gate inputs
+    /// (`grpc_protobuf_checks` and a script `afterRequest` hook) before
+    /// setting `GrpcRequest.discard_response_body`.
     pub reads_response_body: bool,
     pub ws: Option<loadr_config::WsOptions>,
     pub grpc: Option<loadr_config::GrpcOptions>,
@@ -471,16 +476,24 @@ fn compile_request(
         .iter()
         .map(|e| CompiledExtractor::compile(e).map_err(|e| EngineError::Config(e.to_string())))
         .collect::<Result<_, _>>()?;
-    let assert: Vec<CompiledCondition> = req
+    let mut assert: Vec<CompiledCondition> = req
         .assert
         .iter()
         .map(|c| CompiledCondition::compile(c).map_err(EngineError::Config))
         .collect::<Result<_, _>>()?;
-    let checks: Vec<CompiledCondition> = req
+    let mut checks: Vec<CompiledCondition> = req
         .checks
         .iter()
         .map(|c| CompiledCondition::compile(c).map_err(EngineError::Config))
         .collect::<Result<_, _>>()?;
+    let mut grpc_protobuf_checks = Vec::new();
+    for condition in assert.iter_mut().chain(checks.iter_mut()) {
+        if let Some(check) = condition.bind_protobuf_check(grpc_protobuf_checks.len() as u32) {
+            grpc_protobuf_checks.push(check);
+        }
+    }
+    let grpc_protobuf_checks =
+        (!grpc_protobuf_checks.is_empty()).then(|| Arc::new(grpc_protobuf_checks));
     // Compile-time half of the gRPC lazy-decode gate (see
     // `CompiledRequest::reads_response_body`); `Kind::Js` always counts as
     // reading the body since we can't know in advance what the expression
@@ -520,6 +533,7 @@ fn compile_request(
         extract,
         assert,
         checks,
+        grpc_protobuf_checks,
         reads_response_body,
         ws: req.ws.clone(),
         grpc,
@@ -1240,7 +1254,21 @@ impl FlowRunner {
         }
         for condition in &req.checks {
             let result = self.eval_condition(condition, &response, vu, script);
-            let tags = vu.sample_tags(&[("check", &result.name)]);
+            // Grouped failures are the rare branch; the common all-pass path
+            // must stay a stack slice with no per-check allocation.
+            let tags = match &result.failure_group {
+                None => vu.sample_tags(&[("check", &result.name)]),
+                Some(group) => match group.code.map(|code| code.to_string()) {
+                    None => {
+                        vu.sample_tags(&[("check", &result.name), ("failure_group", &group.label)])
+                    }
+                    Some(code) => vu.sample_tags(&[
+                        ("check", &result.name),
+                        ("failure_group", &group.label),
+                        ("failure_code", &code),
+                    ]),
+                },
+            };
             vu.metrics.rate(&self.builtins.checks, result.pass, &tags);
         }
         // Record whether this request failed, so `retry` can react to it.
@@ -1285,175 +1313,6 @@ impl FlowRunner {
             }
         }
         result
-    }
-
-    /// Emit the standard metric families for a completed request.
-    fn emit_request_metrics(
-        &self,
-        vu: &mut VuContext,
-        request: &PreparedRequest,
-        response: &ProtocolResponse,
-    ) {
-        let b = &self.builtins;
-        let status = response.status.to_string();
-        // Transport errors get a coarse `error_kind` tag so the UI can group
-        // failures by cause (timeout / connection / dns / tls / ...).
-        let error_kind = response
-            .error
-            .as_deref()
-            .map(classify_transport_error)
-            .unwrap_or("");
-        let mut tag_pairs: Vec<(&str, &str)> = vec![
-            ("name", &request.name),
-            ("method", &request.method),
-            ("status", &status),
-            ("proto", &request.protocol),
-        ];
-        if !error_kind.is_empty() {
-            tag_pairs.push(("error_kind", error_kind));
-        }
-        let tags = vu.sample_tags(&tag_pairs);
-        let m = &vu.metrics;
-        let t = &response.timings;
-
-        m.counter(&b.data_sent, response.bytes_sent as f64, &tags);
-        m.counter(&b.data_received, response.bytes_received as f64, &tags);
-
-        match request.protocol.as_str() {
-            "http" | "graphql" => {
-                m.counter(&b.http_reqs, 1.0, &tags);
-                m.trend(&b.http_req_duration, t.duration_ms, &tags);
-                m.trend(&b.http_req_blocked, t.blocked_ms, &tags);
-                m.trend(&b.http_req_connecting, t.connect_ms, &tags);
-                m.trend(&b.http_req_tls_handshaking, t.tls_ms, &tags);
-                m.trend(&b.http_req_sending, t.sending_ms, &tags);
-                m.trend(&b.http_req_waiting, t.waiting_ms, &tags);
-                m.trend(&b.http_req_receiving, t.receiving_ms, &tags);
-                m.rate(&b.http_req_failed, response.failed(), &tags);
-                if request.protocol == "graphql" {
-                    self.emit_named(vu, "graphql_reqs", MetricKind::Counter, 1.0, &tags);
-                    self.emit_named(
-                        vu,
-                        "graphql_req_duration",
-                        MetricKind::Trend,
-                        t.duration_ms,
-                        &tags,
-                    );
-                }
-            }
-            "ws" => {
-                self.emit_named(vu, "ws_connecting", MetricKind::Trend, t.blocked_ms, &tags);
-                self.emit_named(
-                    vu,
-                    "ws_session_duration",
-                    MetricKind::Trend,
-                    t.duration_ms,
-                    &tags,
-                );
-                let sent = response
-                    .extras
-                    .get("msgs_sent")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0);
-                let received = response
-                    .extras
-                    .get("msgs_received")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0);
-                self.emit_named(vu, "ws_msgs_sent", MetricKind::Counter, sent, &tags);
-                self.emit_named(vu, "ws_msgs_received", MetricKind::Counter, received, &tags);
-                m.rate(&b.http_req_failed, response.error.is_some(), &tags);
-            }
-            // gRPC is the highest-rate protocol here: use the pre-interned
-            // names (like HTTP above) instead of the per-request
-            // `format!` + registry lookup of the generic arm. gRPC responses
-            // never carry docs/rows/msgs extras, so those probes are skipped.
-            "grpc" => {
-                m.counter(&b.grpc_reqs, 1.0, &tags);
-                m.trend(&b.grpc_req_duration, t.duration_ms, &tags);
-                m.rate(&b.http_req_failed, response.failed(), &tags);
-            }
-            other => {
-                // grpc/tcp/udp/noop built-ins keep their own family name. The
-                // `sse`/`browser` built-ins historically share the generic
-                // `plugin` family — preserve that so existing dashboards and
-                // thresholds keep working. Everything else is a loaded protocol
-                // *plugin*, which gets a family derived from its own protocol
-                // name (so the `mongo` plugin emits `mongo_reqs` /
-                // `mongo_req_duration` / `mongo_docs`, the `postgres` / `mysql`
-                // plugins emit `postgres_reqs` / `mysql_reqs`, and the `redis`
-                // plugin emits `redis_reqs` / `redis_req_duration`).
-                let family = match other {
-                    "grpc" | "tcp" | "udp" | "noop" => other.to_string(),
-                    "sse" | "browser" => "plugin".to_string(),
-                    name => metric_family(name),
-                };
-                self.emit_named(
-                    vu,
-                    &format!("{family}_reqs"),
-                    MetricKind::Counter,
-                    1.0,
-                    &tags,
-                );
-                self.emit_named(
-                    vu,
-                    &format!("{family}_req_duration"),
-                    MetricKind::Trend,
-                    t.duration_ms,
-                    &tags,
-                );
-                // Plugin protocols may report a count of affected/returned
-                // records: `extras.docs` (e.g. Mongo documents) is surfaced as
-                // `<family>_docs`, `extras.rows` (e.g. SQL rows returned or
-                // affected) as `<family>_rows`, and `extras.msgs` (e.g. Kafka
-                // messages produced or fetched) as `<family>_msgs`.
-                if let Some(docs) = response.extras.get("docs").and_then(|v| v.as_f64()) {
-                    self.emit_named(
-                        vu,
-                        &format!("{family}_docs"),
-                        MetricKind::Counter,
-                        docs,
-                        &tags,
-                    );
-                }
-                if let Some(rows) = response.extras.get("rows").and_then(|v| v.as_f64()) {
-                    self.emit_named(
-                        vu,
-                        &format!("{family}_rows"),
-                        MetricKind::Counter,
-                        rows,
-                        &tags,
-                    );
-                }
-                if let Some(msgs) = response.extras.get("msgs").and_then(|v| v.as_f64()) {
-                    self.emit_named(
-                        vu,
-                        &format!("{family}_msgs"),
-                        MetricKind::Counter,
-                        msgs,
-                        &tags,
-                    );
-                }
-                m.rate(&b.http_req_failed, response.failed(), &tags);
-            }
-        }
-    }
-
-    fn emit_named(
-        &self,
-        vu: &VuContext,
-        name: &str,
-        kind: MetricKind,
-        value: f64,
-        tags: &Arc<Tags>,
-    ) {
-        let metric = vu
-            .run
-            .registry
-            .get(name)
-            .map(|d| d.name)
-            .unwrap_or_else(|| Arc::from(name));
-        vu.metrics.emit_value(&metric, kind, value, tags);
     }
 
     /// Record an injected chaos fault on the `faults_injected` counter,
@@ -1684,6 +1543,12 @@ impl FlowRunner {
             } else {
                 req.grpc_literal_messages.is_some()
             };
+            let has_after_request = script
+                .as_ref()
+                .is_some_and(|s| s.has_function("afterRequest"));
+            let has_protobuf_checks = req.grpc_protobuf_checks.is_some();
+            let discard_response_body =
+                !req.reads_response_body && !has_protobuf_checks && !has_after_request;
             options.grpc = Some(GrpcRequest {
                 proto_files: grpc.proto_files.clone(),
                 proto_includes: grpc.proto_includes.clone(),
@@ -1703,10 +1568,13 @@ impl FlowRunner {
                 // Skip decode when nothing in the plan reads the body and no
                 // `afterRequest` hook can see it either (`has_function` is an
                 // O(1) HashSet lookup — no extra caching machinery needed).
-                discard_response_body: !req.reads_response_body
-                    && !script
-                        .as_ref()
-                        .is_some_and(|s| s.has_function("afterRequest")),
+                discard_response_body,
+                // Checks are the only body reader: decode the message, skip
+                // the JSON conversion.
+                protobuf_only_response: has_protobuf_checks
+                    && !req.reads_response_body
+                    && !has_after_request,
+                protobuf_checks: req.grpc_protobuf_checks.clone(),
             });
         }
         if let Some(socket) = &req.socket {

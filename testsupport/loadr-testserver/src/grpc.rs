@@ -31,10 +31,15 @@ struct EchoService;
 impl Echo for EchoService {
     async fn unary_echo(&self, request: Request<EchoRequest>) -> EchoResult<EchoResponse> {
         let req = request.into_inner();
+        if req.fail_transport {
+            return Err(Status::resource_exhausted("requested transport failure"));
+        }
         Ok(Response::new(EchoResponse {
             message: req.message,
             index: 0,
             payload: req.payload,
+            code: req.response_code,
+            owner_hint: req.owner_hint,
         }))
     }
 
@@ -48,11 +53,15 @@ impl Echo for EchoService {
         let repeat = if req.repeat > 0 { req.repeat } else { 3 };
         let message = req.message;
         let payload = req.payload;
+        let code = req.response_code;
+        let owner_hint = req.owner_hint;
         let stream = futures::stream::iter((0..repeat).map(move |index| {
             Ok(EchoResponse {
                 message: message.clone(),
                 index,
                 payload: payload.clone(),
+                code,
+                owner_hint,
             })
         }));
         Ok(Response::new(Box::pin(stream)))
@@ -65,16 +74,22 @@ impl Echo for EchoService {
         let mut inbound = request.into_inner();
         let mut combined = String::new();
         let mut payload = Vec::new();
+        let mut code = 0;
+        let mut owner_hint = None;
         let mut count = 0i32;
         while let Some(req) = inbound.message().await? {
             combined.push_str(&req.message);
             payload = req.payload;
+            code = req.response_code;
+            owner_hint = req.owner_hint;
             count += 1;
         }
         Ok(Response::new(EchoResponse {
             message: combined,
             index: count,
             payload,
+            code,
+            owner_hint,
         }))
     }
 
@@ -94,6 +109,8 @@ impl Echo for EchoService {
                             message: req.message,
                             index,
                             payload: req.payload,
+                            code: req.response_code,
+                            owner_hint: req.owner_hint,
                         }),
                         (Some(inbound), index + 1),
                     )),

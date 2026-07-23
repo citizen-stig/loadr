@@ -753,56 +753,110 @@ impl Ctx<'_> {
             }
             declared.insert(ex.name().to_string());
         }
-        for (ci, cond) in req.assert.iter().chain(req.checks.iter()).enumerate() {
-            let cpath = format!("{rpath}.assert_or_check[{ci}]");
-            match cond {
-                Condition::BodyMatches { pattern, .. } => {
-                    if let Err(e) = regex::Regex::new(pattern) {
-                        self.error(cpath, format!("invalid regex: {e}"));
-                    }
-                }
-                Condition::Status {
-                    equals,
-                    one_of,
-                    matches,
-                    ..
-                } => {
-                    if equals.is_none() && one_of.is_none() && matches.is_none() {
-                        self.error(
-                            cpath.clone(),
-                            "status condition needs `equals`, `one_of` or `matches`",
-                        );
-                    }
-                    if let Some(m) = matches {
-                        if let Err(e) = regex::Regex::new(m) {
+        for (section, conditions) in [("assert", &req.assert), ("checks", &req.checks)] {
+            for (ci, cond) in conditions.iter().enumerate() {
+                let cpath = format!("{rpath}.{section}[{ci}]");
+                match cond {
+                    Condition::BodyMatches { pattern, .. } => {
+                        if let Err(e) = regex::Regex::new(pattern) {
                             self.error(cpath, format!("invalid regex: {e}"));
                         }
                     }
-                }
-                Condition::Jsonpath { expression, .. } => {
-                    if serde_json_path::JsonPath::parse(expression).is_err() {
-                        self.error(cpath, format!("invalid JSONPath `{expression}`"));
+                    Condition::Status {
+                        equals,
+                        one_of,
+                        matches,
+                        ..
+                    } => {
+                        if equals.is_none() && one_of.is_none() && matches.is_none() {
+                            self.error(
+                                cpath.clone(),
+                                "status condition needs `equals`, `one_of` or `matches`",
+                            );
+                        }
+                        if let Some(m) = matches {
+                            if let Err(e) = regex::Regex::new(m) {
+                                self.error(cpath, format!("invalid regex: {e}"));
+                            }
+                        }
                     }
-                }
-                Condition::Size {
-                    min, max, equals, ..
-                } => {
-                    if min.is_none() && max.is_none() && equals.is_none() {
-                        self.error(cpath, "size condition needs `min`, `max` or `equals`");
+                    Condition::Jsonpath { expression, .. } => {
+                        if serde_json_path::JsonPath::parse(expression).is_err() {
+                            self.error(cpath, format!("invalid JSONPath `{expression}`"));
+                        }
                     }
+                    Condition::ProtobufField {
+                        field,
+                        equals,
+                        exists,
+                        failure_groups,
+                        ..
+                    } => {
+                        if req.grpc.is_none() {
+                            self.error(
+                                cpath.clone(),
+                                "protobuf_field conditions require a gRPC request",
+                            );
+                        }
+                        if field.is_empty() || field.contains('.') {
+                            self.error(
+                                cpath.clone(),
+                                "protobuf_field `field` must be a non-empty top-level protobuf field name",
+                            );
+                        }
+                        if equals.is_none() && exists.is_none() {
+                            self.error(
+                                cpath.clone(),
+                                "protobuf_field condition needs `equals` or `exists`",
+                            );
+                        }
+                        if equals.is_some() && exists == &Some(false) {
+                            self.error(
+                                cpath.clone(),
+                                "protobuf_field cannot combine `equals` with `exists: false`",
+                            );
+                        }
+                        if let Some(groups) = failure_groups {
+                            if section == "assert" {
+                                self.error(
+                                    cpath.clone(),
+                                    "protobuf_field `failure_groups` is only valid under `checks`",
+                                );
+                            }
+                            if groups.is_empty() {
+                                self.error(
+                                    cpath.clone(),
+                                    "protobuf_field `failure_groups` must not be empty",
+                                );
+                            }
+                            if groups.values().any(|label| label.trim().is_empty()) {
+                                self.error(
+                                    cpath.clone(),
+                                    "protobuf_field failure-group labels must not be empty",
+                                );
+                            }
+                        }
+                    }
+                    Condition::Size {
+                        min, max, equals, ..
+                    } => {
+                        if min.is_none() && max.is_none() && equals.is_none() {
+                            self.error(cpath, "size condition needs `min`, `max` or `equals`");
+                        }
+                    }
+                    Condition::Header {
+                        equals,
+                        contains,
+                        exists,
+                        ..
+                    } if equals.is_none() && contains.is_none() && exists.is_none() => {
+                        self.error(
+                            cpath,
+                            "header condition needs `equals`, `contains` or `exists`",
+                        );
+                    }
+                    _ => {}
                 }
-                Condition::Header {
-                    equals,
-                    contains,
-                    exists,
-                    ..
-                } if equals.is_none() && contains.is_none() && exists.is_none() => {
-                    self.error(
-                        cpath,
-                        "header condition needs `equals`, `contains` or `exists`",
-                    );
-                }
-                _ => {}
             }
         }
     }
@@ -1013,6 +1067,58 @@ scenarios:
       - request: { url: https://example.com/ }
 "#;
         assert!(errors(yaml).is_empty());
+    }
+
+    #[test]
+    fn protobuf_field_check_configuration_is_backward_compatible_and_validated() {
+        let valid = r#"
+scenarios:
+  s:
+    executor: constant-vus
+    vus: 1
+    duration: 1s
+    flow:
+      - request:
+          protocol: grpc
+          url: grpc://127.0.0.1:50051
+          grpc:
+            reflection: true
+            service: loadr.test.Echo
+            method: UnaryEcho
+          checks:
+            - type: protobuf_field
+              name: admission_accepted
+              field: code
+              equals: 0
+              failure_groups: { 18: WrongShard, 20: PoolAtCapacity }
+"#;
+        assert!(errors(valid).is_empty(), "{:?}", errors(valid));
+
+        let invalid = valid
+            .replace("checks:", "assert:")
+            .replace("field: code", "field: nested.code")
+            .replace("equals: 0", "exists: false");
+        let diagnostics = errors(&invalid);
+        assert!(diagnostics.iter().any(|d| d.message.contains("top-level")));
+        assert!(diagnostics
+            .iter()
+            .any(|d| d.message.contains("only valid under `checks`")));
+
+        let nongrpc = r#"
+scenarios:
+  s:
+    executor: constant-vus
+    vus: 1
+    duration: 1s
+    flow:
+      - request:
+          url: https://example.com
+          checks:
+            - { type: protobuf_field, field: code, equals: 0 }
+"#;
+        assert!(errors(nongrpc)
+            .iter()
+            .any(|d| d.message.contains("require a gRPC request")));
     }
 
     #[test]

@@ -58,11 +58,13 @@ pub(crate) async fn run_stream(
                     };
                     if let Some(snap) = backend.run_snapshot(&id) {
                         let exact = backend.run_aggregate_snapshot(&id);
+                        let control = backend.run_control_state(&id);
                         let payload = live_payload(
                             &snap,
                             exact.as_deref(),
                             &backend.run_thresholds(&id),
                             &run,
+                            &control,
                         );
                         if tx.send(sse_event("snapshot", &payload)).await.is_err() {
                             break;
@@ -81,11 +83,13 @@ pub(crate) async fn run_stream(
             // Finished run: replay the last-known state once, then end.
             if let Some(snap) = state.backend.run_snapshot(&id) {
                 let exact = state.backend.run_aggregate_snapshot(&id);
+                let control = state.backend.run_control_state(&id);
                 let payload = live_payload(
                     &snap,
                     exact.as_deref(),
                     &state.backend.run_thresholds(&id),
                     &info,
+                    &control,
                 );
                 let _ = tx.try_send(sse_event("snapshot", &payload));
             }
@@ -114,7 +118,14 @@ async fn live_run_stream(
             return false;
         };
         let exact = backend.run_aggregate_snapshot(&id);
-        let payload = live_payload(&snap, exact.as_deref(), &handle.threshold_statuses(), &run);
+        let control = backend.run_control_state(&id);
+        let payload = live_payload(
+            &snap,
+            exact.as_deref(),
+            &handle.threshold_statuses(),
+            &run,
+            &control,
+        );
         tx.try_send(sse_event("snapshot", &payload)).is_ok()
     };
 
@@ -150,7 +161,14 @@ async fn live_run_stream(
                     break;
                 };
                 let exact = backend.run_aggregate_snapshot(&id);
-                let payload = live_payload(&snap, exact.as_deref(), &handle.threshold_statuses(), &run);
+                let control = backend.run_control_state(&id);
+                let payload = live_payload(
+                    &snap,
+                    exact.as_deref(),
+                    &handle.threshold_statuses(),
+                    &run,
+                    &control,
+                );
                 if tx.send(sse_event("snapshot", &payload)).await.is_err() {
                     return;
                 }

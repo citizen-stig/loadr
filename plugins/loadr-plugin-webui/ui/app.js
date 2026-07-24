@@ -130,9 +130,9 @@
   }
 
   // Flatten a failures breakdown object into CSV rows:
-  // category, protocol, cause, count, share.
+  // category, protocol, cause, count, share, category denominator.
   function failuresToCsv(f) {
-    const lines = ['category,protocol,cause,count,share_pct'];
+    const lines = ['category,protocol,cause,count,share_pct,denominator_count'];
     if (f) {
       const groups = [
         ['response_status', f.by_status, true],
@@ -149,6 +149,7 @@
               csvField(isStatus && r.status != null ? r.status : r.key),
               csvField(r.count),
               csvField(((r.share || 0) * 100).toFixed(2)),
+              csvField(r.denominator),
             ].join(',')
           );
         }
@@ -162,6 +163,7 @@
     const esc = (s) =>
       String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
     const section = (title, rows, label = (row) => row.key) => {
+      const denominator = rows && rows.length ? rows[0].denominator : 0;
       const body = (rows || []).length
         ? (rows || [])
             .map(
@@ -178,7 +180,7 @@
         : '<tr><td colspan="3" class="muted">none</td></tr>';
       return (
         '<h2>' +
-        esc(title) +
+        esc(title + ' — share of ' + denominator + ' category events') +
         '</h2><table><thead><tr><th>Cause</th><th class="n">Count</th><th class="n">Share</th></tr></thead><tbody>' +
         body +
         '</tbody></table>'
@@ -198,7 +200,7 @@
       esc(runLabel || '') +
       (runLabel ? ' · ' : '') +
       esc(total) +
-      ' failure events (categories may overlap) · generated ' +
+      ' failure events. Categories may overlap; each percentage uses its own category total. Generated ' +
       esc(new Date().toLocaleString()) +
       '</p>' +
       section('Failed response status', f && f.by_status, responseStatusLabel) +
@@ -239,7 +241,7 @@
     let label = state;
     if (state === 'finished') {
       cls = passed == null ? 'finished' : passed === false ? 'failed' : 'passed';
-      label = passed == null ? 'finished' : passed === false ? 'failed' : 'passed';
+      label = passed == null ? 'finished' : passed === false ? 'thresholds failed' : 'passed';
     }
     return h('span', { class: 'pill pill-' + cls }, label);
   }
@@ -278,6 +280,13 @@
         this.submit();
       });
       API.on('unauthorized', () => this.show());
+      const logout = $('#logout');
+      logout.classList.toggle('hidden', !API.hasAuth());
+      logout.addEventListener('click', () => {
+        API.setAuth(null);
+        logout.classList.add('hidden');
+        this.show();
+      });
     },
     setMode(mode) {
       this.mode = mode;
@@ -314,6 +323,7 @@
         if (res.status === 401) throw new Error('Invalid credentials');
         if (!res.ok) throw new Error('Server error ' + res.status);
         API.setAuth(header);
+        $('#logout').classList.remove('hidden');
         this.hide();
         Toast.ok('Signed in');
         App.route(); // re-mount the current page with auth in place
@@ -340,11 +350,17 @@
     let currentRunId = null;
     let lastReceivedMs = 0;
     let expectedFreshMs = 5000;
+    let lastIntervalSecs = null;
+    let lastMetricState = 'pending';
+    let lastPaused = false;
+    const liveBanner = h('div', { class: 'live-banner' }, 'PENDING · waiting for the first complete interval');
     const streamBanner = h('div', { class: 'banner banner-warn hidden' });
     const completenessBanner = h('div', { class: 'banner banner-warn hidden' });
     const contractLine = h('div', { class: 'muted mono data-rates' });
     const cards = {
-      rps: null,
+      attempts: null,
+      successful: null,
+      failed: null,
       vus: null,
       err: null,
       p95: null,
@@ -353,10 +369,12 @@
       'div',
       { class: 'stat-grid' },
       ...Object.entries({
-        rps: 'Requests / sec',
-        vus: 'Active VUs',
-        err: 'Error rate (last interval)',
+        attempts: 'Request attempts/s',
+        successful: 'Successful requests/s',
+        failed: 'Failed requests/s',
+        err: 'Request error rate',
         p95: 'p95 latency (run-to-date)',
+        vus: 'Active VUs',
       }).map(([key, label]) => {
         const value = h('div', { class: 'stat-value mono' }, '–');
         cards[key] = value;
@@ -446,6 +464,7 @@
     );
 
     root.append(
+      liveBanner,
       streamBanner,
       completenessBanner,
       cardRow,
@@ -475,22 +494,27 @@
         { class: 'card' },
         h('h3', null, 'Scenarios'),
         h(
-          'table',
-          { class: 'table' },
+          'div',
+          { class: 'table-scroll' },
           h(
-            'thead',
-            null,
+            'table',
+            { class: 'table' },
             h(
-              'tr',
+              'thead',
               null,
-              h('th', null, 'Scenario'),
-              h('th', { class: 'num' }, 'RPS'),
-              h('th', { class: 'num' }, 'avg'),
-              h('th', { class: 'num' }, 'p95'),
-              h('th', { class: 'num' }, 'Errors')
-            )
-          ),
-          scenarioBody
+              h(
+                'tr',
+                null,
+                h('th', null, 'Scenario'),
+                h('th', { class: 'num' }, 'Attempts/s'),
+                h('th', { class: 'num' }, 'Failed/s'),
+                h('th', { class: 'num' }, 'avg'),
+                h('th', { class: 'num' }, 'p95'),
+                h('th', { class: 'num' }, 'Error rate')
+              )
+            ),
+            scenarioBody
+          )
         ),
         dataRates,
         contractLine
@@ -500,24 +524,32 @@
         { class: 'card agent-contributions hidden' },
         h('h3', null, 'Agent contribution — run-to-date'),
         h(
-          'table',
-          { class: 'table' },
-          h('thead', null, h('tr', null,
-            h('th', null, 'Agent'),
-            h('th', { class: 'num' }, 'Requests'),
-            h('th', { class: 'num' }, 'Active VUs'),
-            h('th', { class: 'num' }, 'avg'),
-            h('th', { class: 'num' }, 'p95'),
-            h('th', { class: 'num' }, 'Errors')
-          )),
-          agentBody
+          'div',
+          { class: 'table-scroll' },
+          h(
+            'table',
+            { class: 'table' },
+            h('thead', null, h('tr', null,
+              h('th', null, 'Agent'),
+              h('th', { class: 'num' }, 'Requests'),
+              h('th', { class: 'num' }, 'Active VUs'),
+              h('th', { class: 'num' }, 'avg'),
+              h('th', { class: 'num' }, 'p95'),
+              h('th', { class: 'num' }, 'Errors')
+            )),
+            agentBody
+          )
         )
       ),
       failuresCard
     );
 
     const rpsChart = new TimeChart(rpsCanvas, {
-      series: [{ label: 'req/s', color: COLORS.blue, fill: true }],
+      series: [
+        { label: 'attempts/s', color: COLORS.blue, fill: true },
+        { label: 'successful/s', color: COLORS.green },
+        { label: 'failed/s', color: COLORS.red },
+      ],
       type: chartType,
     });
     const latChart = new TimeChart(latCanvas, {
@@ -551,6 +583,23 @@
       b.addEventListener('click', () => applyChartType(b.getAttribute('data-type')))
     );
 
+    function updateLiveBanner() {
+      const age = lastReceivedMs ? Math.max(0, Date.now() - lastReceivedMs) : null;
+      const state = lastPaused
+        ? 'PAUSED'
+        : lastMetricState === 'stopping'
+          ? 'STOPPING'
+          : lastMetricState === 'pending'
+            ? 'PENDING'
+            : 'LIVE';
+      const interval = lastIntervalSecs != null
+        ? Math.max(0, lastIntervalSecs).toFixed(2) + 's interval'
+        : 'interval unavailable';
+      const freshness = age == null ? 'waiting for data' : age < 1500 ? 'fresh now' : 'updated ' + fmt.age(age);
+      liveBanner.textContent = state + ' · ' + interval + ' · ' + freshness;
+      liveBanner.className = 'live-banner live-banner-' + state.toLowerCase();
+    }
+
     function update(m) {
       if (!m) return;
       if (currentRunId && m.run_id && currentRunId !== m.run_id) {
@@ -561,18 +610,25 @@
       currentRunId = m.run_id || currentRunId;
       lastReceivedMs = Date.now();
       expectedFreshMs = Math.max(5000, ((m.interval_secs || 1) * 3000));
+      lastIntervalSecs = m.interval_secs == null ? null : m.interval_secs;
+      lastMetricState = m.state || lastMetricState;
+      lastPaused = m.paused === true;
       setConnection('open');
-      cards.rps.textContent = fmt.num(m.rps, 1);
+      updateLiveBanner();
+      cards.attempts.textContent = fmt.num(m.attempts_per_second, 1);
+      cards.successful.textContent = fmt.num(m.successful_per_second, 1);
+      cards.failed.textContent = fmt.num(m.failed_per_second, 1);
       cards.vus.textContent = fmt.num(m.active_vus, 0);
-      cards.err.textContent = m.error_rate == null ? '–' : fmt.pct(m.error_rate);
-      cards.err.classList.toggle('stat-bad', m.error_rate != null && m.error_rate > 0.01);
+      cards.err.textContent = m.request_error_rate == null ? '–' : fmt.pct(m.request_error_rate);
+      cards.err.classList.toggle('stat-bad', m.request_error_rate != null && m.request_error_rate > 0.01);
+      cards.failed.classList.toggle('stat-bad', m.failed_per_second != null && m.failed_per_second > 0);
       cards.p95.textContent = fmt.ms(m.latency && m.latency.p95);
 
       const t = m.ts || Date.now();
-      rpsChart.push(t, [m.rps]);
+      rpsChart.push(t, [m.attempts_per_second, m.successful_per_second, m.failed_per_second]);
       const lat = m.latency || {};
       latChart.push(t, [lat.p50, lat.p90, lat.p95, lat.p99]);
-      errChart.push(t, [m.error_rate == null ? null : m.error_rate * 100]);
+      errChart.push(t, [m.request_error_rate == null ? null : m.request_error_rate * 100]);
 
       const lost = m.lost_agents || [];
       const contributing = new Set(m.contributing_agents || []);
@@ -643,13 +699,14 @@
                 'tr',
                 null,
                 h('td', null, s.scenario),
-                h('td', { class: 'num mono' }, fmt.num(s.rps, 1)),
+                h('td', { class: 'num mono' }, fmt.num(s.attempts_per_second, 1)),
+                h('td', { class: 'num mono' }, fmt.num(s.failed_per_second, 1)),
                 h('td', { class: 'num mono' }, fmt.ms(s.avg)),
                 h('td', { class: 'num mono' }, fmt.ms(s.p95)),
                 h('td', { class: 'num mono' }, s.error_rate == null ? '–' : fmt.pct(s.error_rate))
               )
             )
-          : [h('tr', null, h('td', { colspan: 5, class: 'muted' }, 'no scenario data yet'))])
+          : [h('tr', null, h('td', { colspan: 6, class: 'muted' }, 'no scenario data yet'))])
       );
 
       dataRates.textContent =
@@ -657,10 +714,10 @@
 
       const contract = m.metric_contract || {};
       contractLine.textContent =
-        'windows: throughput ' + (contract.rps_window || 'unknown') +
-        ' · errors ' + (contract.error_rate_window || 'unknown') +
-        ' · latency ' + (contract.latency_window || 'unknown') +
-        ' (' + (contract.latency_quality || 'unknown') + ')';
+        'Request rates: one ' + fmt.num(m.interval_secs, 2) + 's fleet interval · ' +
+        'latency: ' + (contract.latency_window || 'unknown') +
+        ' (' + (contract.latency_quality || 'unknown') + ') · average: ' +
+        (contract.latency_average_quality || 'unknown');
 
       const contributions = m.per_agent || [];
       const agentCard = root.querySelector('.agent-contributions');
@@ -668,7 +725,7 @@
       agentBody.replaceChildren(...contributions.map((agent) => h(
         'tr',
         null,
-        h('td', null, agent.name, ' ', h('span', { class: 'mono muted' }, String(agent.id).slice(0, 8))),
+        h('td', null, agent.name, ' ', h('span', { class: 'mono muted', title: agent.id }, agent.id)),
         h('td', { class: 'num mono' }, fmt.num(agent.requests, 0)),
         h('td', { class: 'num mono' }, fmt.num(agent.active_vus, 0)),
         h('td', { class: 'num mono' }, fmt.ms(agent.latency_avg)),
@@ -710,6 +767,11 @@
           return;
         }
         failGroups[key].replaceChildren(
+          h(
+            'div',
+            { class: 'muted fail-denominator' },
+            'Percent of ' + fmt.num(rows[0].denominator, 0) + ' events in this category'
+          ),
           ...rows.map((r) => {
             const label = key === 'by_status' ? responseStatusLabel(r) : r.key;
             return h(
@@ -741,6 +803,10 @@
         streamBanner.classList.add('hidden');
         streamBanner.textContent = '';
       } else {
+        cards.attempts.textContent = '–';
+        cards.successful.textContent = '–';
+        cards.failed.textContent = '–';
+        cards.err.textContent = '–';
         streamBanner.classList.remove('hidden');
         streamBanner.textContent = state === 'stale'
           ? 'Live data is stale. Values below are the last received snapshot and must not be treated as current.'
@@ -749,10 +815,142 @@
     }
 
     const freshnessTimer = setInterval(() => {
+      updateLiveBanner();
       if (lastReceivedMs && Date.now() - lastReceivedMs > expectedFreshMs) setConnection('stale');
     }, 1000);
 
     return { update, destroy, setConnection };
+  }
+
+  function statCard(label, value, bad) {
+    return h(
+      'div',
+      { class: 'card stat-card' },
+      h('div', { class: 'stat-label' }, label),
+      h('div', { class: 'stat-value mono' + (bad ? ' stat-bad' : '') }, value)
+    );
+  }
+
+  function finalFailureCard(failures, runLabel) {
+    const total = failureEventTotal(failures);
+    const groups = [
+      ['by_status', 'Response status', true],
+      ['by_error_kind', 'Transport / error', false],
+      ['by_check', 'Failed checks', false],
+      ['by_exception', 'Script exceptions', false],
+    ];
+    const csv = h('button', { class: 'btn btn-ghost btn-sm', disabled: total ? null : true }, '↓ CSV');
+    const html = h('button', { class: 'btn btn-ghost btn-sm', disabled: total ? null : true }, '↓ Report');
+    csv.addEventListener('click', () => downloadFailuresCsv(failures));
+    html.addEventListener('click', () => downloadFailuresHtml(failures, runLabel));
+    return h(
+      'div',
+      { class: 'card fail-card' },
+      h(
+        'div',
+        { class: 'fail-head' },
+        h('h3', null, 'Failure breakdown — full observed run'),
+        h(
+          'div',
+          { class: 'fail-actions' },
+          h('span', { class: 'mono muted' }, fmt.num(total, 0) + ' failure events'),
+          csv,
+          html
+        )
+      ),
+      h(
+        'div',
+        { class: 'muted failure-contract' },
+        'Request failures, failed checks, and exceptions are separate. Categories may overlap; every percentage below uses its own category total.'
+      ),
+      h(
+        'div',
+        { class: 'fail-grid' },
+        ...groups.map(([key, title, isStatus]) => {
+          const rows = (failures && failures[key]) || [];
+          const denominator = rows.length ? rows[0].denominator : 0;
+          return h(
+            'div',
+            { class: 'fail-group' },
+            h('h4', null, title),
+            h('div', { class: 'muted fail-denominator' }, 'Share of ' + denominator + ' category events'),
+            rows.length
+              ? rows.map((row) =>
+                  h(
+                    'div',
+                    { class: 'fail-row' },
+                    h(
+                      'div',
+                      { class: 'fail-bar' },
+                      h('div', {
+                        class: 'fail-bar-fill',
+                        style: 'width:' + Math.max(2, (row.share || 0) * 100).toFixed(1) + '%',
+                      })
+                    ),
+                    h('span', { class: 'fail-key mono' }, isStatus ? responseStatusLabel(row) : row.key),
+                    h('span', { class: 'fail-count mono' }, fmt.num(row.count, 0)),
+                    h('span', { class: 'fail-share mono muted' }, ((row.share || 0) * 100).toFixed(1) + '%')
+                  )
+                )
+              : h('div', { class: 'muted fail-empty' }, 'none')
+          );
+        })
+      )
+    );
+  }
+
+  function finalMetricsView(final, runLabel) {
+    if (!final) {
+      return h('div', { class: 'card muted' }, 'Final metrics are unavailable for this run.');
+    }
+    const contract = final.metric_contract || {};
+    return h(
+      'div',
+      null,
+      h(
+        'div',
+        { class: 'final-banner' },
+        'FINAL — full observed run · ' +
+          fmt.dateTime(final.started_ms) +
+          ' to ' +
+          fmt.dateTime(final.ended_ms)
+      ),
+      final.complete === false
+        ? h(
+            'div',
+            { class: 'banner banner-warn' },
+            'Incomplete fleet result — these values only describe received data and are unsafe for a complete pass/fail decision.'
+          )
+        : '',
+      h(
+        'div',
+        { class: 'stat-grid' },
+        statCard('Duration', fmt.duration(final.duration_secs)),
+        statCard('Request attempts', fmt.num(final.attempts, 0)),
+        statCard('Successful requests', fmt.num(final.successful_requests, 0)),
+        statCard('Failed requests', fmt.num(final.failed_requests, 0), final.failed_requests > 0),
+        statCard('Avg attempts/s', fmt.num(final.average_attempts_per_second, 1)),
+        statCard('Avg successful/s', fmt.num(final.average_successful_per_second, 1)),
+        statCard('Avg failed/s', fmt.num(final.average_failed_per_second, 1), final.average_failed_per_second > 0),
+        statCard('Request error rate', fmt.pct(final.request_error_rate), final.request_error_rate > 0),
+        statCard('p95 latency · run-to-date', fmt.ms(final.latency && final.latency.p95))
+      ),
+      h(
+        'div',
+        { class: 'card metric-contract' },
+        h('strong', null, 'Metric contract'),
+        h(
+          'div',
+          { class: 'muted' },
+          'Rates use the full observed duration. Latency includes successful and failed requests. Fleet p95 is ' +
+            (contract.latency_percentile_quality || 'unavailable') +
+            '; distributed average quality is ' +
+            (contract.latency_average_quality || 'unknown') +
+            '.'
+        )
+      ),
+      finalFailureCard(final.failures, runLabel)
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -764,7 +962,21 @@
     mount(main) {
       const runLine = h('div', { class: 'page-sub muted' }, 'Waiting for data…');
       const dashRoot = h('div');
-      main.append(h('div', { class: 'page-head' }, h('h1', null, 'Overview'), runLine), dashRoot);
+      const finalRoot = h('div', { class: 'hidden' });
+      const emptyRoot = h(
+        'div',
+        { class: 'card empty-state hidden' },
+        h('div', { class: 'empty-icon' }, '▶'),
+        h('h3', null, 'No runs yet'),
+        h('div', { class: 'muted' }, 'Start a test to see live fleet metrics and a decision-safe final result.'),
+        h('a', { href: '#/tests', class: 'btn btn-primary mt' }, 'Open Tests')
+      );
+      main.append(
+        h('div', { class: 'page-head' }, h('h1', null, 'Overview'), runLine),
+        dashRoot,
+        finalRoot,
+        emptyRoot
+      );
 
       const dash = createLiveDash(dashRoot);
       const stream = API.sse('/api/stream', {
@@ -779,8 +991,22 @@
               h('a', { href: '#/runs/' + o.run.run_id }, 'view run'),
               h('span', { class: 'muted' }, '  ·  ' + o.live_runs + ' live / ' + o.total_runs + ' total runs')
             );
-            dash.update(o.metrics);
+            emptyRoot.classList.add('hidden');
+            if (['pending', 'running', 'stopping'].includes(o.run.state)) {
+              dashRoot.classList.remove('hidden');
+              finalRoot.classList.add('hidden');
+              dash.update(o.metrics);
+            } else {
+              dashRoot.classList.add('hidden');
+              finalRoot.classList.remove('hidden');
+              finalRoot.replaceChildren(
+                finalMetricsView(o.final_metrics, o.run.name || o.run.run_id)
+              );
+            }
           } else {
+            dashRoot.classList.add('hidden');
+            finalRoot.classList.add('hidden');
+            emptyRoot.classList.remove('hidden');
             runLine.replaceChildren(
               h('span', null, 'No runs yet — start one from the '),
               h('a', { href: '#/tests' }, 'Tests'),
@@ -805,23 +1031,27 @@
           'div',
           { class: 'card' },
           h(
-            'table',
-            { class: 'table table-click' },
+            'div',
+            { class: 'table-scroll' },
             h(
-              'thead',
-              null,
+              'table',
+              { class: 'table table-click' },
               h(
-                'tr',
+                'thead',
                 null,
-                h('th', null, 'Status'),
-                h('th', null, 'Name'),
-                h('th', null, 'Run id'),
-                h('th', null, 'Scenarios'),
-                h('th', null, 'Started'),
-                h('th', { class: 'num' }, 'Duration')
-              )
+                h(
+                  'tr',
+                  null,
+                  h('th', null, 'Status'),
+                  h('th', null, 'Name'),
+                  h('th', null, 'Run id'),
+                  h('th', null, 'Scenarios'),
+                  h('th', null, 'Started'),
+                  h('th', { class: 'num' }, 'Duration')
+                )
+              ),
+              tbody
             ),
-            tbody
           )
         )
       );
@@ -1059,44 +1289,44 @@
           dash = null;
         }
         body.replaceChildren();
-        const cards = h(
-          'div',
-          { class: 'stat-grid' },
-          statCard('Duration', fmt.duration(summary.duration_secs)),
-          statCard('Requests', fmt.num(sumMetric(summary, 'request_reqs'), 0)),
-          statCard('Avg RPS', fmt.num(perSecMetric(summary, 'request_reqs'), 1)),
-          statCard('p95 latency', fmt.ms(aggOf(summary, 'request_duration', 'p95')))
+        const finalView = finalMetricsView(
+          summary.final_metrics,
+          detail.run.name || detail.run.run_id
         );
 
         const metricsTable = h(
-          'table',
-          { class: 'table' },
+          'div',
+          { class: 'table-scroll' },
           h(
-            'thead',
-            null,
+            'table',
+            { class: 'table' },
             h(
-              'tr',
+              'thead',
               null,
-              h('th', null, 'Metric'),
-              h('th', { class: 'num' }, 'count'),
-              h('th', { class: 'num' }, 'avg / rate'),
-              h('th', { class: 'num' }, 'min'),
-              h('th', { class: 'num' }, 'med'),
-              h('th', { class: 'num' }, 'p90'),
-              h('th', { class: 'num' }, 'p95'),
-              h('th', { class: 'num' }, 'p99'),
-              h('th', { class: 'num' }, 'max')
-            )
-          ),
-          h(
-            'tbody',
-            null,
-            summary.metrics.map((m) =>
               h(
                 'tr',
                 null,
-                h('td', { class: 'mono' }, m.metric, ' ', h('span', { class: 'muted' }, m.kind)),
-                ...metricRow(m).map((cell) => h('td', { class: 'num mono' }, cell))
+                h('th', null, 'Metric'),
+                h('th', { class: 'num' }, 'count'),
+                h('th', { class: 'num' }, 'avg / rate'),
+                h('th', { class: 'num' }, 'min'),
+                h('th', { class: 'num' }, 'med'),
+                h('th', { class: 'num' }, 'p90'),
+                h('th', { class: 'num' }, 'p95'),
+                h('th', { class: 'num' }, 'p99'),
+                h('th', { class: 'num' }, 'max')
+              )
+            ),
+            h(
+              'tbody',
+              null,
+              summary.metrics.map((m) =>
+                h(
+                  'tr',
+                  null,
+                  h('td', { class: 'mono' }, m.metric, ' ', h('span', { class: 'muted' }, m.kind)),
+                  ...metricRow(m).map((cell) => h('td', { class: 'num mono' }, cell))
+                )
               )
             )
           )
@@ -1155,8 +1385,20 @@
               )
             : '',
           summary.aborted ? h('div', { class: 'banner banner-warn' }, 'Run aborted: ' + summary.aborted) : '',
-          cards,
-          h('div', { class: 'card' }, h('h3', null, 'Metrics'), metricsTable),
+          finalView,
+          h(
+            'div',
+            { class: 'card' },
+            h('h3', null, 'Raw metrics'),
+            detail.run.agents && detail.run.agents.length
+              ? h(
+                  'div',
+                  { class: 'muted metric-note' },
+                  'Distributed trend averages are histogram-reconstructed approximations; merged percentiles are exact.'
+                )
+              : '',
+            metricsTable
+          ),
           h(
             'div',
             { class: 'chart-grid' },
@@ -1164,30 +1406,6 @@
             h('div', { class: 'card' }, h('h3', null, 'Thresholds'), thresholds)
           )
         );
-      }
-
-      function statCard(label, value) {
-        return h(
-          'div',
-          { class: 'card stat-card' },
-          h('div', { class: 'stat-label' }, label),
-          h('div', { class: 'stat-value mono' }, value)
-        );
-      }
-      function metric(summary, name) {
-        return (summary.metrics || []).find((m) => m.metric === name);
-      }
-      function sumMetric(summary, name) {
-        const m = metric(summary, name);
-        return m ? m.agg.sum : null;
-      }
-      function perSecMetric(summary, name) {
-        const m = metric(summary, name);
-        return m ? m.agg.per_second : null;
-      }
-      function aggOf(summary, name, field) {
-        const m = metric(summary, name);
-        return m ? m.agg[field] : null;
       }
 
       async function load() {
@@ -1470,12 +1688,22 @@
                   { class: 'agent-head' },
                   h('span', { class: 'health-dot ' + (a.healthy ? 'ok' : 'bad') }),
                   h('strong', null, a.name),
-                  h('span', { class: 'muted mono' }, a.id.slice(0, 8))
+                  h(
+                    'span',
+                    { class: 'pill ' + (a.healthy ? 'pill-passed' : 'pill-failed') },
+                    a.healthy ? 'healthy' : 'disconnected'
+                  )
                 ),
+                h('div', { class: 'muted mono agent-id', title: a.id }, a.id),
                 h(
                   'div',
                   { class: 'agent-stats mono' },
-                  h('span', null, fmt.num(a.active_vus, 0) + ' VUs'),
+                  h(
+                    'span',
+                    null,
+                    fmt.num(a.active_vus, 0) +
+                      (a.healthy ? ' active VUs' : ' VUs last reported')
+                  ),
                   h('span', null, a.cores + ' cores'),
                   h(
                     'span',

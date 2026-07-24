@@ -125,12 +125,21 @@ pub(crate) async fn run_snapshot(
 pub(crate) async fn run_summary(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
-) -> Result<Json<loadr_core::Summary>, ApiError> {
-    state
+) -> Result<Json<Value>, ApiError> {
+    let summary = state
         .backend
         .run_summary(&id)
-        .map(Json)
-        .ok_or_else(|| ApiError::NotFound(format!("run `{id}` has no summary (still live?)")))
+        .ok_or_else(|| ApiError::NotFound(format!("run `{id}` has no summary (still live?)")))?;
+    let run = state
+        .backend
+        .runs()
+        .into_iter()
+        .find(|run| run.run_id == id)
+        .ok_or_else(|| ApiError::NotFound(format!("run `{id}` not found")))?;
+    let mut payload = serde_json::to_value(&summary)
+        .map_err(|error| ApiError::Bad(format!("cannot serialize run summary: {error}")))?;
+    payload["final_metrics"] = crate::payload::final_payload(&summary, &run);
+    Ok(Json(payload))
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -283,10 +292,14 @@ fn config_error_diagnostics(err: ConfigError) -> Vec<Diagnostic> {
             available,
         } => vec![Diagnostic::error(
             "env",
-            format!(
-                "unknown environment `{requested}`; available: {}",
-                available.join(", ")
-            ),
+            if available.is_empty() {
+                format!("unknown environment `{requested}`; no environments are defined")
+            } else {
+                format!(
+                    "unknown environment `{requested}`; available: {}",
+                    available.join(", ")
+                )
+            },
         )],
         other => vec![Diagnostic::error("", other.to_string())],
     }

@@ -314,6 +314,13 @@ async fn run_lifecycle_and_summary() {
         .find(|m| m["metric"] == "request_reqs")
         .expect("canonical request rollup");
     assert_eq!(request_reqs["agg"]["sum"], 20.0);
+    assert_eq!(summary["final_metrics"]["attempts"], 20);
+    assert_eq!(summary["final_metrics"]["successful_requests"], 20);
+    assert_eq!(summary["final_metrics"]["failed_requests"], 0);
+    assert_eq!(
+        summary["final_metrics"]["metric_contract"]["rate_denominator"],
+        "full observed duration"
+    );
 
     // Snapshot endpoint serves the last-known snapshot for finished runs.
     let (status, snapshot) = server
@@ -322,10 +329,11 @@ async fn run_lifecycle_and_summary() {
     assert_eq!(status, http::StatusCode::OK);
     assert!(snapshot["series"].as_array().is_some_and(|s| !s.is_empty()));
 
-    // Overview metrics carry the failure breakdown the UI panel renders.
+    // Finished Overview uses frozen full-run metrics, never a live interval.
     let (status, overview) = server.call("GET", "/api/overview", None).await;
     assert_eq!(status, http::StatusCode::OK);
-    let failures = &overview["metrics"]["failures"];
+    assert!(overview["metrics"].is_null());
+    let failures = &overview["final_metrics"]["failures"];
     assert!(
         failures.is_object(),
         "failures breakdown present: {overview}"
@@ -335,8 +343,8 @@ async fn run_lifecycle_and_summary() {
     assert!(failures["by_status"].is_array());
     assert!(failures["by_exception"].is_array());
     assert_eq!(
-        overview["metrics"]["metric_contract"]["latency_quality"],
-        "exact"
+        overview["final_metrics"]["metric_contract"]["latency_percentile_quality"],
+        "exact_merged_histogram"
     );
 }
 
@@ -468,7 +476,7 @@ async fn sse_stream_emits_snapshots() {
         .to_string();
     assert!(content_type.contains("text/event-stream"), "{content_type}");
 
-    // Read frames until we have ≥2 parsed snapshot events with an rps field.
+    // Read frames until we have multiple parsed snapshot events.
     let mut body = res.into_body();
     let mut buf = String::new();
     let mut snapshots: Vec<serde_json::Value> = Vec::new();
@@ -503,15 +511,21 @@ async fn sse_stream_emits_snapshots() {
         snapshots.len()
     );
     for snap in &snapshots {
-        assert!(snap["rps"].is_number(), "snapshot missing rps: {snap}");
+        assert!(
+            snap["rps"].is_number() || snap["rps"].is_null(),
+            "invalid rps compatibility field: {snap}"
+        );
         assert!(snap["latency"].is_object());
         assert!(snap["state"].is_string());
     }
-    // At least one mid-run snapshot should show actual traffic.
+    // At least one mid-run snapshot should show one compatible request sample.
     assert!(
-        snapshots
-            .iter()
-            .any(|s| s["rps"].as_f64().unwrap_or(0.0) > 0.0),
+        snapshots.iter().any(|snapshot| {
+            snapshot["attempts_per_second"].as_f64().unwrap_or(0.0) > 0.0
+                && snapshot["successful_per_second"].is_number()
+                && snapshot["failed_per_second"].is_number()
+                && snapshot["request_error_rate"].is_number()
+        }),
         "no snapshot showed traffic"
     );
 
@@ -667,11 +681,14 @@ async fn overview_shape() {
     assert_eq!(overview["run"]["name"], "ov-test");
     assert_eq!(overview["total_runs"], 1);
     assert_eq!(overview["live_runs"], 0);
-    let metrics = &overview["metrics"];
-    assert!(metrics["latency"].is_object(), "{overview}");
-    assert!(metrics["rps"].is_number());
-    assert!(metrics["per_scenario"].is_array());
-    assert!(metrics["checks"]["passes"].is_number());
+    assert!(overview["metrics"].is_null());
+    let metrics = &overview["final_metrics"];
+    assert_eq!(metrics["window"], "full_observed_run");
+    assert_eq!(metrics["attempts"], 20);
+    assert_eq!(metrics["successful_requests"], 20);
+    assert_eq!(metrics["failed_requests"], 0);
+    assert!(metrics["average_attempts_per_second"].is_number());
+    assert!(metrics["latency"]["p95"].is_number());
 
     // Logs captured backend activity.
     let (_, logs) = server.call("GET", "/api/logs", None).await;
@@ -707,7 +724,10 @@ async fn static_spa_served_with_content_types() {
     let app_js = String::from_utf8_lossy(&body);
     assert!(app_js.contains("Response status"));
     assert!(app_js.contains("response_status"));
-    assert!(app_js.contains("category,protocol,cause,count,share_pct"));
+    assert!(app_js.contains("category,protocol,cause,count,share_pct,denominator_count"));
+    assert!(app_js.contains("Request attempts/s"));
+    assert!(app_js.contains("FINAL — full observed run"));
+    assert!(app_js.contains("thresholds failed"));
     assert!(app_js.contains("failureEventTotal"));
     assert!(app_js.contains("No failures recorded yet"));
     assert!(!app_js.contains("Failed HTTP status"));

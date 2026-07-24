@@ -252,16 +252,15 @@ struct ControllerRun {
     pending_controls: Mutex<HashMap<u64, PendingControl>>,
     /// Per-agent summaries as reported.
     summaries: Mutex<Vec<Summary>>,
+    /// Frozen fleet summary, created exactly once at terminal transition.
     merged_summary: Mutex<Option<Summary>>,
     threshold_statuses: Mutex<Vec<ThresholdStatus>>,
     abort_reason: Mutex<Option<String>>,
     snapshot_tx: watch::Sender<Arc<Snapshot>>,
     snapshot_rx: watch::Receiver<Arc<Snapshot>>,
-    last_recompute: Mutex<Instant>,
-    /// Per-interval time series for the HTML report, sampled ~once a second
+    /// Per-interval time series for the HTML report, sampled once a second
     /// from the centrally merged snapshot.
     timeline: Mutex<Vec<TimelinePoint>>,
-    last_timeline: Mutex<Instant>,
     /// Prometheus projection cached once the run is terminal — a finished
     /// run's data no longer changes, so exporters stop paying the rebuild.
     prom_view: Mutex<Option<Arc<RunMetricsView>>>,
@@ -363,7 +362,6 @@ impl Inner {
                         {
                             self.zero_agent_live_gauges(&run, agent_id);
                         }
-                        self.maybe_recompute(&run);
                     }
                     Err(e) => {
                         tracing::warn!(run_id = %batch.run_id, error = %e, "bad metrics delta");
@@ -407,6 +405,10 @@ impl Inner {
         };
         match ev.kind.as_str() {
             "started" => {
+                let mut state = run.state.lock();
+                if *state == RunState::Pending {
+                    *state = RunState::Running;
+                }
                 tracing::info!(run_id = %ev.run_id, agent = %agent_id, "agent started run");
             }
             "finished" | "aborted" | "failed" => {
@@ -468,10 +470,12 @@ impl Inner {
     }
 
     fn finalize_run(&self, run: &Arc<ControllerRun>, final_state: RunState) {
-        if run.state.lock().is_terminal() {
+        let mut state = run.state.lock();
+        if state.is_terminal() {
             return;
         }
         let finished_ms = now_unix_ms();
+        *run.finished_ms.lock() = Some(finished_ms);
         let mut agg = run.agg.lock();
         let (statuses, _) = evaluate_all(&run.thresholds, &agg, agg.elapsed());
         let aggregates = agg.aggregate_snapshot(&[&["scenario"]]);
@@ -501,23 +505,14 @@ impl Inner {
             timeline,
         );
         summary.ended_ms = finished_ms;
-        summary.duration_secs = snapshot.elapsed_secs;
+        summary.duration_secs = finished_ms.saturating_sub(run.started_ms) as f64 / 1000.0;
         summary.snapshot = (*snapshot).clone();
-        // Publish the summary and the terminal state atomically: anything
-        // that polls for a terminal state and then reads the summary must
-        // never find it missing. The check-and-set keeps finalization
-        // idempotent when two finalizers race (agent loss vs. run events);
-        // the loser discards its summary and keeps the winner's.
-        {
-            let mut state = run.state.lock();
-            if state.is_terminal() {
-                return;
-            }
-            *run.finished_ms.lock() = Some(finished_ms);
-            *run.merged_summary.lock() = Some(summary);
-            *state = final_state;
-        }
+        // Publish the frozen summary before exposing the terminal state so
+        // state and summary remain one atomic observer-facing transition.
+        *run.merged_summary.lock() = Some(summary);
         drop(agg);
+        *state = final_state;
+        drop(state);
         let _ = run.snapshot_tx.send(snapshot);
         tracing::info!(run_id = %run.run_id, state = final_state.as_str(), "run completed");
     }
@@ -529,31 +524,28 @@ impl Inner {
         }
     }
 
-    /// Recompute the watch snapshot from the central aggregator, throttled to
-    /// at most one recompute per 250ms.
-    fn maybe_recompute(&self, run: &Arc<ControllerRun>) {
-        {
-            let mut last = run.last_recompute.lock();
-            if last.elapsed() < Duration::from_millis(250) {
-                return;
-            }
-            *last = Instant::now();
+    /// Roll and publish exactly one controller-owned fleet interval.
+    fn publish_live_snapshot(&self, run: &Arc<ControllerRun>) {
+        let state = run.state.lock();
+        if state.is_terminal() {
+            return;
         }
         let (snapshot, aggregates) = {
             let mut agg = run.agg.lock();
+            let (statuses, _) = evaluate_all(&run.thresholds, &agg, agg.elapsed());
+            *run.threshold_statuses.lock() = statuses;
             let aggregates = agg.aggregate_snapshot(&[&["scenario"]]);
             (Arc::new(agg.snapshot()), aggregates)
         };
-        // Sample the timeline ~once a second (the recompute itself is throttled
-        // to 250ms, which is too fine-grained for charting).
+        if snapshot.interval_secs > 0.0
+            && snapshot
+                .series
+                .iter()
+                .any(|series| series.interval_count > 0 || series.metric == "vus")
         {
-            let mut last = run.last_timeline.lock();
-            if last.elapsed() >= Duration::from_millis(950) {
-                *last = Instant::now();
-                run.timeline
-                    .lock()
-                    .push(TimelinePoint::from_snapshots(&snapshot, Some(&aggregates)));
-            }
+            run.timeline
+                .lock()
+                .push(TimelinePoint::from_snapshots(&snapshot, Some(&aggregates)));
         }
         let _ = run.snapshot_tx.send(snapshot);
     }
@@ -822,23 +814,20 @@ async fn sweeper(inner: Arc<Inner>, shutdown: CancellationToken) {
 /// snapshot watch fresh even when no batches arrive.
 fn spawn_run_ticker(inner: Arc<Inner>, run: Arc<ControllerRun>, shutdown: CancellationToken) {
     tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(Duration::from_secs(1));
+        let mut ticker = tokio::time::interval_at(
+            tokio::time::Instant::now() + Duration::from_secs(1),
+            Duration::from_secs(1),
+        );
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tokio::select! {
                 _ = ticker.tick() => {}
                 _ = shutdown.cancelled() => return,
             }
+            inner.publish_live_snapshot(&run);
             if run.state.lock().is_terminal() {
                 return;
             }
-            {
-                let agg = run.agg.lock();
-                let (statuses, _) = evaluate_all(&run.thresholds, &agg, agg.elapsed());
-                drop(agg);
-                *run.threshold_statuses.lock() = statuses;
-            }
-            inner.maybe_recompute(&run);
         }
     });
 }
@@ -935,9 +924,7 @@ impl ControllerHandle {
             abort_reason: Mutex::new(None),
             snapshot_tx,
             snapshot_rx,
-            last_recompute: Mutex::new(Instant::now()),
             timeline: Mutex::new(Vec::new()),
-            last_timeline: Mutex::new(Instant::now()),
             prom_view: Mutex::new(None),
         });
         self.inner.runs.lock().insert(run_id.clone(), run.clone());
@@ -980,7 +967,6 @@ impl ControllerHandle {
                 tracing::warn!(agent = %agent_id, run_id = %run_id, "start send failed");
             }
         }
-        *run.state.lock() = RunState::Running;
         spawn_run_ticker(self.inner.clone(), run, self.shutdown.clone());
         Ok(run_id)
     }
@@ -1332,7 +1318,7 @@ mod metrics_tests {
         assert_eq!(delta.series[0].tags["loadr_agent_id"], "agent-a-id");
     }
 
-    fn test_run(run_id: &str, agent_id: &str) -> Arc<ControllerRun> {
+    fn test_run(run_id: &str, agent_ids: &[&str]) -> Arc<ControllerRun> {
         let (snapshot_tx, snapshot_rx) = watch::channel(Arc::new(Snapshot::default()));
         Arc::new(ControllerRun {
             run_id: run_id.into(),
@@ -1342,7 +1328,7 @@ mod metrics_tests {
             externally_controlled: Vec::new(),
             thresholds: Vec::new(),
             on_agent_loss: OnAgentLoss::Continue,
-            assigned: vec![agent_id.into()],
+            assigned: agent_ids.iter().map(|agent| (*agent).to_string()).collect(),
             state: Mutex::new(RunState::Running),
             started_ms: 0,
             finished_ms: Mutex::new(None),
@@ -1359,9 +1345,7 @@ mod metrics_tests {
             abort_reason: Mutex::new(None),
             snapshot_tx,
             snapshot_rx,
-            last_recompute: Mutex::new(Instant::now()),
             timeline: Mutex::new(Vec::new()),
-            last_timeline: Mutex::new(Instant::now()),
             prom_view: Mutex::new(None),
         })
     }
@@ -1394,7 +1378,7 @@ mod metrics_tests {
                 sender,
             },
         );
-        let run = test_run("run-1", "agent-a");
+        let run = test_run("run-1", &["agent-a"]);
         inner.runs.lock().insert("run-1".into(), run.clone());
 
         let delta = MetricsDelta {
@@ -1435,6 +1419,144 @@ mod metrics_tests {
         // …then an in-flight delta lands. It must not resurrect the gauge.
         inner.handle_agent_message("agent-a", batch(&delta));
         assert_eq!(fleet_vus(), Some(0.0));
+    }
+
+    #[test]
+    fn controller_tick_publishes_one_complete_fleet_interval() {
+        let inner = Inner {
+            controller_id: "ctrl".into(),
+            liveness: Duration::from_secs(6),
+            agents: Mutex::new(HashMap::new()),
+            runs: Mutex::new(HashMap::new()),
+            session_counter: AtomicU64::new(0),
+            control_counter: AtomicU64::new(0),
+        };
+        for (index, agent_id) in ["agent-a", "agent-b"].into_iter().enumerate() {
+            let (sender, _keepalive) = mpsc::channel(8);
+            inner.agents.lock().insert(
+                agent_id.into(),
+                AgentEntry {
+                    name: format!("worker-{index}"),
+                    labels: HashMap::new(),
+                    cores: 1,
+                    peer_addr: None,
+                    version: None,
+                    revision: None,
+                    connected_at: Instant::now(),
+                    last_heartbeat: Instant::now(),
+                    active_vus: 0,
+                    connected: true,
+                    session: 1,
+                    sender,
+                },
+            );
+        }
+        let run = test_run("run-1", &["agent-a", "agent-b"]);
+        inner.runs.lock().insert("run-1".into(), run.clone());
+        let delta = MetricsDelta {
+            series: vec![
+                SeriesDelta {
+                    metric: "http_reqs".into(),
+                    kind: MetricKind::Counter,
+                    tags: Tags::new(),
+                    data: SeriesDeltaData::Counter { delta: 26.0 },
+                },
+                SeriesDelta {
+                    metric: "http_req_failed".into(),
+                    kind: MetricKind::Rate,
+                    tags: Tags::new(),
+                    data: SeriesDeltaData::Rate {
+                        passes: 8,
+                        total: 26,
+                    },
+                },
+            ],
+        };
+        let batch = || pb::AgentMessage {
+            msg: Some(AgentMsg::Metrics(pb::MetricsBatch {
+                run_id: "run-1".into(),
+                delta_json: serde_json::to_vec(&delta).expect("delta json"),
+            })),
+        };
+
+        inner.handle_agent_message("agent-a", batch());
+        inner.handle_agent_message("agent-b", batch());
+        assert!(
+            run.snapshot_rx.borrow().series.is_empty(),
+            "agent arrivals must not roll a partial fleet interval"
+        );
+
+        inner.publish_live_snapshot(&run);
+        let snapshot = run.snapshot_rx.borrow().clone();
+        assert_eq!(snapshot.interval_request_count(), 52);
+        assert_eq!(snapshot.interval_count("http_req_failed"), 52);
+        let failed = snapshot
+            .series
+            .iter()
+            .filter(|series| series.metric == "http_req_failed")
+            .map(|series| series.interval_sum)
+            .sum::<f64>();
+        assert_eq!(failed, 16.0);
+    }
+
+    #[test]
+    fn terminal_summary_is_frozen_at_finalization() {
+        let inner = Arc::new(Inner {
+            controller_id: "ctrl".into(),
+            liveness: Duration::from_secs(6),
+            agents: Mutex::new(HashMap::new()),
+            runs: Mutex::new(HashMap::new()),
+            session_counter: AtomicU64::new(0),
+            control_counter: AtomicU64::new(0),
+        });
+        let run = test_run("run-1", &["agent-a"]);
+        inner.runs.lock().insert("run-1".into(), run.clone());
+        run.agg.lock().merge_delta(&MetricsDelta {
+            series: vec![SeriesDelta {
+                metric: "http_reqs".into(),
+                kind: MetricKind::Counter,
+                tags: Tags::new(),
+                data: SeriesDeltaData::Counter { delta: 10.0 },
+            }],
+        });
+        inner.finalize_run(&run, RunState::Finished);
+        let first = run.merged_summary.lock().clone().expect("summary");
+        std::thread::sleep(Duration::from_millis(5));
+        let second = run.merged_summary.lock().clone().expect("summary");
+
+        assert_eq!(first.ended_ms, second.ended_ms);
+        assert_eq!(first.duration_secs, second.duration_secs);
+        assert_eq!(
+            first.metrics[0].agg.per_second,
+            second.metrics[0].agg.per_second
+        );
+    }
+
+    #[test]
+    fn first_started_event_ends_pending_state() {
+        let inner = Inner {
+            controller_id: "ctrl".into(),
+            liveness: Duration::from_secs(6),
+            agents: Mutex::new(HashMap::new()),
+            runs: Mutex::new(HashMap::new()),
+            session_counter: AtomicU64::new(0),
+            control_counter: AtomicU64::new(0),
+        };
+        let run = test_run("run-1", &["agent-a"]);
+        *run.state.lock() = RunState::Pending;
+        inner.runs.lock().insert("run-1".into(), run.clone());
+
+        inner.handle_run_event(
+            "agent-a",
+            pb::RunEvent {
+                run_id: "run-1".into(),
+                kind: "started".into(),
+                detail: String::new(),
+                summary_json: Vec::new(),
+            },
+        );
+
+        assert_eq!(*run.state.lock(), RunState::Running);
     }
 }
 

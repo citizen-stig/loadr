@@ -406,7 +406,7 @@ impl ControllerBackend {
                         }
                     }),
                     started_ms: run.started_ms,
-                    ended_ms: summary.as_ref().map(|summary| summary.ended_ms),
+                    ended_ms: run.ended_ms,
                     observed_ms: loadr_core::metrics::now_millis(),
                     scenarios: operational
                         .as_ref()
@@ -940,6 +940,7 @@ mod prometheus_tests {
             name: None,
             state: state.into(),
             started_ms,
+            ended_ms: None,
             agents: Vec::new(),
         };
         let runs = vec![

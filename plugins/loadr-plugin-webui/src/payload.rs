@@ -7,10 +7,10 @@
 use std::collections::BTreeSet;
 
 use loadr_core::aggregate::AggValues;
-use loadr_core::{Snapshot, ThresholdStatus};
+use loadr_core::{Snapshot, Summary, ThresholdStatus};
 use serde_json::{json, Value};
 
-use crate::{now_ms, RunInfo, UiBackend};
+use crate::{now_ms, RunControlView, RunInfo, UiBackend};
 
 const LIVE_STATES: [&str; 3] = ["pending", "running", "stopping"];
 
@@ -20,30 +20,38 @@ pub(crate) fn live_payload(
     exact: Option<&Snapshot>,
     thresholds: &[ThresholdStatus],
     run: &RunInfo,
+    control: &RunControlView,
 ) -> Value {
-    let interval = if snap.interval_secs > 0.0 {
-        snap.interval_secs
-    } else {
-        1.0
-    };
     let latency = |pick: fn(&AggValues) -> Option<f64>| -> Value {
         exact
             .and_then(|aggregates| aggregate_value(aggregates, "request_duration", None, pick))
-            .or_else(|| weighted_request_latency(snap, None, pick))
             .map(|v| json!(v))
             .unwrap_or(Value::Null)
     };
     let (check_passes, check_fails) = check_counts(snap);
-    let interval_error = interval_rate(snap, "http_req_failed", None);
-    let (error_rate, error_window) = match interval_error {
-        Some(rate) => (Some(rate), "interval"),
-        None => (merged_rate(snap, "http_req_failed", None), "run_to_date"),
-    };
+    let request_interval = request_interval(snap, None);
+    let attempts_per_second =
+        request_interval.map(|counts| counts.attempts as f64 / snap.interval_secs);
+    let successful_per_second =
+        request_interval.map(|counts| counts.successful() as f64 / snap.interval_secs);
+    let failed_per_second =
+        request_interval.map(|counts| counts.failed as f64 / snap.interval_secs);
+    let request_error_rate = request_interval.and_then(RequestInterval::error_rate);
     let latency_quality = if exact.is_some() {
+        "exact_merged_histogram"
+    } else {
+        "unavailable"
+    };
+    let latency_average_quality = if exact.is_none() {
+        "unavailable"
+    } else if run.agents.is_empty() {
         "exact"
     } else {
-        "estimated"
+        "histogram_reconstructed_approximate"
     };
+    let interval_started_ms = snap
+        .timestamp_ms
+        .saturating_sub((snap.interval_secs.max(0.0) * 1000.0) as u64);
 
     json!({
         "run_id": run.run_id,
@@ -51,14 +59,24 @@ pub(crate) fn live_payload(
         "ts": snap.timestamp_ms,
         "elapsed": snap.elapsed_secs,
         "interval_secs": snap.interval_secs,
+        "interval_started_ms": interval_started_ms,
+        "interval_ended_ms": snap.timestamp_ms,
         "state": run.state,
+        "paused": control.is_paused,
         "complete": run.complete,
         "assigned_agents": run.agents,
         "contributing_agents": run.contributing_agents,
         "lost_agents": run.lost_agents,
-        "rps": interval_request_rps(snap, None, interval),
-        "iterations_ps": interval_rps(snap, "iterations", None, interval),
-        "error_rate": error_rate,
+        "rps": attempts_per_second,
+        "attempts_per_second": attempts_per_second,
+        "successful_per_second": successful_per_second,
+        "failed_per_second": failed_per_second,
+        "request_error_rate": request_error_rate,
+        "request_attempts_interval": request_interval.map(|counts| counts.attempts),
+        "successful_requests_interval": request_interval.map(RequestInterval::successful),
+        "failed_requests_interval": request_interval.map(|counts| counts.failed),
+        "iterations_ps": interval_rps(snap, "iterations", None),
+        "error_rate": request_error_rate,
         "active_vus": gauge_sum(snap, "vus"),
         "max_vus": gauge_sum(snap, "vus_max"),
         "latency": {
@@ -68,23 +86,85 @@ pub(crate) fn live_payload(
             "p95": latency(|a| a.p95),
             "p99": latency(|a| a.p99),
         },
-        "per_scenario": per_scenario(snap, exact, interval),
+        "per_scenario": per_scenario(snap, exact),
         "per_agent": exact.map(per_agent).unwrap_or_default(),
         "thresholds": thresholds,
         "checks": { "passes": check_passes, "fails": check_fails },
-        "data_sent_ps": interval_bytes_per_sec(snap, "data_sent", interval),
-        "data_received_ps": interval_bytes_per_sec(snap, "data_received", interval),
+        "data_sent_ps": interval_bytes_per_sec(snap, "data_sent"),
+        "data_received_ps": interval_bytes_per_sec(snap, "data_received"),
         "request_reqs_total": exact
             .and_then(|aggregates| aggregate_value(aggregates, "request_reqs", None, |a| Some(a.sum)))
             .unwrap_or_else(|| request_counter_total(snap)),
         "metric_contract": {
+            "request_rate_window": "interval",
+            "request_rate_population": "all request attempts across protocols",
+            "request_failure_definition": "canonical http_req_failed sample",
             "rps_window": "interval",
-            "error_rate_window": error_window,
+            "error_rate_window": "interval",
             "latency_window": "run_to_date",
             "latency_quality": latency_quality,
+            "latency_average_quality": latency_average_quality,
+            "latency_population": "all request attempts including failed requests",
         },
         "failures": failures_breakdown(snap),
     })
+}
+
+#[derive(Clone, Copy)]
+struct RequestInterval {
+    attempts: u64,
+    failed: u64,
+}
+
+impl RequestInterval {
+    fn successful(self) -> u64 {
+        self.attempts.saturating_sub(self.failed)
+    }
+
+    fn error_rate(self) -> Option<f64> {
+        (self.attempts > 0).then_some(self.failed as f64 / self.attempts as f64)
+    }
+}
+
+/// Return one compatible interval population. Missing or mismatched canonical
+/// request-failure samples make the whole success/failure split unavailable.
+fn request_interval(snap: &Snapshot, scenario: Option<&str>) -> Option<RequestInterval> {
+    if snap.interval_secs <= 0.0 {
+        return None;
+    }
+    let request_series: Vec<_> = snap
+        .series
+        .iter()
+        .filter(|series| loadr_core::metrics::is_request_counter_metric(&series.metric))
+        .filter(|series| match scenario {
+            Some(name) => series.tags.get("scenario").map(String::as_str) == Some(name),
+            None => true,
+        })
+        .collect();
+    let failure_series: Vec<_> = snap
+        .series
+        .iter()
+        .filter(|series| series_matches(series, "http_req_failed", scenario))
+        .collect();
+    if request_series.is_empty() || failure_series.is_empty() {
+        return None;
+    }
+    let attempts = request_series
+        .iter()
+        .map(|series| series.interval_count)
+        .sum::<u64>();
+    let failure_samples = failure_series
+        .iter()
+        .map(|series| series.interval_count)
+        .sum::<u64>();
+    let failed = failure_series
+        .iter()
+        .map(|series| series.interval_sum)
+        .sum::<f64>()
+        .round()
+        .max(0.0) as u64;
+    (attempts == failure_samples && failed <= attempts)
+        .then_some(RequestInterval { attempts, failed })
 }
 
 /// A single failure-cause bucket: a label, its count, and share of all failures
@@ -95,7 +175,12 @@ fn bucket(key: String, count: u64, category_total: u64) -> Value {
     } else {
         0.0
     };
-    json!({ "key": key, "count": count, "share": share })
+    json!({
+        "key": key,
+        "count": count,
+        "share": share,
+        "denominator": category_total,
+    })
 }
 
 /// Sort buckets descending by count, cap to `limit`, folding the rest into an
@@ -164,6 +249,7 @@ fn status_bucket(protocol: &str, status: &str, count: u64, category_total: u64) 
         "status_name": response_status_name(protocol, status),
         "count": count,
         "share": share,
+        "denominator": category_total,
     })
 }
 
@@ -265,10 +351,81 @@ pub(crate) fn failures_breakdown(snap: &Snapshot) -> Value {
         "failed_requests": failed_requests,
         "failed_checks": check_total,
         "exceptions": exception_total,
+        "category_totals": {
+            "by_status": status_total,
+            "by_error_kind": error_total,
+            "by_check": check_total,
+            "by_exception": exception_total,
+        },
+        "share_contract": "each percentage uses its category total; categories may overlap",
         "by_status": top_status_buckets(by_status.into_iter().collect(), LIMIT),
         "by_error_kind": top_buckets(by_error_kind.into_iter().collect(), LIMIT),
         "by_check": top_buckets(by_check.into_iter().collect(), LIMIT),
         "by_exception": top_buckets(by_exception.into_iter().collect(), LIMIT),
+    })
+}
+
+/// Decision-facing frozen values for a completed run.
+pub(crate) fn final_payload(summary: &Summary, run: &RunInfo) -> Value {
+    let metric = |name: &str| {
+        summary
+            .metrics
+            .iter()
+            .find(|metric| metric.metric == name)
+            .map(|metric| &metric.agg)
+    };
+    let attempts = metric("request_reqs").map(|agg| agg.sum.max(0.0).round() as u64);
+    let failure_metric = metric("http_req_failed");
+    let compatible = attempts
+        .zip(failure_metric)
+        .and_then(|(attempts, failures)| {
+            let failed = failures.sum.max(0.0).round() as u64;
+            (failures.count == attempts && failed <= attempts)
+                .then_some(RequestInterval { attempts, failed })
+        });
+    let duration = summary.duration_secs;
+    let rate = |count: Option<u64>| {
+        count.and_then(|count| (duration > 0.0).then_some(count as f64 / duration))
+    };
+    let latency = metric("request_duration");
+    let average_quality = if latency.is_none() {
+        "unavailable"
+    } else if run.agents.is_empty() {
+        "exact"
+    } else {
+        "histogram_reconstructed_approximate"
+    };
+
+    json!({
+        "window": "full_observed_run",
+        "started_ms": summary.started_ms,
+        "ended_ms": summary.ended_ms,
+        "duration_secs": duration,
+        "attempts": attempts,
+        "successful_requests": compatible.map(RequestInterval::successful),
+        "failed_requests": compatible.map(|counts| counts.failed),
+        "average_attempts_per_second": rate(attempts),
+        "average_successful_per_second": rate(compatible.map(RequestInterval::successful)),
+        "average_failed_per_second": rate(compatible.map(|counts| counts.failed)),
+        "request_error_rate": compatible.and_then(RequestInterval::error_rate),
+        "latency": {
+            "avg": latency.and_then(|agg| agg.avg),
+            "p95": latency.and_then(|agg| agg.p95),
+        },
+        "metric_contract": {
+            "rate_denominator": "full observed duration",
+            "request_failure_definition": "canonical http_req_failed sample",
+            "latency_window": "run_to_date",
+            "latency_population": "all request attempts including failed requests",
+            "latency_percentile_quality": if latency.is_some() {
+                "exact_merged_histogram"
+            } else {
+                "unavailable"
+            },
+            "latency_average_quality": average_quality,
+        },
+        "complete": run.complete,
+        "failures": failures_breakdown(&summary.snapshot),
     })
 }
 
@@ -285,22 +442,42 @@ pub(crate) fn overview_json(backend: &dyn UiBackend) -> Value {
         .find(|r| LIVE_STATES.contains(&r.state.as_str()))
         .or_else(|| runs.first());
 
-    let (run, metrics) = match target {
+    let (run, metrics, final_metrics) = match target {
         Some(r) => {
-            let thresholds = backend.run_thresholds(&r.run_id);
-            let exact = backend.run_aggregate_snapshot(&r.run_id);
-            let metrics = backend
-                .run_snapshot(&r.run_id)
-                .map(|s| live_payload(&s, exact.as_deref(), &thresholds, r))
-                .unwrap_or(Value::Null);
-            (serde_json::to_value(r).unwrap_or(Value::Null), metrics)
+            if LIVE_STATES.contains(&r.state.as_str()) {
+                let thresholds = backend.run_thresholds(&r.run_id);
+                let exact = backend.run_aggregate_snapshot(&r.run_id);
+                let control = backend.run_control_state(&r.run_id);
+                let metrics = backend
+                    .run_snapshot(&r.run_id)
+                    .map(|snapshot| {
+                        live_payload(&snapshot, exact.as_deref(), &thresholds, r, &control)
+                    })
+                    .unwrap_or(Value::Null);
+                (
+                    serde_json::to_value(r).unwrap_or(Value::Null),
+                    metrics,
+                    Value::Null,
+                )
+            } else {
+                let final_metrics = backend
+                    .run_summary(&r.run_id)
+                    .map(|summary| final_payload(&summary, r))
+                    .unwrap_or(Value::Null);
+                (
+                    serde_json::to_value(r).unwrap_or(Value::Null),
+                    Value::Null,
+                    final_metrics,
+                )
+            }
         }
-        None => (Value::Null, Value::Null),
+        None => (Value::Null, Value::Null, Value::Null),
     };
 
     json!({
         "run": run,
         "metrics": metrics,
+        "final_metrics": final_metrics,
         "live_runs": live_runs,
         "total_runs": runs.len(),
         "agents": backend.agents().len(),
@@ -322,57 +499,17 @@ fn scenario_matches(s: &loadr_core::SeriesSnapshot, scenario: Option<&str>) -> b
 }
 
 /// Events recorded since the previous snapshot, per second.
-fn interval_rps(snap: &Snapshot, metric: &str, scenario: Option<&str>, interval: f64) -> f64 {
-    let count: u64 = snap
-        .series
-        .iter()
-        .filter(|s| series_matches(s, metric, scenario))
-        .map(|s| s.interval_count)
-        .sum();
-    count as f64 / interval
-}
-
-/// Events recorded since the previous snapshot across all request families,
-/// per second.
-fn interval_request_rps(snap: &Snapshot, scenario: Option<&str>, interval: f64) -> f64 {
-    let count: u64 = snap
-        .series
-        .iter()
-        .filter(|s| loadr_core::metrics::is_request_counter_metric(&s.metric))
-        .filter(|s| match scenario {
-            Some(name) => s.tags.get("scenario").map(String::as_str) == Some(name),
-            None => true,
-        })
-        .map(|s| s.interval_count)
-        .sum();
-    count as f64 / interval
-}
-
-fn interval_rate(snap: &Snapshot, metric: &str, scenario: Option<&str>) -> Option<f64> {
-    let (passes, total) = snap
-        .series
-        .iter()
-        .filter(|s| series_matches(s, metric, scenario))
-        .fold((0.0, 0_u64), |(passes, total), series| {
-            (passes + series.interval_sum, total + series.interval_count)
-        });
-    (total > 0).then_some(passes / total as f64)
-}
-
-/// Pass fraction merged exactly across tag sets (sum of passes / sum of total).
-fn merged_rate(snap: &Snapshot, metric: &str, scenario: Option<&str>) -> Option<f64> {
-    let (passes, total) = snap
-        .series
-        .iter()
-        .filter(|s| series_matches(s, metric, scenario))
-        .fold((0.0_f64, 0_u64), |(p, t), s| {
-            (p + s.agg.sum, t + s.agg.count)
-        });
-    if total > 0 {
-        Some(passes / total as f64)
-    } else {
-        None
+fn interval_rps(snap: &Snapshot, metric: &str, scenario: Option<&str>) -> Option<f64> {
+    if snap.interval_secs <= 0.0 {
+        return None;
     }
+    let count: u64 = snap
+        .series
+        .iter()
+        .filter(|s| series_matches(s, metric, scenario))
+        .map(|s| s.interval_count)
+        .sum();
+    Some(count as f64 / snap.interval_secs)
 }
 
 fn aggregate_value<F>(
@@ -400,30 +537,6 @@ where
         .and_then(|series| pick(&series.agg))
 }
 
-/// Compatibility fallback for backends that cannot yet provide exact
-/// aggregate histograms. Its use is explicitly labelled `estimated` in the
-/// payload and GraphQL's duplicate duration family is excluded.
-fn weighted_request_latency<F>(snap: &Snapshot, scenario: Option<&str>, pick: F) -> Option<f64>
-where
-    F: Fn(&AggValues) -> Option<f64>,
-{
-    let mut weighted = 0.0;
-    let mut count = 0_u64;
-    for series in snap.series.iter().filter(|series| {
-        loadr_core::metrics::is_request_duration_metric(&series.metric)
-            && match scenario {
-                Some(name) => series.tags.get("scenario").map(String::as_str) == Some(name),
-                None => true,
-            }
-    }) {
-        if let Some(value) = pick(&series.agg) {
-            weighted += value * series.agg.count as f64;
-            count += series.agg.count;
-        }
-    }
-    (count > 0).then_some(weighted / count as f64)
-}
-
 /// Sum of gauge `last` values across series of a metric.
 fn gauge_sum(snap: &Snapshot, metric: &str) -> f64 {
     snap.series
@@ -441,14 +554,17 @@ fn request_counter_total(snap: &Snapshot) -> f64 {
         .sum()
 }
 
-fn interval_bytes_per_sec(snap: &Snapshot, metric: &str, interval: f64) -> f64 {
+fn interval_bytes_per_sec(snap: &Snapshot, metric: &str) -> Option<f64> {
+    if snap.interval_secs <= 0.0 {
+        return None;
+    }
     let sum: f64 = snap
         .series
         .iter()
         .filter(|s| s.metric == metric)
         .map(|s| s.interval_sum)
         .sum();
-    (sum / interval).max(0.0)
+    Some((sum / snap.interval_secs).max(0.0))
 }
 
 fn check_counts(snap: &Snapshot) -> (u64, u64) {
@@ -461,7 +577,7 @@ fn check_counts(snap: &Snapshot) -> (u64, u64) {
     (passes, total.saturating_sub(passes))
 }
 
-fn per_scenario(snap: &Snapshot, exact: Option<&Snapshot>, interval: f64) -> Vec<Value> {
+fn per_scenario(snap: &Snapshot, exact: Option<&Snapshot>) -> Vec<Value> {
     let mut names: BTreeSet<&str> = snap
         .series
         .iter()
@@ -472,18 +588,19 @@ fn per_scenario(snap: &Snapshot, exact: Option<&Snapshot>, interval: f64) -> Vec
     names
         .into_iter()
         .map(|name| {
+            let interval = request_interval(snap, Some(name));
             json!({
                 "scenario": name,
-                "rps": interval_request_rps(snap, Some(name), interval),
-                "iterations_ps": interval_rps(snap, "iterations", Some(name), interval),
+                "rps": interval.map(|counts| counts.attempts as f64 / snap.interval_secs),
+                "attempts_per_second": interval.map(|counts| counts.attempts as f64 / snap.interval_secs),
+                "successful_per_second": interval.map(|counts| counts.successful() as f64 / snap.interval_secs),
+                "failed_per_second": interval.map(|counts| counts.failed as f64 / snap.interval_secs),
+                "iterations_ps": interval_rps(snap, "iterations", Some(name)),
                 "p95": exact
-                    .and_then(|aggregates| aggregate_value(aggregates, "request_duration", Some(name), |a| a.p95))
-                    .or_else(|| weighted_request_latency(snap, Some(name), |a| a.p95)),
+                    .and_then(|aggregates| aggregate_value(aggregates, "request_duration", Some(name), |a| a.p95)),
                 "avg": exact
-                    .and_then(|aggregates| aggregate_value(aggregates, "request_duration", Some(name), |a| a.avg))
-                    .or_else(|| weighted_request_latency(snap, Some(name), |a| a.avg)),
-                "error_rate": interval_rate(snap, "http_req_failed", Some(name))
-                    .or_else(|| merged_rate(snap, "http_req_failed", Some(name))),
+                    .and_then(|aggregates| aggregate_value(aggregates, "request_duration", Some(name), |a| a.avg)),
+                "error_rate": interval.and_then(RequestInterval::error_rate),
             })
         })
         .collect()
@@ -586,10 +703,20 @@ mod tests {
         }
         agg.record(&sample("vus", MetricKind::Gauge, 7.0, &[]));
         let exact = agg.aggregate_snapshot(&[&["scenario"]]);
-        let snap = agg.snapshot();
-        let payload = live_payload(&snap, Some(&exact), &[], &run_info("running"));
+        let mut snap = agg.snapshot();
+        snap.interval_secs = 1.0;
+        let payload = live_payload(
+            &snap,
+            Some(&exact),
+            &[],
+            &run_info("running"),
+            &RunControlView::default(),
+        );
         assert_eq!(payload["state"], "running");
         assert!(payload["rps"].as_f64().expect("rps") > 0.0);
+        assert_eq!(payload["attempts_per_second"], 50.0);
+        assert_eq!(payload["successful_per_second"], 45.0);
+        assert_eq!(payload["failed_per_second"], 5.0);
         assert_eq!(payload["active_vus"], 7.0);
         let err = payload["error_rate"].as_f64().expect("error rate");
         assert!((err - 0.1).abs() < 1e-9);
@@ -597,7 +724,10 @@ mod tests {
         let scenarios = payload["per_scenario"].as_array().expect("scenarios");
         assert_eq!(scenarios.len(), 1);
         assert_eq!(scenarios[0]["scenario"], "browse");
-        assert_eq!(payload["metric_contract"]["latency_quality"], "exact");
+        assert_eq!(
+            payload["metric_contract"]["latency_quality"],
+            "exact_merged_histogram"
+        );
     }
 
     #[test]
@@ -633,7 +763,13 @@ mod tests {
         }
         let exact = agg.aggregate_snapshot(&[&["loadr_agent", "loadr_agent_id"]]);
         let snap = agg.snapshot();
-        let payload = live_payload(&snap, Some(&exact), &[], &run_info("running"));
+        let payload = live_payload(
+            &snap,
+            Some(&exact),
+            &[],
+            &run_info("running"),
+            &RunControlView::default(),
+        );
         let p99 = payload["latency"]["p99"].as_f64().expect("p99");
         assert!((1970.0..=1990.0).contains(&p99), "true fleet p99: {p99}");
         assert_eq!(payload["per_agent"].as_array().map(Vec::len), Some(2));
@@ -654,7 +790,13 @@ mod tests {
         ));
         let exact = agg.aggregate_snapshot(&[]);
         let snap = agg.snapshot();
-        let payload = live_payload(&snap, Some(&exact), &[], &run_info("running"));
+        let payload = live_payload(
+            &snap,
+            Some(&exact),
+            &[],
+            &run_info("running"),
+            &RunControlView::default(),
+        );
         assert_eq!(payload["request_reqs_total"], 1.0);
         assert_eq!(payload["latency"]["avg"], 20.0);
     }
@@ -675,9 +817,22 @@ mod tests {
                 5.0 + i as f64,
                 &[("scenario", "rpc")],
             ));
+            agg.record(&sample(
+                "http_req_failed",
+                MetricKind::Rate,
+                0.0,
+                &[("scenario", "rpc")],
+            ));
         }
+        let exact = agg.aggregate_snapshot(&[&["scenario"]]);
         let snap = agg.snapshot();
-        let payload = live_payload(&snap, None, &[], &run_info("running"));
+        let payload = live_payload(
+            &snap,
+            Some(&exact),
+            &[],
+            &run_info("running"),
+            &RunControlView::default(),
+        );
 
         assert!(payload["rps"].as_f64().expect("rps") > 0.0);
         assert_eq!(payload["request_reqs_total"], 20.0);
@@ -704,9 +859,22 @@ mod tests {
                 1.0 + i as f64,
                 &[("scenario", "transfers")],
             ));
+            agg.record(&sample(
+                "http_req_failed",
+                MetricKind::Rate,
+                0.0,
+                &[("scenario", "transfers")],
+            ));
         }
+        let exact = agg.aggregate_snapshot(&[&["scenario"]]);
         let snap = agg.snapshot();
-        let payload = live_payload(&snap, None, &[], &run_info("running"));
+        let payload = live_payload(
+            &snap,
+            Some(&exact),
+            &[],
+            &run_info("running"),
+            &RunControlView::default(),
+        );
 
         assert!(payload["rps"].as_f64().expect("rps") > 0.0);
         assert_eq!(payload["request_reqs_total"], 10.0);
@@ -733,6 +901,12 @@ mod tests {
                 10.0,
                 &[("scenario", "mixed")],
             ));
+            agg.record(&sample(
+                "http_req_failed",
+                MetricKind::Rate,
+                0.0,
+                &[("scenario", "mixed")],
+            ));
         }
         for _ in 0..3 {
             agg.record(&sample(
@@ -747,9 +921,22 @@ mod tests {
                 30.0,
                 &[("scenario", "mixed")],
             ));
+            agg.record(&sample(
+                "http_req_failed",
+                MetricKind::Rate,
+                0.0,
+                &[("scenario", "mixed")],
+            ));
         }
+        let exact = agg.aggregate_snapshot(&[&["scenario"]]);
         let snap = agg.snapshot();
-        let payload = live_payload(&snap, None, &[], &run_info("running"));
+        let payload = live_payload(
+            &snap,
+            Some(&exact),
+            &[],
+            &run_info("running"),
+            &RunControlView::default(),
+        );
 
         assert_eq!(payload["request_reqs_total"], 10.0);
         assert!(payload["rps"].as_f64().expect("rps") > 0.0);
@@ -777,7 +964,13 @@ mod tests {
         }
 
         let snap = agg.snapshot();
-        let payload = live_payload(&snap, None, &[], &run_info("running"));
+        let payload = live_payload(
+            &snap,
+            None,
+            &[],
+            &run_info("running"),
+            &RunControlView::default(),
+        );
         assert_eq!(payload["active_vus"], 9999.0);
         assert_eq!(payload["max_vus"], 9999.0);
     }
@@ -870,6 +1063,7 @@ mod tests {
         assert_eq!(by_status[0]["count"], 3);
         let share = by_status[0]["share"].as_f64().expect("share");
         assert!((share - 3.0 / 5.0).abs() < 1e-9);
+        assert_eq!(by_status[0]["denominator"], 5);
 
         let by_kind = f["by_error_kind"].as_array().expect("by_error_kind");
         assert_eq!(by_kind.len(), 1);
@@ -1060,5 +1254,31 @@ mod tests {
         // All 20 failures still accounted for across the 12 rows.
         let summed: u64 = by_status.iter().map(|b| b["count"].as_u64().unwrap()).sum();
         assert_eq!(summed, 20);
+    }
+
+    #[test]
+    fn incompatible_request_interval_is_unavailable() {
+        let mut agg = Aggregator::new();
+        for index in 0..10 {
+            agg.record(&sample("http_reqs", MetricKind::Counter, 1.0, &[]));
+            if index < 9 {
+                agg.record(&sample("http_req_failed", MetricKind::Rate, 0.0, &[]));
+            }
+        }
+        let exact = agg.aggregate_snapshot(&[]);
+        let mut snap = agg.snapshot();
+        snap.interval_secs = 1.0;
+        let payload = live_payload(
+            &snap,
+            Some(&exact),
+            &[],
+            &run_info("running"),
+            &RunControlView::default(),
+        );
+
+        assert!(payload["attempts_per_second"].is_null());
+        assert!(payload["successful_per_second"].is_null());
+        assert!(payload["failed_per_second"].is_null());
+        assert!(payload["request_error_rate"].is_null());
     }
 }

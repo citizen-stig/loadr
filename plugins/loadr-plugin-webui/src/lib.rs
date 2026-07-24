@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 //! # loadr-plugin-webui
 //!
 //! The embedded management web UI for [loadr](https://loadr.io) — live

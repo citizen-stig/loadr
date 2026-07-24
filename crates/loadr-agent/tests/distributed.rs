@@ -305,6 +305,11 @@ thresholds:
         .submit(plan.to_string(), quick_submit())
         .await
         .expect("submit");
+    assert_eq!(
+        run_state(&handle, &run_id),
+        "pending",
+        "run remains pending until an agent crosses the start barrier"
+    );
 
     wait_until(
         || is_terminal(&run_state(&handle, &run_id)),
@@ -435,6 +440,31 @@ thresholds:
 
     // Per-agent summaries were reported too.
     assert_eq!(handle.run_agent_summaries(&run_id).len(), 3);
+
+    // Terminal timestamps, duration, and derived rates are immutable on reads.
+    let ended_ms = handle
+        .runs()
+        .into_iter()
+        .find(|run| run.run_id == run_id)
+        .and_then(|run| run.ended_ms)
+        .expect("terminal timestamp");
+    assert_eq!(ended_ms, summary.ended_ms);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let reread = handle.run_summary(&run_id).expect("frozen summary");
+    assert_eq!(reread.ended_ms, summary.ended_ms);
+    assert_eq!(reread.duration_secs, summary.duration_secs);
+    assert_eq!(
+        reread
+            .metrics
+            .iter()
+            .find(|metric| metric.metric == "request_reqs")
+            .and_then(|metric| metric.agg.per_second),
+        summary
+            .metrics
+            .iter()
+            .find(|metric| metric.metric == "request_reqs")
+            .and_then(|metric| metric.agg.per_second)
+    );
 
     handle.shutdown();
 }

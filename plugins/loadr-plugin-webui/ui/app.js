@@ -413,6 +413,8 @@
     const failSummary = h('span', { class: 'mono muted' }, 'no failures yet');
     const failGroupCard = (key, title) =>
       h('div', { class: 'fail-group' }, h('h4', null, title), failGroups[key]);
+    // Start disabled: there is nothing to export until a snapshot reports
+    // failures, and an enabled button that silently no-ops reads as broken.
     const noFailuresTip = 'No failures recorded yet — enabled once the run reports failures';
     const dlCsvBtn = h(
       'button',
@@ -1174,31 +1176,21 @@
           h('div', { class: 'stat-value mono' }, value)
         );
       }
-      // Request metrics are protocol-family specific; summary cards are
-      // protocol-agnostic, matching the live dashboard rollup.
-      function reqMetrics(summary) {
-        return (summary.metrics || []).filter((m) => m.metric.endsWith('_reqs'));
+      // Summary cards read the canonical protocol-agnostic rollup metrics
+      // (`request_reqs` / `request_duration`) the summary always contains.
+      function metricAgg(summary, name) {
+        const m = (summary.metrics || []).find((x) => x.metric === name);
+        return (m && m.agg) || {};
       }
-      function reqDurationMetrics(summary) {
-        return (summary.metrics || []).filter((m) => m.metric.endsWith('_req_duration'));
+      function sumMetric(summary, name) {
+        return metricAgg(summary, name).sum || 0;
       }
-      function sumReqMetrics(summary) {
-        return reqMetrics(summary).reduce((sum, m) => sum + ((m.agg && m.agg.sum) || 0), 0);
+      function perSecMetric(summary, name) {
+        return metricAgg(summary, name).per_second || 0;
       }
-      function perSecReqMetrics(summary) {
-        return reqMetrics(summary).reduce((sum, m) => sum + ((m.agg && m.agg.per_second) || 0), 0);
-      }
-      function weightedReqDuration(summary, field) {
-        let total = 0;
-        let acc = 0;
-        for (const m of reqDurationMetrics(summary)) {
-          const a = m.agg || {};
-          const count = a.count || 0;
-          if (!count || a[field] == null) continue;
-          total += count;
-          acc += a[field] * count;
-        }
-        return total ? acc / total : null;
+      function aggOf(summary, name, field) {
+        const v = metricAgg(summary, name)[field];
+        return v == null ? null : v;
       }
 
       async function load() {

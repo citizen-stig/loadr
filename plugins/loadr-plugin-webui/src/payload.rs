@@ -193,7 +193,8 @@ fn top_status_buckets(mut counts: Vec<((String, String), u64)>, limit: usize) ->
 /// Group failed requests, failed checks, and script exceptions by cause.
 ///
 /// Sources, all from data the engine already tracks:
-/// - Failed requests: `http_req_failed` samples carrying an `error_kind`
+/// - Failed requests: the `http_req_failed` rate, which every protocol records.
+///   Samples carrying an `error_kind`
 ///   (transport failures) or `error` (prepare/protocol/extraction) tag are
 ///   bucketed by that kind. Remaining failures are bucketed by `proto` and
 ///   non-zero `status`, with missing/zero statuses reported as `unknown`.
@@ -692,13 +693,13 @@ mod tests {
         let mut agg = Aggregator::new();
         for i in 0..10 {
             agg.record(&sample(
-                "risotto_reqs",
+                "mongo_reqs",
                 MetricKind::Counter,
                 1.0,
                 &[("scenario", "transfers")],
             ));
             agg.record(&sample(
-                "risotto_req_duration",
+                "mongo_req_duration",
                 MetricKind::Trend,
                 1.0 + i as f64,
                 &[("scenario", "transfers")],
@@ -883,6 +884,52 @@ mod tests {
         let by_exc = f["by_exception"].as_array().expect("by_exception");
         assert_eq!(by_exc.len(), 1);
         assert_eq!(by_exc[0]["count"], 6);
+    }
+
+    /// gRPC failures carry small numeric codes (1..16) and no error tag; they
+    /// must land in by_status with a readable name, not vanish (issue: the
+    /// CSV/Report buttons stayed disabled on gRPC runs with failures).
+    #[test]
+    fn failures_breakdown_grpc_status_failures() {
+        let mut agg = Aggregator::new();
+        for _ in 0..5 {
+            agg.record(&sample(
+                "http_req_failed",
+                MetricKind::Rate,
+                0.0,
+                &[("status", "0"), ("proto", "grpc")],
+            ));
+        }
+        for _ in 0..3 {
+            agg.record(&sample(
+                "http_req_failed",
+                MetricKind::Rate,
+                1.0,
+                &[("status", "14"), ("proto", "grpc")],
+            ));
+        }
+        for _ in 0..2 {
+            agg.record(&sample(
+                "http_req_failed",
+                MetricKind::Rate,
+                1.0,
+                &[("status", "7"), ("proto", "grpc")],
+            ));
+        }
+        let snap = agg.snapshot();
+        let f = failures_breakdown(&snap);
+        assert_eq!(f["event_total"], 5);
+        assert_eq!(f["failed_requests"], 5);
+        let by_status = f["by_status"].as_array().expect("by_status");
+        assert_eq!(by_status.len(), 2);
+        assert_eq!(by_status[0]["key"], "14");
+        assert_eq!(by_status[0]["protocol"], "grpc");
+        assert_eq!(by_status[0]["status"], "14");
+        assert_eq!(by_status[0]["status_name"], "UNAVAILABLE");
+        assert_eq!(by_status[0]["count"], 3);
+        assert_eq!(by_status[1]["key"], "7");
+        assert_eq!(by_status[1]["status_name"], "PERMISSION_DENIED");
+        assert_eq!(by_status[1]["count"], 2);
     }
 
     #[test]

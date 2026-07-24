@@ -61,9 +61,44 @@ impl ProtocolHandler for MockHttpHandler {
     }
 }
 
+/// A mock `data_source` plugin: counts `init`/`next_row` calls and emits rows
+/// with a single `tick` column.
+struct MockDataSource {
+    inits: Arc<AtomicU64>,
+    rows: Arc<AtomicU64>,
+}
+
+impl loadr_core::DataSourcePlugin for MockDataSource {
+    fn name(&self) -> &str {
+        "fake"
+    }
+
+    fn init(
+        &mut self,
+        source_configs: &indexmap::IndexMap<String, serde_json::Value>,
+    ) -> Result<(), String> {
+        assert!(
+            source_configs.contains_key("gen"),
+            "data.gen config delivered to the plugin"
+        );
+        self.inits.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    fn next_row(
+        &self,
+        _ctx: &loadr_core::PluginRowCtx<'_>,
+    ) -> Result<loadr_core::PluginRowResult, String> {
+        let n = self.rows.fetch_add(1, Ordering::Relaxed);
+        let mut row = indexmap::IndexMap::new();
+        row.insert("tick".to_string(), n.to_string());
+        Ok(loadr_core::PluginRowResult::Row(row))
+    }
+}
+
 fn mock_deps() -> RunnerDeps {
     RunnerDeps {
-        protocols: Arc::new(|_defaults, _base_dir| {
+        protocols: Arc::new(|_plan, _base_dir| {
             let mut registry = ProtocolRegistry::new();
             registry.register(Arc::new(MockHttpHandler {
                 counter: AtomicU64::new(0),
@@ -71,6 +106,86 @@ fn mock_deps() -> RunnerDeps {
             Ok(registry)
         }),
         script: None,
+        data_sources: None,
+    }
+}
+
+/// `mock_deps` plus a data-source factory that backs every declared plugin
+/// with a [`MockDataSource`] reporting into the shared counters.
+fn mock_deps_with_data_sources(inits: &Arc<AtomicU64>, rows: &Arc<AtomicU64>) -> RunnerDeps {
+    let inits = Arc::clone(inits);
+    let rows = Arc::clone(rows);
+    RunnerDeps {
+        data_sources: Some(Arc::new(move |plugin_refs, _base_dir| {
+            let mut sources: HashMap<String, Box<dyn loadr_core::DataSourcePlugin>> =
+                HashMap::new();
+            for plugin_ref in plugin_refs {
+                if !plugin_ref.enabled {
+                    continue;
+                }
+                sources.insert(
+                    plugin_ref.name.clone(),
+                    Box::new(MockDataSource {
+                        inits: Arc::clone(&inits),
+                        rows: Arc::clone(&rows),
+                    }),
+                );
+            }
+            Ok(sources)
+        })),
+        ..mock_deps()
+    }
+}
+
+/// A mock plugin-provided protocol handler named `custom`.
+struct MockCustomHandler;
+
+#[async_trait::async_trait]
+impl ProtocolHandler for MockCustomHandler {
+    fn name(&self) -> &str {
+        "custom"
+    }
+
+    async fn execute(
+        &self,
+        _ctx: &mut VuContext,
+        request: &PreparedRequest,
+    ) -> Result<ProtocolResponse, ProtocolError> {
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        Ok(ProtocolResponse {
+            status: 200,
+            status_text: "OK".to_string(),
+            protocol_version: "HTTP/1.1".to_string(),
+            timings: Timings {
+                waiting_ms: 1.0,
+                duration_ms: 1.0,
+                ..Default::default()
+            },
+            bytes_sent: 10,
+            bytes_received: 20,
+            url: request.url.clone(),
+            ..Default::default()
+        })
+    }
+}
+
+/// Deps whose factory registers the `custom` handler only when the assigned
+/// plan declares it under `plugins:` — proving the full plan (including the
+/// plugins section) reaches the agent-side protocol factory.
+fn plugin_gated_deps() -> RunnerDeps {
+    RunnerDeps {
+        protocols: Arc::new(|plan, _base_dir| {
+            let mut registry = ProtocolRegistry::new();
+            registry.register(Arc::new(MockHttpHandler {
+                counter: AtomicU64::new(0),
+            }));
+            if plan.plugins.iter().any(|p| p.enabled && p.name == "custom") {
+                registry.register(Arc::new(MockCustomHandler));
+            }
+            Ok(registry)
+        }),
+        script: None,
+        data_sources: None,
     }
 }
 
@@ -82,11 +197,12 @@ fn temp_dir(tag: &str) -> PathBuf {
     std::env::temp_dir().join(format!("loadr-agent-test-{tag}-{}", uuid::Uuid::new_v4()))
 }
 
-fn spawn_agent(
+fn spawn_agent_with_deps(
     controller_addr: String,
     name: &str,
     agent_id: Option<String>,
     tls: Option<AgentTls>,
+    deps: RunnerDeps,
 ) -> CancellationToken {
     let token = CancellationToken::new();
     let config = AgentConfig {
@@ -96,13 +212,22 @@ fn spawn_agent(
         labels: HashMap::new(),
         tls,
         work_dir: temp_dir(name),
-        deps: mock_deps(),
+        deps,
     };
     let child = token.clone();
     tokio::spawn(async move {
         let _ = Agent::run(config, child).await;
     });
     token
+}
+
+fn spawn_agent(
+    controller_addr: String,
+    name: &str,
+    agent_id: Option<String>,
+    tls: Option<AgentTls>,
+) -> CancellationToken {
+    spawn_agent_with_deps(controller_addr, name, agent_id, tls, mock_deps())
 }
 
 async fn start_controller(liveness: Duration) -> ControllerHandle {
@@ -180,6 +305,11 @@ thresholds:
         .submit(plan.to_string(), quick_submit())
         .await
         .expect("submit");
+    assert_eq!(
+        run_state(&handle, &run_id),
+        "pending",
+        "run remains pending until an agent crosses the start barrier"
+    );
 
     wait_until(
         || is_terminal(&run_state(&handle, &run_id)),
@@ -190,6 +320,17 @@ thresholds:
     assert_eq!(run_state(&handle, &run_id), "finished");
 
     let summary = handle.run_summary(&run_id).expect("merged summary");
+    let run_info = handle
+        .runs()
+        .into_iter()
+        .find(|r| r.run_id == run_id)
+        .expect("run info");
+    assert_eq!(run_info.ended_ms, Some(summary.ended_ms));
+
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    let summary_after_wait = handle.run_summary(&run_id).expect("stable summary");
+    assert_eq!(summary_after_wait.ended_ms, summary.ended_ms);
+    assert_eq!(summary_after_wait.duration_secs, summary.duration_secs);
 
     // Exact totals: shared iterations split 40/40/40 across the 3 agents.
     let http_reqs = summary
@@ -235,6 +376,61 @@ thresholds:
         assert_eq!(*sum, 40.0, "agent {instance} share of shared iterations");
     }
 
+    // The controller's Prometheus source view has trusted per-agent labels
+    // and a separate exact fleet aggregate.
+    let metrics_view = handle.run_metrics_view(&run_id).expect("metrics view");
+    let detailed_agents: HashSet<&str> = metrics_view
+        .detailed
+        .series
+        .iter()
+        .filter(|series| series.metric == "http_reqs")
+        .filter_map(|series| series.tags.get("loadr_agent").map(String::as_str))
+        .collect();
+    assert_eq!(detailed_agents, HashSet::from(["a1", "a2", "a3"]));
+    assert!(metrics_view
+        .detailed
+        .series
+        .iter()
+        .filter(|series| series.metric == "http_reqs")
+        .all(|series| series
+            .tags
+            .get("loadr_agent_id")
+            .is_some_and(|id| !id.is_empty())));
+    let fleet_reqs = metrics_view
+        .fleet
+        .iter()
+        .find(|metric| metric.metric == "http_reqs")
+        .expect("fleet requests");
+    assert_eq!(fleet_reqs.agg.sum, 120.0);
+    let fleet_duration = metrics_view
+        .fleet
+        .iter()
+        .find(|metric| metric.metric == "http_req_duration")
+        .expect("fleet duration");
+    assert_eq!(fleet_duration.agg.p95, duration.agg.p95);
+    let fleet_vus = metrics_view
+        .fleet
+        .iter()
+        .find(|metric| metric.metric == "vus")
+        .expect("fleet VUs");
+    assert_eq!(fleet_vus.agg.last, Some(0.0));
+    let webui = handle
+        .run_aggregate_snapshot(&run_id)
+        .expect("exact Web UI aggregates");
+    let request_rollup = webui
+        .series
+        .iter()
+        .find(|series| series.metric == "request_reqs" && series.tags.is_empty())
+        .expect("canonical fleet request rollup");
+    assert_eq!(request_rollup.agg.sum, 120.0);
+    let agent_rollups: HashSet<&str> = webui
+        .series
+        .iter()
+        .filter(|series| series.metric == "request_reqs")
+        .filter_map(|series| series.tags.get("loadr_agent").map(String::as_str))
+        .collect();
+    assert_eq!(agent_rollups, HashSet::from(["a1", "a2", "a3"]));
+
     // Centrally evaluated thresholds pass on the merged totals.
     let thresholds = handle.run_thresholds(&run_id);
     assert_eq!(thresholds.len(), 1);
@@ -244,6 +440,98 @@ thresholds:
 
     // Per-agent summaries were reported too.
     assert_eq!(handle.run_agent_summaries(&run_id).len(), 3);
+
+    // Terminal timestamps, duration, and derived rates are immutable on reads.
+    let ended_ms = handle
+        .runs()
+        .into_iter()
+        .find(|run| run.run_id == run_id)
+        .and_then(|run| run.ended_ms)
+        .expect("terminal timestamp");
+    assert_eq!(ended_ms, summary.ended_ms);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    let reread = handle.run_summary(&run_id).expect("frozen summary");
+    assert_eq!(reread.ended_ms, summary.ended_ms);
+    assert_eq!(reread.duration_secs, summary.duration_secs);
+    assert_eq!(
+        reread
+            .metrics
+            .iter()
+            .find(|metric| metric.metric == "request_reqs")
+            .and_then(|metric| metric.agg.per_second),
+        summary
+            .metrics
+            .iter()
+            .find(|metric| metric.metric == "request_reqs")
+            .and_then(|metric| metric.agg.per_second)
+    );
+
+    handle.shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// Live gauges: active VUs are summed across agents for UI snapshots
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn constant_vus_live_snapshot_sums_agent_vus() {
+    let handle = start_controller(Duration::from_secs(6)).await;
+    let addr = format!("http://{}", handle.addr());
+    let _a1 = spawn_agent(addr.clone(), "v1", None, None);
+    let _a2 = spawn_agent(addr.clone(), "v2", None, None);
+    let _a3 = spawn_agent(addr.clone(), "v3", None, None);
+    wait_until(
+        || handle.agents().iter().filter(|a| a.healthy).count() == 3,
+        Duration::from_secs(10),
+        "3 agents registered",
+    )
+    .await;
+
+    let plan = r#"
+name: vus-e2e
+scenarios:
+  closed:
+    executor: constant-vus
+    vus: 6
+    duration: 2s
+    flow:
+      - request: { url: "http://mock.local/vus" }
+"#;
+    let run_id = handle
+        .submit(plan.to_string(), quick_submit())
+        .await
+        .expect("submit");
+    let rx = handle.watch_run(&run_id).expect("snapshot receiver");
+    wait_until(
+        || {
+            let snap = rx.borrow();
+            let vus: f64 = snap
+                .series
+                .iter()
+                .filter(|s| s.metric == "vus")
+                .filter_map(|s| s.agg.last)
+                .sum();
+            let series = snap.series.iter().filter(|s| s.metric == "vus").count();
+            series == 3 && vus >= 6.0
+        },
+        Duration::from_secs(10),
+        "fleet active VUs in snapshot",
+    )
+    .await;
+
+    wait_until(
+        || is_terminal(&run_state(&handle, &run_id)),
+        Duration::from_secs(30),
+        "run completion",
+    )
+    .await;
+    let summary = handle.run_summary(&run_id).expect("summary");
+    let vus_max = summary
+        .metrics
+        .iter()
+        .find(|m| m.metric == "vus_max")
+        .expect("vus_max metric");
+    assert_eq!(vus_max.agg.last, Some(6.0));
 
     handle.shutdown();
 }
@@ -340,6 +628,22 @@ scenarios:
 
     // Let it actually start producing load, then stop it.
     tokio::time::sleep(Duration::from_millis(1500)).await;
+    let scale_error = handle
+        .scale(&run_id, "long", 3)
+        .await
+        .expect_err("constant-vus scenario is not externally controlled");
+    assert!(scale_error
+        .to_string()
+        .contains("not externally controlled"));
+    handle.pause_run(&run_id, true).await.expect("pause ack");
+    assert_eq!(
+        handle
+            .run_operational_info(&run_id)
+            .expect("operational info")
+            .paused,
+        Some(true)
+    );
+    handle.pause_run(&run_id, false).await.expect("resume ack");
     handle.stop_run(&run_id).await.expect("stop");
 
     wait_until(
@@ -430,6 +734,15 @@ scenarios:
         .find(|m| m.metric == "http_reqs")
         .expect("http_reqs");
     assert!(http_reqs.agg.sum > 0.0);
+    let operational = handle
+        .run_operational_info(&run_id)
+        .expect("operational info");
+    assert_eq!(operational.lost.len(), 1);
+    assert_eq!(operational.contributing.len(), 2);
+    assert_eq!(
+        operational.on_agent_loss,
+        loadr_agent::OnAgentLoss::Continue
+    );
 
     handle.shutdown();
 }
@@ -461,6 +774,24 @@ async fn agent_reconnects_and_re_registers() {
     )
     .await;
 
+    let initial = handle
+        .agents()
+        .into_iter()
+        .find(|agent| agent.id == "agent-phoenix")
+        .expect("registered agent");
+    assert!(
+        initial.peer_addr.is_some(),
+        "controller captures peer socket"
+    );
+    assert_eq!(
+        initial.version.as_deref(),
+        Some(loadr_core::build_info::VERSION)
+    );
+    assert_eq!(
+        initial.revision.as_deref(),
+        Some(loadr_core::build_info::GIT_REVISION)
+    );
+
     first.cancel();
     wait_until(
         || {
@@ -486,7 +817,13 @@ async fn agent_reconnects_and_re_registers() {
         "re-registration",
     )
     .await;
-    assert_eq!(handle.agents().len(), 1, "same id replaces the old entry");
+    let agents = handle.agents();
+    assert_eq!(agents.len(), 1, "same id replaces the old entry");
+    assert!(agents[0].peer_addr.is_some());
+    assert_eq!(
+        agents[0].revision.as_deref(),
+        Some(loadr_core::build_info::GIT_REVISION)
+    );
 
     handle.shutdown();
 }
@@ -591,6 +928,150 @@ async fn mtls_agent_registers_and_plaintext_agent_is_rejected() {
         "plaintext agent must not register against a TLS controller"
     );
     plain.cancel();
+
+    handle.shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// Plugin protocols: the full plan (incl. `plugins:`) reaches the factory
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn plan_plugins_reach_agent_protocol_factory() {
+    let handle = start_controller(Duration::from_secs(6)).await;
+    let addr = format!("http://{}", handle.addr());
+    let _a1 = spawn_agent_with_deps(addr.clone(), "pl1", None, None, plugin_gated_deps());
+    wait_until(
+        || handle.agents().iter().filter(|a| a.healthy).count() == 1,
+        Duration::from_secs(10),
+        "agent registered",
+    )
+    .await;
+
+    let plan = r#"
+name: plugin-proto-e2e
+plugins:
+  - name: custom
+scenarios:
+  s:
+    executor: shared-iterations
+    vus: 2
+    iterations: 40
+    flow:
+      - request: { url: "custom://svc/x", protocol: custom }
+"#;
+    let run_id = handle
+        .submit(plan.to_string(), quick_submit())
+        .await
+        .expect("submit");
+    wait_until(
+        || is_terminal(&run_state(&handle, &run_id)),
+        Duration::from_secs(30),
+        "plugin run completion",
+    )
+    .await;
+    assert_eq!(run_state(&handle, &run_id), "finished");
+
+    let summary = handle.run_summary(&run_id).expect("summary");
+    // The plugin-provided handler executed every request: the missing-handler
+    // path emits no `custom_reqs` at all, only `http_req_failed=true`.
+    let custom_reqs = summary
+        .metrics
+        .iter()
+        .find(|m| m.metric == "custom_reqs")
+        .expect("custom_reqs metric present");
+    assert_eq!(
+        custom_reqs.agg.sum, 40.0,
+        "all requests hit the custom handler"
+    );
+    let failed = summary
+        .metrics
+        .iter()
+        .find(|m| m.metric == "http_req_failed")
+        .expect("http_req_failed metric present");
+    assert_eq!(failed.agg.sum, 0.0, "no `no handler registered` failures");
+
+    handle.shutdown();
+}
+
+// ---------------------------------------------------------------------------
+// Plugin-backed data sources feed distributed runs through the factory seam
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn plugin_data_source_feeds_distributed_run() {
+    let handle = start_controller(Duration::from_secs(6)).await;
+    let addr = format!("http://{}", handle.addr());
+
+    let inits = Arc::new(AtomicU64::new(0));
+    let rows = Arc::new(AtomicU64::new(0));
+    let _a1 = spawn_agent_with_deps(
+        addr.clone(),
+        "d1",
+        None,
+        None,
+        mock_deps_with_data_sources(&inits, &rows),
+    );
+    let _a2 = spawn_agent_with_deps(
+        addr.clone(),
+        "d2",
+        None,
+        None,
+        mock_deps_with_data_sources(&inits, &rows),
+    );
+    wait_until(
+        || handle.agents().iter().filter(|a| a.healthy).count() == 2,
+        Duration::from_secs(10),
+        "2 agents registered",
+    )
+    .await;
+
+    let plan = r#"
+name: dist-plugin-data
+plugins:
+  - name: fake
+scenarios:
+  s:
+    executor: shared-iterations
+    vus: 2
+    iterations: 40
+    flow:
+      - request: { url: "http://mock.local/x?t=${data.gen.tick}" }
+data:
+  gen:
+    type: plugin
+    source: fake
+    config: { flavor: "distributed" }
+"#;
+    let run_id = handle
+        .submit(plan.to_string(), quick_submit())
+        .await
+        .expect("submit");
+
+    wait_until(
+        || is_terminal(&run_state(&handle, &run_id)),
+        Duration::from_secs(30),
+        "run completion",
+    )
+    .await;
+    assert_eq!(run_state(&handle, &run_id), "finished");
+
+    let summary = handle.run_summary(&run_id).expect("merged summary");
+    let http_reqs = summary
+        .metrics
+        .iter()
+        .find(|m| m.metric == "http_reqs")
+        .expect("http_reqs metric");
+    assert_eq!(http_reqs.agg.sum, 40.0, "central http_reqs sum");
+
+    // Each agent built its data sources once (init per assignment) and every
+    // iteration pulled exactly one row through the plugin.
+    assert_eq!(inits.load(Ordering::Relaxed), 2, "one init per agent");
+    assert_eq!(
+        rows.load(Ordering::Relaxed),
+        40,
+        "one plugin row per iteration across the fleet"
+    );
 
     handle.shutdown();
 }

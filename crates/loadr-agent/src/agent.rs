@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use loadr_core::{
-    Aggregator, Engine, EngineOptions, Output, ProtocolRegistry, RunHandle, RunStatus, Sample,
-    ScriptEngine, Snapshot, Summary, Tags,
+    Engine, EngineOptions, MetricsDelta, Output, ProtocolRegistry, RunHandle, RunStatus,
+    ScriptEngine, Tags,
 };
 use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
@@ -24,10 +24,11 @@ use crate::pb::controller_message::Msg as CtrlMsg;
 use crate::pb::coordination_client::CoordinationClient;
 use crate::{now_unix_ms, PROTOCOL_VERSION};
 
-/// Builds a [`ProtocolRegistry`] for one run from the plan's HTTP defaults and
-/// the run's base directory (where data files were materialized).
+/// Builds a [`ProtocolRegistry`] for one run from the parsed test plan (HTTP
+/// defaults, `plugins:` declarations) and the run's base directory (where
+/// data files were materialized).
 pub type ProtocolFactory = Arc<
-    dyn Fn(&loadr_config::HttpDefaults, &std::path::Path) -> Result<ProtocolRegistry, String>
+    dyn Fn(&loadr_config::TestPlan, &std::path::Path) -> Result<ProtocolRegistry, String>
         + Send
         + Sync,
 >;
@@ -40,12 +41,28 @@ pub type ScriptFactory = Arc<
         + Sync,
 >;
 
+/// Builds the plugin-backed data sources for one run from the plan's
+/// `plugins:` declarations and the run's base directory (where data files
+/// were materialized). The returned map is keyed by the plan's `plugins:`
+/// entry name — that is what `data.<name>.source` refers to.
+pub type DataSourceFactory = Arc<
+    dyn Fn(
+            &[loadr_config::PluginRef],
+            &std::path::Path,
+        ) -> Result<HashMap<String, Box<dyn loadr_core::DataSourcePlugin>>, String>
+        + Send
+        + Sync,
+>;
+
 /// Injected runtime dependencies (keeps `loadr-agent` decoupled from the
 /// protocol and JS crates).
 #[derive(Clone)]
 pub struct RunnerDeps {
     pub protocols: ProtocolFactory,
     pub script: Option<ScriptFactory>,
+    /// `None` means this agent build has no data-source plugin support: plans
+    /// that declare `data.*: { type: plugin }` sources fail engine setup.
+    pub data_sources: Option<DataSourceFactory>,
 }
 
 /// TLS settings for the agent → controller channel.
@@ -207,12 +224,13 @@ async fn run_session(
             agent_id: agent_id.to_string(),
             agent_name: config.agent_name.clone(),
             protocol_version: PROTOCOL_VERSION,
-            loadr_version: env!("CARGO_PKG_VERSION").to_string(),
+            loadr_version: loadr_core::build_info::VERSION.to_string(),
             cpu_cores: std::thread::available_parallelism()
                 .map(|n| n.get() as u32)
                 .unwrap_or(1),
             labels: config.labels.clone(),
             resume_run_id,
+            build_revision: loadr_core::build_info::GIT_REVISION.to_string(),
         })),
     };
     tx.try_send(register)
@@ -315,23 +333,58 @@ async fn handle_controller_message(
                 .filter(|r| r.run_id == c.run_id)
                 .map(|r| r.handle.clone());
             let Some(handle) = handle else {
-                tracing::debug!(run_id = %c.run_id, "control for unknown run ignored");
+                let _ = uplink_tx
+                    .send(control_ack(
+                        &c,
+                        Err("run is not active on this agent".to_string()),
+                    ))
+                    .await;
                 return;
             };
-            match c.action.as_str() {
-                "stop" => handle.stop("controller requested stop"),
-                "kill" => handle.kill("controller requested kill"),
-                "pause" => handle.pause(true),
-                "resume" => handle.pause(false),
-                "scale" => {
-                    if let Err(e) = handle.scale(&c.scenario, c.value) {
-                        tracing::warn!(scenario = %c.scenario, error = %e, "scale failed");
-                    }
+            let result = match c.action.as_str() {
+                "stop" => {
+                    handle.stop("controller requested stop");
+                    Ok(())
                 }
-                other => tracing::warn!(action = other, "unknown control action"),
+                "kill" => {
+                    handle.kill("controller requested kill");
+                    Ok(())
+                }
+                "pause" => {
+                    handle.pause(true);
+                    Ok(())
+                }
+                "resume" => {
+                    handle.pause(false);
+                    Ok(())
+                }
+                "scale" => handle.scale(&c.scenario, c.value),
+                other => Err(format!("unknown control action `{other}`")),
+            };
+            if let Err(error) = &result {
+                tracing::warn!(action = %c.action, scenario = %c.scenario, %error, "control failed");
             }
+            let _ = uplink_tx.send(control_ack(&c, result)).await;
         }
         None => {}
+    }
+}
+
+fn control_ack(control: &pb::Control, result: Result<(), String>) -> pb::AgentMessage {
+    let (applied, detail) = match result {
+        Ok(()) => (true, String::new()),
+        Err(detail) => (false, detail),
+    };
+    pb::AgentMessage {
+        msg: Some(AgentMsg::ControlAck(pb::ControlAck {
+            run_id: control.run_id.clone(),
+            command_id: control.command_id,
+            action: control.action.clone(),
+            scenario: control.scenario.clone(),
+            value: control.value,
+            applied,
+            detail,
+        })),
     }
 }
 
@@ -377,7 +430,11 @@ fn handle_assignment(
         .map_err(|e| format!("invalid plan: {e}"))?;
     let plan = loaded.plan;
 
-    let protocols = (config.deps.protocols)(&plan.defaults.http, &run_dir)?;
+    let protocols = (config.deps.protocols)(&plan, &run_dir)?;
+    let data_sources = match &config.deps.data_sources {
+        Some(factory) => factory(&plan.plugins, &run_dir)?,
+        None => HashMap::new(),
+    };
     let script = match (&plan.js, &config.deps.script) {
         (Some(js), Some(factory)) => Some(factory(js, &run_dir)?),
         (Some(_), None) => {
@@ -391,7 +448,6 @@ fn handle_assignment(
 
     let output = DeltaOutput {
         run_id: a.run_id.clone(),
-        agg: Aggregator::new(),
         uplink: uplink_tx.clone(),
     };
     let engine = Engine::new(
@@ -405,6 +461,7 @@ fn handle_assignment(
             partition: Some((a.partition_index, a.partition_count)),
             extra_tags,
             snapshot_interval: Duration::from_millis(500),
+            data_sources,
         },
     )
     .map_err(|e| format!("engine setup failed: {e}"))?;
@@ -561,17 +618,17 @@ fn materialize_files(dir: &Path, files: &[pb::DataFile]) -> Result<(), AgentErro
     Ok(())
 }
 
-/// An [`Output`] that owns its own [`Aggregator`], records every sample into
-/// it and ships drained [`loadr_core::MetricsDelta`]s to the controller on
-/// each engine snapshot (plus one final flush at the end of the run).
+/// An [`Output`] that ships the engine aggregator's drained [`MetricsDelta`]s
+/// to the controller: `wants_delta` opts in, so the engine takes the delta
+/// directly from its own `Aggregator` instead of this output keeping a
+/// second one just to re-record every sample.
 struct DeltaOutput {
     run_id: String,
-    agg: Aggregator,
     uplink: mpsc::Sender<pb::AgentMessage>,
 }
 
 impl DeltaOutput {
-    fn batch(&self, delta: &loadr_core::MetricsDelta) -> Option<pb::AgentMessage> {
+    fn batch(&self, delta: &MetricsDelta) -> Option<pb::AgentMessage> {
         let delta_json = serde_json::to_vec(delta).ok()?;
         Some(pb::AgentMessage {
             msg: Some(AgentMsg::Metrics(pb::MetricsBatch {
@@ -588,34 +645,100 @@ impl Output for DeltaOutput {
         "controller-delta"
     }
 
-    async fn on_samples(&mut self, samples: &[Sample]) {
-        for sample in samples {
-            self.agg.record(sample);
-        }
+    fn wants_samples(&self) -> bool {
+        false
     }
 
-    async fn on_snapshot(&mut self, _snapshot: &Snapshot) {
-        let delta = self.agg.take_delta();
-        if delta.series.is_empty() {
-            return;
-        }
-        let Some(msg) = self.batch(&delta) else {
-            return;
+    fn wants_delta(&self) -> bool {
+        true
+    }
+
+    async fn on_delta(&mut self, delta: &MetricsDelta, last: bool) -> bool {
+        let Some(msg) = self.batch(delta) else {
+            // Not retryable: the data can't be serialized, ever.
+            return true;
         };
-        // Never block the aggregator: when the uplink is congested (e.g. a
-        // reconnect in progress) fold the delta back in and retry next flush.
-        if self.uplink.try_send(msg).is_err() {
-            self.agg.merge_delta(&delta);
+        if last {
+            // The run is ending: block until the controller has it rather
+            // than dropping the final delta.
+            let _ = self.uplink.send(msg).await;
+            true
+        } else {
+            // Never block the aggregator: when the uplink is congested (e.g.
+            // a reconnect in progress) report rejection so the caller can
+            // restore the delta and retry next tick.
+            self.uplink.try_send(msg).is_ok()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use loadr_core::{Aggregator, MetricKind, Sample, Tags};
+
+    /// A one-series delta, built the same way the engine's aggregator would.
+    fn one_delta() -> MetricsDelta {
+        let mut agg = Aggregator::new();
+        agg.record(&Sample {
+            metric: Arc::from("http_reqs"),
+            kind: MetricKind::Counter,
+            value: 1.0,
+            tags: Arc::new(Tags::new()),
+            timestamp_ms: 0,
+        });
+        agg.take_delta()
+    }
+
+    fn filler() -> pb::AgentMessage {
+        pb::AgentMessage {
+            msg: Some(AgentMsg::Heartbeat(pb::Heartbeat::default())),
         }
     }
 
-    async fn finish(&mut self, _summary: &Summary) {
-        let delta = self.agg.take_delta();
-        if delta.series.is_empty() {
-            return;
-        }
-        if let Some(msg) = self.batch(&delta) {
-            let _ = self.uplink.send(msg).await;
-        }
+    #[tokio::test]
+    async fn delta_output_backpressure() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let mut output = DeltaOutput {
+            run_id: "run-1".to_string(),
+            uplink: tx,
+        };
+        let delta = one_delta();
+
+        // Congested: the channel's one slot is already occupied, so a
+        // non-final delta must be rejected (never block the aggregator).
+        output.uplink.try_send(filler()).expect("prefill");
+        assert!(
+            !output.on_delta(&delta, false).await,
+            "on_delta should report rejection when the uplink is congested"
+        );
+
+        // Drained: capacity is free, so the same delta is now accepted and
+        // decodes back to the same delta JSON.
+        rx.recv().await.expect("filler");
+        assert!(output.on_delta(&delta, false).await);
+        let msg = rx.recv().await.expect("delta message");
+        let Some(AgentMsg::Metrics(batch)) = msg.msg else {
+            panic!("expected a Metrics message");
+        };
+        assert_eq!(batch.run_id, "run-1");
+        assert_eq!(batch.delta_json, serde_json::to_vec(&delta).unwrap());
+
+        // Final flush: congest the channel again, then confirm on_delta
+        // blocks (rather than dropping the last delta) until room frees up.
+        output.uplink.try_send(filler()).expect("prefill 2");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), output.on_delta(&delta, true))
+                .await
+                .is_err(),
+            "on_delta(last=true) should block while the channel is full"
+        );
+        rx.recv().await.expect("second filler");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), output.on_delta(&delta, true))
+                .await
+                .expect("send should complete once room frees up"),
+            "final delta should be accepted"
+        );
     }
 }

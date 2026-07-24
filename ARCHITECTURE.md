@@ -13,7 +13,7 @@ loadr.io/
 │   ├── loadr-core/        # Engine: scheduling, executors, VUs, metrics, thresholds, checks, lifecycle
 │   ├── loadr-config/      # YAML schema (serde + schemars), validation, ${...} interpolation, env overrides
 │   ├── loadr-js/          # Embedded JavaScript runtime (rquickjs) + k6-flavoured stdlib
-│   ├── loadr-protocols/   # HTTP/1.1+2, WebSocket, gRPC, GraphQL, TCP, UDP clients with phase metrics
+│   ├── loadr-protocols/   # HTTP/1.1+2, WebSocket, gRPC, GraphQL, TCP, UDP, no-op self-test
 │   ├── loadr-plugin-api/  # Stable plugin ABI (abi_stable) + WASM WIT world + SDK helpers
 │   ├── loadr-agent/       # Controller + agent: gRPC coordination, load partitioning, HDR merge
 │   └── loadr-cli/         # The `loadr` binary: run, validate, convert, agent, controller, plugin, report
@@ -185,7 +185,9 @@ YAML ──parse/validate──▶ TestPlan ──compile──▶ ScenarioProgr
        JsWorker (rquickjs)
 ```
 
-The `MetricsBus` is an mpsc fan-in; the `Aggregator` snapshots every second for live consumers
+The `MetricsBus` is an mpsc fan-in when a configured output consumes raw samples; when none
+does, VUs record straight into shard-local aggregators instead, drained into the primary
+aggregator once per snapshot tick. The `Aggregator` snapshots every second for live consumers
 (web UI SSE, controller stream, console progress) and finalizes into the end-of-run summary
 (console table + `--summary-export` JSON).
 

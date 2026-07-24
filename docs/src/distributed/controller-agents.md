@@ -34,6 +34,18 @@ loadr agent --join ctrl:7625 \
 Without flags the channel is plaintext — fine on a private network, not on
 the internet.
 
+## Prometheus
+
+Expose the controller-owned fleet endpoint with:
+
+```bash
+loadr controller --prometheus-listen 0.0.0.0:9091
+```
+
+Scrape `/metrics` on that address. The endpoint publishes both tagged
+per-agent series and exact `loadr_fleet_*` aggregates; see
+[Metric aggregation](metrics-merging.md#tags--per-agent-visibility).
+
 ## Failure handling
 
 - **Heartbeats** every 2 s; an agent silent past the liveness window
@@ -52,6 +64,12 @@ CSV files, JS modules, proto files and body files referenced by the test are
 shipped inside the assignment and materialized in the agent's working
 directory. Paths are sanitized — anything containing `..` or absolute paths
 is rejected.
+
+Plugins are **not** shipped. Protocol plugins declared under `plugins:` are
+resolved on each agent host — install them on every agent beforehand, or make
+them discoverable via `LOADR_PLUGINS_DIR` (default `~/.loadr/plugins`). An
+agent that cannot resolve a declared plugin rejects its assignment and the
+controller reports the run as failed with the plugin error.
 
 ## Operating notes
 

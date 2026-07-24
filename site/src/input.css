@@ -106,6 +106,16 @@ body {
   box-shadow: 0 12px 40px -18px rgb(220 38 38 / 0.35);
 }
 
+/* Mascot readability: the android is matte-black, and the site is near-black,
+   so it disappears without a backdrop. A radial "spotlight" (a light core over
+   a red glow) shows through the transparent PNG and lifts the silhouette off
+   the page. Applied to every mascot image site-wide. */
+img[src*="/assets/mascot/"] {
+  background:
+    radial-gradient(42% 42% at 50% 41%, rgb(255 255 255 / 0.11), transparent 70%),
+    radial-gradient(66% 62% at 50% 47%, rgb(239 68 68 / 0.34), rgb(239 68 68 / 0.10) 56%, transparent 80%);
+}
+
 /* Tab buttons */
 .tabbtn[aria-selected="true"] {
   background: rgb(220 38 38 / 0.12);

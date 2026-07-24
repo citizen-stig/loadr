@@ -36,7 +36,7 @@ loadr run --controller host:6464 test.yaml  # submit via the controller's API po
 |---|---|
 | 0 | run finished, all thresholds passed |
 | 1 | error (invalid test, I/O, ...) |
-| 99 | run finished but thresholds failed (k6-compatible) |
+| 99 | run finished but thresholds failed |
 | 130 | interrupted (Ctrl-C twice; first Ctrl-C stops gracefully) |
 
 ### Selecting scenarios by tag

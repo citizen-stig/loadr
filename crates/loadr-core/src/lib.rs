@@ -41,5 +41,5 @@ pub use summary::{Summary, TimelinePoint};
 pub use thresholds::ThresholdStatus;
 pub use vu::{RunContext, VuContext};
 
-/// Exit code when thresholds fail (k6-compatible).
+/// Exit code when thresholds fail.
 pub const EXIT_THRESHOLD_FAILED: i32 = 99;

@@ -36,12 +36,12 @@ js:
   memory_limit_mb: 64        # per-VU heap limit (default 64)
 ```
 
-The module is an ES module with k6-compatible imports:
+The module is an ES module that imports loadr's built-in standard library:
 
 ```js
-import http from 'k6/http';
-import { check, sleep, group } from 'k6';
-import { Counter, Trend } from 'k6/metrics';
+import http from 'loadr/http';
+import { check, sleep, group } from 'loadr';
+import { Counter, Trend } from 'loadr/metrics';
 
 export function setup() { /* once, before VUs start */ return {...}; }
 export default function (data) { /* per iteration when exec/default used */ }
@@ -53,7 +53,7 @@ export function afterRequest(res) { /* ... */ }
 ## Isolation & limits
 
 Every VU gets its **own** JS runtime and context — no shared mutable state
-between VUs (matching k6). Each runtime enforces:
+between VUs (each VU is fully isolated). Each runtime enforces:
 
 - a heap limit (`memory_limit_mb`) — exceeding it throws;
 - a wall-clock interrupt per call (`timeout`) — infinite loops are killed;

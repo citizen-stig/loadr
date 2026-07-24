@@ -1,0 +1,26 @@
+# loadr agents: a horizontally-scalable Deployment that joins the controller.
+#   kubectl scale deployment/loadr-agents --replicas=N
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadr-agents
+  labels: { app: loadr, role: agent }
+spec:
+  replicas: 5
+  selector:
+    matchLabels: { app: loadr, role: agent }
+  template:
+    metadata:
+      labels: { app: loadr, role: agent }
+    spec:
+      containers:
+        - name: agent
+          image: ghcr.io/levantar-ai/loadr:v1
+          # Each pod registers under its own name so the fleet view is legible.
+          args: ["agent", "--join", "loadr-controller:7625", "--name", "$(POD_NAME)"]
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+          resources:
+            requests: { cpu: "500m", memory: "256Mi" }
+            limits: { cpu: "2", memory: "1Gi" }

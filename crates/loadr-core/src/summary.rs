@@ -243,7 +243,7 @@ impl Summary {
         serde_json::to_value(self).unwrap_or(serde_json::Value::Null)
     }
 
-    /// k6-style console rendering (plain text; the CLI adds color).
+    /// Console summary rendering (plain text; the CLI adds color).
     pub fn render_console(&self) -> String {
         let mut out = String::new();
         let title = self.name.as_deref().unwrap_or("loadr test");

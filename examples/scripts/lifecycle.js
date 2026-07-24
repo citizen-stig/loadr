@@ -1,7 +1,7 @@
 // Per-VU lifecycle hooks + a custom end-of-run report for
 // examples/22-lifecycle.yaml.
-import http from 'k6/http';
-import { check } from 'k6';
+import http from 'loadr/http';
+import { check } from 'loadr';
 
 // Runs ONCE per VU, before that VU's first iteration (scenario `on_start`).
 // Use it for per-user setup such as logging in once per simulated user.
@@ -32,7 +32,7 @@ export function logout(data) {
 }
 
 // Runs ONCE after teardown(). Returning a string replaces the default
-// console summary (the k6 handleSummary equivalent).
+// console summary (loadr's end-of-run summary hook).
 export function handleSummary(data) {
   const reqs = data.metrics.find((m) => m.metric === 'http_reqs');
   const dur = data.metrics.find((m) => m.metric === 'http_req_duration');

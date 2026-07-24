@@ -1,0 +1,48 @@
+# Submit a run to the controller; the load fans out across all agent pods.
+# The plan is mounted from a ConfigMap so you can edit it without rebuilding.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loadr-plan
+data:
+  perf.yaml: |
+    name: k8s-fleet
+    description: distributed run submitted from a Job
+    defaults:
+      http:
+        base_url: https://api.example.com
+    scenarios:
+      fleet:
+        executor: constant-arrival-rate
+        rate: 600                 # total across ALL agents
+        duration: 10m
+        pre_allocated_vus: 300
+        max_vus: 900
+        flow:
+          - request: { name: search, url: "/search?q=stress", checks: [ { type: status, equals: 200 } ] }
+    thresholds:
+      http_req_duration: [ "p(95)<400", "p(99)<900" ]
+      http_req_failed: [ "rate<0.01" ]
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: loadr-run
+  labels: { app: loadr, role: run }
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels: { app: loadr, role: run }
+    spec:
+      restartPolicy: Never
+      volumes:
+        - name: plan
+          configMap: { name: loadr-plan }
+      containers:
+        - name: run
+          image: ghcr.io/levantar-ai/loadr:v1
+          # Submit to the controller API; exit code reflects thresholds (0/99).
+          args: ["run", "--controller", "loadr-controller:6464", "/plans/perf.yaml"]
+          volumeMounts:
+            - { name: plan, mountPath: /plans }

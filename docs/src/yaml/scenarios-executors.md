@@ -2,7 +2,7 @@
 
 A test has one or more **scenarios**, all running concurrently (offset with
 `start_time`). Each scenario picks an **executor** — the algorithm that
-schedules iterations. loadr implements all seven k6 executors with identical
+schedules iterations. loadr implements all seven executor types with identical
 semantics.
 
 ```yaml

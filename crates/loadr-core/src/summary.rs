@@ -229,6 +229,40 @@ impl Summary {
                 agg: metric.agg.clone(),
             });
         }
+
+        // Derived successful-throughput counter, sorted next to `request_reqs`.
+        // `http_req_failed` is recorded by every protocol as a Rate where a "true"
+        // sample means the request failed, so its `count` is the total request
+        // count and `sum` the failure count. The difference is the number of
+        // requests that got a non-error protocol response (transport ok and gRPC
+        // status 0 / HTTP < 400) — this is NOT the count of application-accepted
+        // requests. It gives users success-rate throughput without hand math.
+        let request_reqs_ok = metrics
+            .iter()
+            .find(|m| m.metric == "http_req_failed")
+            .filter(|m| m.agg.count > 0)
+            .map(|m| {
+                let ok = m.agg.count - m.agg.sum as u64;
+                let per_second = if snapshot.elapsed_secs > 0.0 {
+                    Some(ok as f64 / snapshot.elapsed_secs)
+                } else {
+                    None
+                };
+                MetricSummary {
+                    metric: "request_reqs_ok".to_string(),
+                    kind: MetricKind::Counter,
+                    agg: AggValues {
+                        count: ok,
+                        sum: ok as f64,
+                        per_second,
+                        ..Default::default()
+                    },
+                }
+            });
+        if let Some(series) = request_reqs_ok {
+            metrics.push(series);
+        }
+
         metrics.sort_by(|a, b| a.metric.cmp(&b.metric));
 
         // Check summaries from `checks` series tagged with `check`.
@@ -338,6 +372,21 @@ impl Summary {
                     fmt_num(m.agg.sum),
                     fmt_num(m.agg.per_second.unwrap_or(0.0))
                 ),
+                // Failure-polarity rate (e.g. `http_req_failed`): a "true" sample
+                // means the request FAILED, so `sum` is the failure count and the
+                // rate is the failure rate. Put ✓ on the good (non-failed) outcome
+                // and ✗ on failures, and label the percentage, so the glyphs keep
+                // the ✓=good meaning they carry on the `checks` line.
+                MetricKind::Rate if m.metric.ends_with("_failed") => {
+                    let failed = m.agg.sum as u64;
+                    let ok = m.agg.count.saturating_sub(failed);
+                    format!(
+                        "{:.2}% failed — ✓ {} ✗ {}",
+                        m.agg.rate.unwrap_or(0.0) * 100.0,
+                        ok,
+                        failed
+                    )
+                }
                 MetricKind::Rate => format!(
                     "{:.2}% — ✓ {} ✗ {}",
                     m.agg.rate.unwrap_or(0.0) * 100.0,
@@ -581,6 +630,79 @@ mod tests {
         assert!(text.contains("http_req_duration"));
         assert!(text.contains("p(95)<400"));
         assert!(text.contains("✓ http_req_duration"));
+    }
+
+    /// Build a summary from `n` requests of which `failed` reported a failure via
+    /// the `http_req_failed` rate (as every protocol records it).
+    fn build_request_summary(n: usize, failed: usize) -> Summary {
+        let mut agg = Aggregator::new();
+        let tags = Arc::new(Tags::new());
+        for i in 0..n {
+            agg.record(&Sample {
+                metric: Arc::from("http_req_failed"),
+                kind: MetricKind::Rate,
+                value: if i < failed { 1.0 } else { 0.0 },
+                tags: tags.clone(),
+                timestamp_ms: now_millis(),
+            });
+            agg.record(&Sample {
+                metric: Arc::from("grpc_reqs"),
+                kind: MetricKind::Counter,
+                value: 1.0,
+                tags: tags.clone(),
+                timestamp_ms: now_millis(),
+            });
+        }
+        Summary::build(
+            Some("grpc".into()),
+            "run-req".into(),
+            now_millis(),
+            vec!["default".into()],
+            &mut agg,
+            Vec::new(),
+            None,
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn http_req_failed_marks_ok_with_check_and_failed_with_cross() {
+        // 8 of 10 requests failed -> 80% failure rate.
+        let s = build_request_summary(10, 8);
+        let text = s.render_console();
+        // ✓ counts the 2 successful requests, ✗ the 8 failures, and the
+        // percentage is labelled as the failure rate.
+        assert!(
+            text.contains("80.00% failed — ✓ 2 ✗ 8"),
+            "unexpected http_req_failed line:\n{text}"
+        );
+    }
+
+    #[test]
+    fn request_reqs_ok_counts_non_failed_requests() {
+        let s = build_request_summary(10, 8);
+        let ok = s
+            .metrics
+            .iter()
+            .find(|m| m.metric == "request_reqs_ok")
+            .expect("request_reqs_ok should be synthesized when requests exist");
+        assert_eq!(ok.kind, MetricKind::Counter);
+        assert_eq!(ok.agg.count, 2);
+        assert_eq!(ok.agg.sum as u64, 2);
+        // request_reqs_ok == total requests - failed requests.
+        let failed = s
+            .metrics
+            .iter()
+            .find(|m| m.metric == "http_req_failed")
+            .expect("http_req_failed present");
+        assert_eq!(ok.agg.count, failed.agg.count - failed.agg.sum as u64);
+    }
+
+    #[test]
+    fn request_reqs_ok_absent_without_requests() {
+        // The demo summary records checks and durations but no http_req_failed.
+        let s = build_summary();
+        assert!(s.metrics.iter().all(|m| m.metric != "request_reqs_ok"));
     }
 
     #[test]

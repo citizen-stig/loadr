@@ -26,7 +26,7 @@ Kinds: **Counter** (sum), **Gauge** (last/min/max), **Rate** (pass fraction),
 | `http_req_connecting` | Trend (TCP) |
 | `http_req_tls_handshaking` | Trend |
 | `http_req_sending` / `http_req_waiting` / `http_req_receiving` | Trend |
-| `http_req_failed` | Rate (transport error or status ≥ 400; transport failures carry an `error_kind` tag) |
+| `http_req_failed` | Rate (transport error or status ≥ 400; transport failures carry an `error_kind` tag). Recorded for **every** protocol, not just HTTP — for gRPC a sample is a failure when the transport errors or the status is non-zero. |
 
 ## Other protocols
 
@@ -38,6 +38,35 @@ Kinds: **Counter** (sum), **Gauge** (last/min/max), **Rate** (pass fraction),
 | `graphql_reqs` / `graphql_req_duration` | Counter / Trend |
 | `tcp_reqs` / `tcp_req_duration` | Counter / Trend |
 | `udp_reqs` / `udp_req_duration` | Counter / Trend |
+
+## Request roll-ups & throughput
+
+The end-of-run summary adds two synthetic roll-ups over the per-protocol request
+metrics, plus one derived success counter:
+
+| Metric | Kind | Meaning |
+|---|---|---|
+| `request_reqs` | Counter | sum of every `*_reqs` counter — **total requests attempted** across all protocols |
+| `request_duration` | Trend | merged `*_req_duration` across all protocols |
+| `request_reqs_ok` | Counter | requests that got a non-error response: `request_reqs` minus `http_req_failed` |
+
+`request_reqs`, the per-family `*_reqs` counters, and `iterations` all count
+**attempts, not successes** — a failed or no-response request still increments
+them, so their per-second value (`.../s`) is *attempted* throughput. For
+success-rate throughput use `request_reqs_ok` (its `.../s`). Note that "ok"
+here means the request received a valid protocol response (transport ok, gRPC
+status 0 / HTTP < 400); it does **not** mean the request was accepted by
+application-level `check`s — use your `check` pass counts for that.
+
+In the console summary, `http_req_failed` renders as the failure rate with the
+glyphs on the good/bad outcomes:
+
+```
+http_req_failed...: 86.57% failed — ✓ <ok> ✗ <failed>
+```
+
+where `✓` is the count of requests that succeeded and `✗` the count that failed
+(the opposite polarity from `checks`, where `✓` marks passing checks).
 
 ## Standard tags
 
